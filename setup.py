@@ -12,6 +12,8 @@ setup(
     
     packages=find_packages(),  # Finds your 'horus' package
     install_requires=[
+        'rospy',    # Add other dependencies here
+        'pyyaml',
         # Any external dependencies for your SDK
     ],
     python_requires='>=3.7',
