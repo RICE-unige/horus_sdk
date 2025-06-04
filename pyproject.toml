@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "horus"
+version = "0.1.0a0"
+description = "HORUS Mixed-Reality Robot Management SDK"
+requires-python = ">=3.11"
+authors = [{name = "HORUS team"}]
+dependencies = []      # add rclpy etc. later
