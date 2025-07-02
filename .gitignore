@@ -186,3 +186,5 @@ jspm_packages/
 # OS generated files
 .DS_Store  # Mac-specific
 Thumbs.db  # Windows-specific
+
+extra/
