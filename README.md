@@ -26,8 +26,14 @@
 
 ## 🔍 Overview
 
-**Horus-SDK** is the official Python toolkit that glues your ROS robots to the **HORUS Mixed-Reality application** running on Meta Quest 3.
-It discovers robots, builds a JSON *Initial Payload* for the headset, and relays traffic both ways—so you write **high-level Python**, not raw ROS.
+**Horus-SDK** is the official toolkit that glues your ROS robots to the **HORUS Mixed-Reality application** running on Meta Quest 3. It discovers robots, builds a JSON *Initial Payload* for the headset, and relays traffic both ways.
+
+This repository contains two parallel SDK implementations:
+
+*   **`./python`**: A flexible and easy-to-use Python SDK.
+*   **`./cpp`**: A high-performance C++ SDK for production environments.
+
+Both SDKs are being developed in parallel and aim for feature parity.
 
 ### **Current Version:** `0.1.0-alpha`
 
@@ -48,69 +54,19 @@ It discovers robots, builds a JSON *Initial Payload* for the headset, and relays
 
 ---
 
-## 🛠 Installation
+## 🚀 Getting Started
 
-### From PyPI *(soon)*
+To get started with a specific SDK, please see the `README.md` in the corresponding subdirectory:
 
-```bash
-pip install horus-sdk         # will ship once M2 is done
-```
-
-### Editable (Dev) Install
-
-```bash
-# clone
-git clone https://github.com/RICE-unige/horus_sdk.git && cd horus_sdk
-
-# Python ≥ 3.11
-python3.11 -m venv ~/.venvs/horus
-source ~/.venvs/horus/bin/activate
-
-pip install --upgrade pip setuptools wheel
-pip install -e .              # editable install
-```
-
-Check:
-
-```bash
-python - <<'PY'
-import horus, sys, pathlib
-print("HORUS", horus.__version__ if hasattr(horus, "__version__") else "dev",
-      "→", pathlib.Path(horus.__file__).parent)
-PY
-```
-
----
-
-## 🚀 Quick Start
-
-```python
-import asyncio, horus as hr
-from horus.plugins.rosbot import Rosbot          # stub for now
-
-async def main():
-    client = hr.Client(transport="ros2",
-                       headset="tcp://0.0.0.0:6000")
-
-    # build a robot descriptor fluently
-    client.add_robot(
-        Rosbot("bot1").with_namespace("/bot1")
-    )
-
-    await client.handshake()   # emits InitialPayload → headset
-    await client.spin()        # pumps EventBus + bridges
-
-asyncio.run(main())
-```
-
-*(Until the bridges are finished this will just run without doing much.)*
+*   [**Python SDK**](./python/README.md)
+*   [**C++ SDK**](./cpp/README.md)
 
 ---
 
 ## 📐 Architecture Glimpse
 
 ```text
-client.py        ← orchestrator
+client        ← orchestrator
  ├─ core/        ← pure logic (TopicMap, EventBus…)
  ├─ bridge/      ← IO adapters (ros1, ros2, unity_tcp)
  ├─ robot/       ← façade for users (status, task, teleop)
