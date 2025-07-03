@@ -37,8 +37,8 @@ Both SDKs are being developed in parallel and aim for feature parity.
 
 ### **Current Version:** `0.1.0-alpha`
 
-> *Skeleton only*: all modules import, but most are still stubs.
-> First real code will land in the `core/` package.
+> **🎉 Major Update**: Complete ROS2 backend infrastructure and professional SDK initialization system now available!
+> Core modules (`TopicMap`, `EventBus`) are still stubs and ready for M1 implementation.
 
 ---
 
@@ -47,6 +47,11 @@ Both SDKs are being developed in parallel and aim for feature parity.
 | Done ✔ | Planned 🛠 | Description                                                                     |
 | :----: | :--------: | ------------------------------------------------------------------------------- |
 |    ✔   |            | **Typed topic keys** (`Status.BATTERY`, `DataViz.LIDAR`) — no more string typos |
+|    ✔   |            | **Complete ROS2 backend infrastructure** with C++ implementation                |
+|    ✔   |            | **Professional SDK initialization** with animated spinners and status checking  |
+|    ✔   |            | **Unity-TCP bridge integration** via ROS-TCP-Endpoint submodule                |
+|    ✔   |            | **Development testing framework** with interactive test launcher               |
+|    ✔   |            | **Automatic backend management** with process lifecycle control                |
 |        |     🛠     | Async **ROS 2 bridge** (`rclpy`) + ROS 1 (`roslibpy`)                           |
 |        |     🛠     | JSON handshake generator for the MR headset                                     |
 |        |     🛠     | Plugin system (`plugins.Rosbot`, `plugins.Spot`)                                |
@@ -56,15 +61,40 @@ Both SDKs are being developed in parallel and aim for feature parity.
 
 ## 🚀 Getting Started
 
-To get started with a specific SDK, please see the `README.md` in the corresponding subdirectory:
+### Quick Test
+```bash
+# Clone and test the SDK
+git clone --recursive https://github.com/RICE-unige/horus_sdk.git
+cd horus_sdk
+
+# Build ROS2 workspace
+cd horus_ros2_ws
+colcon build
+source install/setup.bash
+cd ..
+
+# Test SDK with interactive launcher
+python3 test_horus.py
+```
+
+### Full Documentation
 
 *   [**Python SDK**](./python/README.md)
 *   [**C++ SDK**](./cpp/README.md)
+*   [**ROS2 Backend**](./horus_ros2_ws/README.md)
+*   [**Testing Guide**](./TESTING.md)
 
 ---
 
-## 📐 Architecture Glimpse
+## 📐 Architecture Overview
 
+### System Architecture
+```text
+Python/C++ SDK ←→ HORUS Backend (C++) ←→ ROS-TCP-Endpoint ←→ Unity MR App
+    (port 8080)                            (port 10000)
+```
+
+### SDK Structure
 ```text
 client        ← orchestrator
  ├─ core/        ← pure logic (TopicMap, EventBus…)
@@ -73,6 +103,12 @@ client        ← orchestrator
  └─ plugins/     ← ready-made robot presets
 ```
 
+### Key Components
+- **HORUS Backend**: C++ ROS2 node with TCP server and plugin system
+- **ROS-TCP-Endpoint**: Unity integration bridge (as git submodule)
+- **SDK Client**: Professional initialization with automatic backend management
+- **Testing Framework**: Interactive development tools and comprehensive docs
+
 Everything outside **`bridge/`** is ROS-agnostic and therefore unit-testable
 without running a roscore.
 
@@ -80,13 +116,13 @@ without running a roscore.
 
 ## 🗺 Roadmap
 
-| Milestone | Target                                             |
-| --------- | -------------------------------------------------- |
-| **M1**    | Implement `TopicSpec`, `TopicMap`, and `EventBus`  |
-| **M2**    | Unity-TCP bridge + JSON handshake, full unit tests |
-| **M3**    | ROS 2 bridge + first working control loop          |
-| **M4**    | Plugins: Rosbot (diff-drive), Spot (legged)        |
-| **M5**    | ROS 1 bridge & docs deployment                     |
+| Milestone | Target                                             | Status |
+| --------- | -------------------------------------------------- | ------ |
+| **M1**    | Implement `TopicSpec`, `TopicMap`, and `EventBus`  | 🔄 Ready for implementation |
+| **M2**    | Unity-TCP bridge + JSON handshake, full unit tests | ✅ Infrastructure complete |
+| **M3**    | ROS 2 bridge + first working control loop          | ✅ Backend ready |
+| **M4**    | Plugins: Rosbot (diff-drive), Spot (legged)        | 🔄 Awaiting M1 completion |
+| **M5**    | ROS 1 bridge & docs deployment                     | 📋 Planned |
 
 ---
 
