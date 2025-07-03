@@ -127,6 +127,8 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+horus_env/
+horus_example_env/
 
 # Spyder project settings
 .spyderproject
