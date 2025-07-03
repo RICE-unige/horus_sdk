@@ -6,6 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "horus"
 version = "0.1.0a0"
 description = "HORUS Mixed-Reality Robot Management SDK"
-requires-python = ">=3.11"
+requires-python = ">=3.8"
 authors = [{name = "HORUS team"}]
 dependencies = []      # add rclpy etc. later
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["horus*"]
+
+[tool.setuptools.package-dir]
+"" = "."
