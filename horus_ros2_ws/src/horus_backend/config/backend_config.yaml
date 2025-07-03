@@ -1,0 +1,24 @@
+horus_backend_node:
+  ros__parameters:
+    tcp_port: 8080
+    log_level: "info"
+    
+    # Unity TCP Bridge configuration
+    unity_tcp_port: 10000
+    enable_unity_bridge: true
+    
+    # Plugin configuration
+    enable_builtin_plugins: true
+    plugin_paths: []
+    
+    # Network configuration
+    max_connections: 10
+    connection_timeout: 30.0
+    
+    # Robot management
+    default_robot_type: "generic"
+    auto_discover_robots: false
+    
+    # Logging
+    log_tcp_messages: false
+    log_robot_status: false
