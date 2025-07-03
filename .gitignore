@@ -187,4 +187,80 @@ jspm_packages/
 .DS_Store  # Mac-specific
 Thumbs.db  # Windows-specific
 
+# ROS2 specific files
+install/
+build/
+log/
+*.bag
+*.db3
+**/install/
+**/build/
+**/log/
+
+# CMake and C++ build artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# C++ build outputs
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.lib
+*.pdb
+
+# IDE and editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+.clangd/
+.ccls-cache/
+
+# Development and testing files
 extra/
+
+# Python packaging artifacts
+*.whl
+pip-wheel-metadata/
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.backup
+*~
+
+# System files
+.Trash-*
+*.lnk
+
+# Runtime files
+*.pid
+*.sock
+*.port
+
+# Documentation build artifacts
+doc/html/
+doc/latex/
+doxygen_generated/
+
+# Colcon specific
+.colcon_install_layout
+.colcon_build_layout
+
+# rosdep artifacts
+rosdep.yaml
+
+# Environment files
+.env.local
+.env.*.local
