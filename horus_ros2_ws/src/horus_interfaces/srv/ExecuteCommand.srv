@@ -1,0 +1,8 @@
+# Execute robot command service
+string robot_id
+string command_type
+string command_data
+---
+bool success
+string result_data
+string message
