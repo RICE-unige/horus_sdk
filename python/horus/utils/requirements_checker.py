@@ -10,6 +10,7 @@ class RequirementsChecker:
                 ('ROS2 Installation', self._check_ros2_installation),
                 ('HORUS Backend Package', self._check_horus_backend_package),
                 ('Network Port 8080', self._check_port_availability),
+                ('Unity TCP Endpoint (Port 10000)', self._check_unity_endpoint),
             ],
             'ros1': [
                 ('ROS1 Installation', self._check_ros1_installation),
@@ -103,3 +104,17 @@ class RequirementsChecker:
             return True, f"Port {port} is available"
         except:
             return False, f"Unable to check port {port}"
+    
+    def _check_unity_endpoint(self, backend_type):
+        """Check if Unity TCP endpoint is running on port 10000"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)  # 1 second timeout
+            result = sock.connect_ex(('localhost', 10000))
+            sock.close()
+            
+            if result == 0:
+                return True, "Unity TCP endpoint is running on port 10000"
+            return True, "Unity TCP endpoint not detected (will be started automatically)"
+        except:
+            return False, "Unable to check Unity TCP endpoint"

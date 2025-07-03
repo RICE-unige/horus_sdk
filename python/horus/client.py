@@ -98,8 +98,80 @@ class Client:
             spinner.stop()
             port = self.backend_manager.get_port()
             print(f"  \033[92m✓\033[0m Backend connection: \033[90mConnected on port {port}\033[0m")
+            
+            # Show Unity MR connection information
+            self._display_unity_connection_info()
+            
             print(f"\n\033[92mSDK initialized successfully\033[0m")
         else:
             spinner.stop()
             print(f"  \033[91m✗\033[0m Backend connection: \033[91mFailed to connect\033[0m")
             raise RuntimeError("Backend connection failed")
+    
+    def _display_unity_connection_info(self):
+        """Display Unity MR application connection information"""
+        import socket
+        import time
+        from .utils.spinner import Spinner
+        
+        print(f"\n\033[96m🎮 Unity Mixed Reality Connection\033[0m")
+        print(f"\033[96m{'═' * 45}\033[0m")
+        
+        # Get local IP address
+        try:
+            # Create a socket to get the local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except:
+            local_ip = "127.0.0.1"
+        
+        unity_port = 10000
+        
+        print(f"  \033[94m📡 Connection Details:\033[0m")
+        print(f"     IP Address: \033[93m{local_ip}\033[0m")
+        print(f"     Port:       \033[93m{unity_port}\033[0m")
+        print(f"     Protocol:   \033[93mTCP\033[0m")
+        
+        print(f"\n  \033[95m🔗 HORUS MR App Configuration:\033[0m")
+        print(f"     Enter these details in your Quest 3 HORUS app")
+        print(f"     Host: \033[92m{local_ip}:{unity_port}\033[0m")
+        
+        # Check for Unity connection with animation
+        print(f"\n  \033[96m⏳ Waiting for Unity MR connection...\033[0m")
+        
+        spinner = Spinner("Monitoring Unity connection", style="dots")
+        spinner.start()
+        
+        # Monitor for Unity connection (with timeout)
+        connection_timeout = 10  # seconds
+        start_time = time.time()
+        unity_connected = False
+        
+        while time.time() - start_time < connection_timeout:
+            if self._check_unity_connection(unity_port):
+                unity_connected = True
+                break
+            time.sleep(0.5)
+        
+        spinner.stop()
+        
+        if unity_connected:
+            print(f"  \033[92m✓\033[0m Unity MR connection: \033[92mConnected successfully\033[0m")
+            print(f"  \033[90m  → Mixed Reality interface active\033[0m")
+        else:
+            print(f"  \033[93m⧖\033[0m Unity MR connection: \033[93mStandby mode (no MR app connected)\033[0m")
+            print(f"  \033[90m  → Launch HORUS app on Quest 3 to connect\033[0m")
+    
+    def _check_unity_connection(self, port):
+        """Check if Unity MR application is connected"""
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.1)
+            # Try to connect to see if something is listening
+            result = sock.connect_ex(('127.0.0.1', port))
+            sock.close()
+            return result == 0
+        except:
+            return False

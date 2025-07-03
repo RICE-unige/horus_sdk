@@ -3,14 +3,23 @@ import time
 import threading
 
 class Spinner:
-    def __init__(self, message="Loading", delay=0.1):
+    def __init__(self, message="Loading", delay=0.1, style="default"):
         self.message = message
         self.delay = delay
         self.running = False
         self.thread = None
+        self.style = style
         
-        # Spinner characters
-        self.spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        # Different spinner styles
+        self.spinner_styles = {
+            'default': ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+            'dots': ['⠈', '⠐', '⠠', '⢀', '⡀', '⠄', '⠂', '⠁'],
+            'circle': ['◐', '◓', '◑', '◒'],
+            'arrows': ['←', '↖', '↑', '↗', '→', '↘', '↓', '↙'],
+            'pulse': ['●', '●', '●', '○', '○', '○']
+        }
+        
+        self.spinner_chars = self.spinner_styles.get(style, self.spinner_styles['default'])
         self.current_char = 0
     
     def _spin(self):

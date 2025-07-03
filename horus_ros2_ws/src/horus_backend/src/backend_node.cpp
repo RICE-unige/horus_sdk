@@ -1,5 +1,11 @@
 #include "horus_backend/backend_node.hpp"
 #include <iostream>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 namespace horus_backend {
 
@@ -44,10 +50,12 @@ void BackendNode::shutdown() {
 void BackendNode::setup_parameters() {
     // Declare parameters with defaults
     declare_parameter<int>("tcp_port", 8080);
+    declare_parameter<int>("unity_tcp_port", 10000);
     declare_parameter<std::string>("log_level", "info");
     
     // Get parameter values
     tcp_port_ = get_parameter("tcp_port").as_int();
+    unity_tcp_port_ = get_parameter("unity_tcp_port").as_int();
     log_level_ = get_parameter("log_level").as_string();
 }
 
@@ -114,10 +122,63 @@ void BackendNode::display_startup_info() {
     RCLCPP_INFO(get_logger(), "========================================");
     RCLCPP_INFO(get_logger(), "Version: 0.1.0");
     RCLCPP_INFO(get_logger(), "TCP Port: %d", tcp_port_);
+    RCLCPP_INFO(get_logger(), "Unity TCP Port: %d", unity_tcp_port_);
     RCLCPP_INFO(get_logger(), "Log Level: %s", log_level_.c_str());
     RCLCPP_INFO(get_logger(), "Available Plugins: %zu", plugin_manager_->get_available_plugins().size());
+    
+    // Check Unity endpoint status
+    if (check_unity_endpoint_status()) {
+        RCLCPP_INFO(get_logger(), "Unity TCP Endpoint: Available on port %d", unity_tcp_port_);
+    } else {
+        RCLCPP_WARN(get_logger(), "Unity TCP Endpoint: Not detected on port %d", unity_tcp_port_);
+    }
+    
     RCLCPP_INFO(get_logger(), "========================================");
     RCLCPP_INFO(get_logger(), "Backend ready for SDK connections");
+}
+
+bool BackendNode::check_unity_endpoint_status() {
+    // Check if Unity TCP endpoint is available by attempting a connection
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        return false;
+    }
+    
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(unity_tcp_port_);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    
+    // Set socket to non-blocking for quick check
+    int flags = fcntl(sock, F_GETFL, 0);
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    
+    bool is_available = false;
+    int result = connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    
+    if (result == 0 || errno == EISCONN) {
+        is_available = true;
+    } else if (errno == EINPROGRESS) {
+        // Connection in progress, wait briefly
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        FD_SET(sock, &write_fds);
+        
+        struct timeval timeout;
+        timeout.tv_sec = 0;
+        timeout.tv_usec = 100000; // 100ms timeout
+        
+        if (select(sock + 1, NULL, &write_fds, NULL, &timeout) > 0) {
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+                is_available = true;
+            }
+        }
+    }
+    
+    close(sock);
+    return is_available;
 }
 
 std::string BackendNode::process_message(const std::string& message) {

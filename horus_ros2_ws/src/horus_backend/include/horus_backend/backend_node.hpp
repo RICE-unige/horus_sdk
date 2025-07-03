@@ -39,6 +39,7 @@ private:
     
     // Parameters
     int tcp_port_;
+    int unity_tcp_port_;
     std::string log_level_;
     
     // Callbacks
@@ -56,6 +57,7 @@ private:
     void setup_subscribers();
     void setup_services();
     void display_startup_info();
+    bool check_unity_endpoint_status();
     std::string process_message(const std::string& message);
 };
 
