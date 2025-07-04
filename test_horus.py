@@ -18,10 +18,12 @@ def main():
     
     # Available tests
     tests = {
-        '1': ('dev_test.py', 'Development SDK initialization (Recommended)'),
-        '2': ('clean_test.py', 'Clean test with backend cleanup'),
-        '3': ('test_import.py', 'Import and initialization test'),
-        '4': ('test_sdk_init.py', 'Basic SDK initialization test'),
+        '1': ('dev_test.py', 'Continuous Unity monitoring (Ctrl+C to stop) - Recommended'),
+        '2': ('test_unity_connection.py', 'Unity MR connection monitoring test'),
+        '3': ('test_cleanup.py', 'Test comprehensive process cleanup'),
+        '4': ('clean_test.py', 'Clean test with backend cleanup'),
+        '5': ('test_import.py', 'Import and initialization test'),
+        '6': ('test_sdk_init.py', 'Basic SDK initialization test'),
     }
     
     print("🚀 HORUS SDK Test Launcher")
@@ -30,7 +32,7 @@ def main():
     for key, (filename, description) in tests.items():
         print(f"{key}. {description}")
     
-    print("\nEnter test number (1-4) or 'q' to quit:")
+    print("\nEnter test number (1-6) or 'q' to quit:")
     
     choice = input("> ").strip()
     

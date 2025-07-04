@@ -61,7 +61,7 @@ def generate_launch_description():
         name='ros_tcp_endpoint',
         output='screen',
         parameters=[{
-            'ROS_IP': '127.0.0.1',
+            'ROS_IP': '0.0.0.0',
             'ROS_TCP_PORT': LaunchConfiguration('unity_tcp_port'),
         }],
         condition=IfCondition(LaunchConfiguration('enable_unity_bridge'))

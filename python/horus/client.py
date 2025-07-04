@@ -4,6 +4,7 @@ import socket
 from .utils.backend_manager import BackendManager
 from .utils.requirements_checker import RequirementsChecker
 from .utils.branding import show_ascii_art
+from .utils.unity_monitor import UnityConnectionMonitor
 
 class Client:
     def __init__(self, backend='ros2', auto_launch=True):
@@ -11,6 +12,8 @@ class Client:
         self.auto_launch = auto_launch
         self.backend_manager = BackendManager(backend)
         self.requirements_checker = RequirementsChecker()
+        self.unity_monitor = UnityConnectionMonitor()
+        self._shutdown_called = False  # Prevent duplicate shutdowns
         
         # Initialize with backend management
         self._initialize_with_backend()
@@ -93,11 +96,24 @@ class Client:
         spinner = Spinner("Establishing backend connection")
         spinner.start()
         
-        # Test connection
+        # Test backend connection
         if self.backend_manager.test_connection():
             spinner.stop()
             port = self.backend_manager.get_port()
             print(f"  \033[92m✓\033[0m Backend connection: \033[90mConnected on port {port}\033[0m")
+            
+            # Test Unity endpoint connection
+            unity_spinner = Spinner("Verifying Unity TCP endpoint")
+            unity_spinner.start()
+            time.sleep(1)  # Give it a moment to fully start
+            
+            if self.backend_manager.test_unity_endpoint():
+                unity_spinner.stop()
+                unity_port = self.backend_manager.get_unity_port()
+                print(f"  \033[92m✓\033[0m Unity TCP endpoint: \033[90mRunning on port {unity_port}\033[0m")
+            else:
+                unity_spinner.stop()
+                print(f"  \033[93m⚠\033[0m Unity TCP endpoint: \033[93mNot yet ready (may still be starting)\033[0m")
             
             # Show Unity MR connection information
             self._display_unity_connection_info()
@@ -138,40 +154,57 @@ class Client:
         print(f"     Enter these details in your Quest 3 HORUS app")
         print(f"     Host: \033[92m{local_ip}:{unity_port}\033[0m")
         
-        # Check for Unity connection with animation
-        print(f"\n  \033[96m⏳ Waiting for Unity MR connection...\033[0m")
+        # Start Unity connection monitoring
+        print(f"\n  \033[96m⏳ Monitoring for Unity MR connections...\033[0m")
         
-        spinner = Spinner("Monitoring Unity connection", style="dots")
+        # Set up connection callback
+        def on_unity_connection(ip_address, is_connected):
+            if is_connected:
+                print(f"  \033[92m✓\033[0m Unity MR connection: \033[92mConnected from {ip_address}\033[0m")
+                print(f"  \033[90m  → Mixed Reality interface active\033[0m")
+            else:
+                print(f"  \033[93m⧖\033[0m Unity MR connection: \033[93mDisconnected from {ip_address}\033[0m")
+                print(f"  \033[90m  → Monitoring for new connections...\033[0m")
+        
+        self.unity_monitor.set_connection_callback(on_unity_connection)
+        self.unity_monitor.start_monitoring()
+        
+        # Brief initial check
+        spinner = Spinner("Checking for existing connections", style="dots")
         spinner.start()
-        
-        # Monitor for Unity connection (with timeout)
-        connection_timeout = 10  # seconds
-        start_time = time.time()
-        unity_connected = False
-        
-        while time.time() - start_time < connection_timeout:
-            if self._check_unity_connection(unity_port):
-                unity_connected = True
-                break
-            time.sleep(0.5)
-        
+        time.sleep(2)
         spinner.stop()
         
-        if unity_connected:
-            print(f"  \033[92m✓\033[0m Unity MR connection: \033[92mConnected successfully\033[0m")
+        if self.unity_monitor.is_unity_connected():
+            connected_clients = self.unity_monitor.get_connected_clients()
+            for ip in connected_clients:
+                print(f"  \033[92m✓\033[0m Unity MR connection: \033[92mAlready connected from {ip}\033[0m")
             print(f"  \033[90m  → Mixed Reality interface active\033[0m")
         else:
-            print(f"  \033[93m⧖\033[0m Unity MR connection: \033[93mStandby mode (no MR app connected)\033[0m")
+            print(f"  \033[93m⧖\033[0m Unity MR connection: \033[93mStandby mode (monitoring for connections)\033[0m")
             print(f"  \033[90m  → Launch HORUS app on Quest 3 to connect\033[0m")
     
     def _check_unity_connection(self, port):
         """Check if Unity MR application is connected"""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.1)
-            # Try to connect to see if something is listening
-            result = sock.connect_ex(('127.0.0.1', port))
-            sock.close()
-            return result == 0
-        except:
-            return False
+        return self.unity_monitor.is_unity_connected()
+    
+    def shutdown(self):
+        """Clean shutdown of client and monitoring"""
+        # Prevent duplicate shutdown calls
+        if self._shutdown_called:
+            return
+        self._shutdown_called = True
+        
+        print(f"\n\033[96mShutting down HORUS SDK...\033[0m")
+        
+        # Stop Unity connection monitoring
+        if hasattr(self, 'unity_monitor'):
+            print(f"\033[90m  Stopping Unity connection monitoring...\033[0m")
+            self.unity_monitor.stop_monitoring()
+            print(f"\033[90m  ✓ Unity monitoring stopped\033[0m")
+        
+        # Stop backend and all ROS2 processes
+        if hasattr(self, 'backend_manager'):
+            self.backend_manager.stop_backend()
+        
+        print(f"\033[92m  ✓ HORUS SDK shutdown complete\033[0m")
