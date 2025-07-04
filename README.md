@@ -37,7 +37,8 @@ Both SDKs are being developed in parallel and aim for feature parity.
 
 ### **Current Version:** `0.1.0-alpha`
 
-> **🎉 Major Update**: Complete ROS2 backend infrastructure and professional SDK initialization system now available!
+> **🎉 Latest Update**: Real-time HORUS MR app connection monitoring now available!
+> Complete ROS2 backend infrastructure with live Quest 3 device connection detection.
 > Core modules (`TopicMap`, `EventBus`) are still stubs and ready for M1 implementation.
 
 ---
@@ -49,9 +50,11 @@ Both SDKs are being developed in parallel and aim for feature parity.
 |    ✔   |            | **Typed topic keys** (`Status.BATTERY`, `DataViz.LIDAR`) — no more string typos |
 |    ✔   |            | **Complete ROS2 backend infrastructure** with C++ implementation                |
 |    ✔   |            | **Professional SDK initialization** with animated spinners and status checking  |
-|    ✔   |            | **Unity-TCP bridge integration** via ROS-TCP-Endpoint submodule                |
+|    ✔   |            | **Real-time MR app monitoring** with instant Quest 3 connection detection      |
+|    ✔   |            | **TCP bridge integration** via ROS-TCP-Endpoint for Quest 3 communication     |
+|    ✔   |            | **Continuous monitoring mode** with clean Ctrl+C shutdown and process cleanup  |
 |    ✔   |            | **Development testing framework** with interactive test launcher               |
-|    ✔   |            | **Automatic backend management** with process lifecycle control                |
+|    ✔   |            | **Automatic backend management** with comprehensive process lifecycle control  |
 |        |     🛠     | Async **ROS 2 bridge** (`rclpy`) + ROS 1 (`roslibpy`)                           |
 |        |     🛠     | JSON handshake generator for the MR headset                                     |
 |        |     🛠     | Plugin system (`plugins.Rosbot`, `plugins.Spot`)                                |
@@ -90,7 +93,7 @@ python3 test_horus.py
 
 ### System Architecture
 ```text
-Python/C++ SDK ←→ HORUS Backend (C++) ←→ ROS-TCP-Endpoint ←→ Unity MR App
+Python/C++ SDK ←→ HORUS Backend (C++) ←→ ROS-TCP-Endpoint ←→ HORUS MR App (Quest 3)
     (port 8080)                            (port 10000)
 ```
 
@@ -105,9 +108,11 @@ client        ← orchestrator
 
 ### Key Components
 - **HORUS Backend**: C++ ROS2 node with TCP server and plugin system
-- **ROS-TCP-Endpoint**: Unity integration bridge (as git submodule)
-- **SDK Client**: Professional initialization with automatic backend management
-- **Testing Framework**: Interactive development tools and comprehensive docs
+- **ROS-TCP-Endpoint**: Quest 3 integration bridge (as git submodule)
+- **SDK Client**: Professional initialization with real-time MR app monitoring
+- **Connection Monitor**: Live detection of Quest 3 device connections/disconnections
+- **Process Manager**: Comprehensive cleanup and lifecycle management
+- **Testing Framework**: Interactive development tools with continuous monitoring mode
 
 Everything outside **`bridge/`** is ROS-agnostic and therefore unit-testable
 without running a roscore.
@@ -118,8 +123,9 @@ without running a roscore.
 
 | Milestone | Target                                             | Status |
 | --------- | -------------------------------------------------- | ------ |
+| **M0**    | Real-time MR app connection monitoring             | ✅ Complete |
 | **M1**    | Implement `TopicSpec`, `TopicMap`, and `EventBus`  | 🔄 Ready for implementation |
-| **M2**    | Unity-TCP bridge + JSON handshake, full unit tests | ✅ Infrastructure complete |
+| **M2**    | TCP bridge + JSON handshake, full unit tests       | ✅ Infrastructure complete |
 | **M3**    | ROS 2 bridge + first working control loop          | ✅ Backend ready |
 | **M4**    | Plugins: Rosbot (diff-drive), Spot (legged)        | 🔄 Awaiting M1 completion |
 | **M5**    | ROS 1 bridge & docs deployment                     | 📋 Planned |

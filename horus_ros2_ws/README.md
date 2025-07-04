@@ -1,6 +1,6 @@
 # HORUS ROS2 Backend
 
-This workspace contains the HORUS ROS2 backend system with Unity integration support.
+This workspace contains the HORUS ROS2 backend system with Quest 3 MR app integration support.
 
 ## Packages
 
@@ -9,7 +9,7 @@ This workspace contains the HORUS ROS2 backend system with Unity integration sup
 - **`horus_backend`**: Main C++ backend node for robot management
 
 ### Dependencies
-- **`ros_tcp_endpoint`**: Unity TCP communication bridge (git submodule)
+- **`ros_tcp_endpoint`**: Quest 3 TCP communication bridge (git submodule)
 
 ## Architecture
 
@@ -20,7 +20,7 @@ HORUS Backend Node (C++)
     ↓ ROS2 Topics/Services
 ROS-TCP-Endpoint (Python)
     ↓ TCP (port 10000)
-Unity Mixed Reality App
+HORUS MR App (Quest 3)
     ↓ Commands
 Robot Systems
 ```
@@ -42,7 +42,7 @@ source install/setup.bash
 
 ### Launch Complete Backend (Recommended)
 ```bash
-# Launches both HORUS backend and Unity TCP bridge
+# Launches both HORUS backend and Quest 3 TCP bridge
 ros2 launch horus_backend horus_complete_backend.launch.py
 ```
 
@@ -51,7 +51,7 @@ ros2 launch horus_backend horus_complete_backend.launch.py
 # HORUS backend only
 ros2 launch horus_backend horus_backend.launch.py
 
-# Unity TCP bridge only
+# Quest 3 TCP bridge only
 ros2 launch ros_tcp_endpoint endpoint.py
 ```
 
@@ -60,7 +60,7 @@ ros2 launch ros_tcp_endpoint endpoint.py
 # Custom ports
 ros2 launch horus_backend horus_complete_backend.launch.py tcp_port:=8080 unity_tcp_port:=10000
 
-# Disable Unity bridge
+# Disable MR app bridge
 ros2 launch horus_backend horus_complete_backend.launch.py enable_unity_bridge:=false
 
 # Verbose logging
@@ -70,7 +70,7 @@ ros2 launch horus_backend horus_complete_backend.launch.py log_level:=debug
 ## Network Ports
 
 - **8080**: HORUS SDK ↔ Backend communication
-- **10000**: Unity ↔ ROS TCP Endpoint communication
+- **10000**: Quest 3 MR App ↔ ROS TCP Endpoint communication
 
 ## Integration with HORUS SDK
 
