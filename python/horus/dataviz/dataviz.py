@@ -536,7 +536,7 @@ class DataViz:
 
     def get_summary(self) -> Dict[str, Any]:
         """Get a comprehensive summary of all visualizations"""
-        summary = {
+        summary: Dict[str, Any] = {
             "name": self.name,
             "total_visualizations": len(self.visualizations),
             "enabled_visualizations": len(self.get_enabled_visualizations()),
@@ -590,15 +590,17 @@ class DataViz:
 
     def _get_viz_type_for_sensor(self, sensor: SensorInstance) -> VisualizationType:
         """Determine appropriate visualization type for sensor"""
-        from ..sensors import Camera, LaserScan, Lidar3D
+        # Use sensor type matching instead of isinstance for exhaustive checking
+        sensor_type = sensor.sensor_type
 
-        if isinstance(sensor, Camera):
+        if sensor_type.value == "camera":
             return VisualizationType.CAMERA_FEED
-        elif isinstance(sensor, LaserScan):
+        elif sensor_type.value == "laser_scan":
             return VisualizationType.LASER_SCAN
-        elif isinstance(sensor, Lidar3D):
+        elif sensor_type.value == "lidar_3d":
             return VisualizationType.POINT_CLOUD
         else:
+            # Handle any other sensor types
             return VisualizationType.MARKERS
 
     def __str__(self) -> str:

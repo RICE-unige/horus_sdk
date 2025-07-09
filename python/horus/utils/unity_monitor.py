@@ -12,10 +12,10 @@ class UnityConnectionMonitor:
     def __init__(self, unity_port: int = 10000):
         self.unity_port = unity_port
         self.is_monitoring = False
-        self.monitor_thread = None
+        self.monitor_thread: Optional[threading.Thread] = None
         self.connection_callback: Optional[Callable[[str, bool], None]] = None
-        self.connected_clients = set()
-        self.log_process = None
+        self.connected_clients: set[str] = set()
+        self.log_process: Optional[subprocess.Popen] = None
 
     def set_connection_callback(self, callback: Callable[[str, bool], None]):
         """Set callback function for connection events
@@ -37,7 +37,8 @@ class UnityConnectionMonitor:
     def stop_monitoring(self):
         """Stop monitoring Unity connections"""
         self.is_monitoring = False
-        if self.log_process:
+        # Note: log_process is currently always None, placeholder for future use
+        if self.log_process is not None:
             self.log_process.terminate()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=2)

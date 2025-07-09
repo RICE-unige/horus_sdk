@@ -77,8 +77,10 @@ class BackendManager:
         config = self.backend_configs[self.backend_type]
 
         # Launch in background
+        launch_command = config["launch_command"]
+        assert isinstance(launch_command, str), "launch_command must be a string"
         self.backend_process = subprocess.Popen(
-            config["launch_command"].split(),
+            launch_command.split(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             preexec_fn=os.setsid,  # Create new process group

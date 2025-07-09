@@ -152,8 +152,9 @@ class ColorManager:
             return self._generate_rainbow_palette(12)
         elif scheme == ColorScheme.NEON:
             return self._generate_neon_palette(10)
-        else:
-            return self.BRIGHT_COLORS
+
+        # This should never be reached due to enum exhaustiveness
+        raise ValueError(f"Unknown color scheme: {scheme}")
 
     def _generate_rainbow_palette(self, count: int) -> List[str]:
         """Generate rainbow color palette"""

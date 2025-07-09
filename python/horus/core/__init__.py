@@ -10,7 +10,7 @@ Contains low-level infrastructure like EventBus, TopicMap, and exceptions.
 # from .topic_map import TopicMap
 # from .exceptions import HorusException
 
-__all__ = [
+__all__: list[str] = [
     # Pure logic components (stubs for now, ready for implementation)
     # 'EventBus', 'TopicMap', 'HorusException'
 ]
