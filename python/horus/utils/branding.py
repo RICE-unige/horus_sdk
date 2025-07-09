@@ -1,5 +1,6 @@
 __version__ = "0.1.0"
 
+
 def show_ascii_art():
     """Display HORUS ASCII art header"""
     art = """

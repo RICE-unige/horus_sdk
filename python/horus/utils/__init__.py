@@ -5,4 +5,10 @@ from .backend_manager import BackendManager
 from .requirements_checker import RequirementsChecker
 from .spinner import Spinner
 
-__all__ = ['show_ascii_art', '__version__', 'BackendManager', 'RequirementsChecker', 'Spinner']
+__all__ = [
+    "show_ascii_art",
+    "__version__",
+    "BackendManager",
+    "RequirementsChecker",
+    "Spinner",
+]
