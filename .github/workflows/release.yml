@@ -107,13 +107,13 @@ jobs:
             .
 
       - name: Upload Python package artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: python-package
           path: python/dist/
 
       - name: Upload release tarball
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: release-tarball
           path: horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
@@ -239,7 +239,7 @@ jobs:
           make html
 
       - name: Upload documentation artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: documentation
           path: |
