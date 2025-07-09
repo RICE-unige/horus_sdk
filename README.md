@@ -5,7 +5,6 @@
 
 [![CI Pipeline](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
 [![Release](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml)
-[![Documentation](https://github.com/RICE-unige/horus_sdk/actions/workflows/docs.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/docs.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![ROS2](https://img.shields.io/badge/ros2-humble-blue.svg)](https://docs.ros.org/en/humble/)

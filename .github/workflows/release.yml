@@ -196,60 +196,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Generate Documentation
-  documentation:
-    name: Generate Documentation
-    runs-on: ubuntu-22.04
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install documentation dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install sphinx sphinx-rtd-theme sphinx-autoapi doxygen
-          pip install -e python/
-
-      - name: Generate C++ documentation
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
-          cd cpp/
-          doxygen -g Doxyfile
-          sed -i 's/PROJECT_NAME.*/PROJECT_NAME = "HORUS C++ SDK"/' Doxyfile
-          sed -i 's/INPUT.*/INPUT = include\/ src\//' Doxyfile
-          sed -i 's/RECURSIVE.*/RECURSIVE = YES/' Doxyfile
-          sed -i 's/GENERATE_HTML.*/GENERATE_HTML = YES/' Doxyfile
-          doxygen Doxyfile
-
-      - name: Generate Python documentation
-        run: |
-          cd python/
-          mkdir -p docs/
-          sphinx-quickstart docs/ --quiet --project="HORUS Python SDK" --author="RICE Lab" --release="${{ needs.validate.outputs.version }}" --language="en" --makefile --batchfile
-          cd docs/
-          make html
-
-      - name: Upload documentation artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: |
-            python/docs/_build/html/
-            cpp/html/
 
   # Create GitHub Release
   release:
     name: Create GitHub Release
-    needs: [validate, build, docker, documentation]
+    needs: [validate, build, docker]
     runs-on: ubuntu-22.04
     
     steps:
