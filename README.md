@@ -37,9 +37,9 @@ Both SDKs are being developed in parallel and aim for feature parity.
 
 ### **Current Version:** `0.1.0-alpha`
 
-> **🎉 Latest Update**: Real-time HORUS MR app connection monitoring now available!
-> Complete ROS2 backend infrastructure with live Quest 3 device connection detection.
-> Core modules (`TopicMap`, `EventBus`) are still stubs and ready for M1 implementation.
+> **🎉 Latest Update**: Python SDK reorganized with dedicated modules for better architecture!
+> Complete robot registration system with comprehensive examples and improved backend integration.
+> Ready for advanced robot management and mixed reality visualization.
 
 ---
 
@@ -47,7 +47,10 @@ Both SDKs are being developed in parallel and aim for feature parity.
 
 | Done ✔ | Planned 🛠 | Description                                                                     |
 | :----: | :--------: | ------------------------------------------------------------------------------- |
-|    ✔   |            | **Typed topic keys** (`Status.BATTERY`, `DataViz.LIDAR`) — no more string typos |
+|    ✔   |            | **Modular Python SDK** with dedicated robot, sensor, dataviz, and color modules |
+|    ✔   |            | **Complete robot registration system** with ROS2 service integration          |
+|    ✔   |            | **Comprehensive sensor support** (Camera, LiDAR, LaserScan) with auto-config  |
+|    ✔   |            | **Advanced data visualization** with automatic color assignment for MR        |
 |    ✔   |            | **Complete ROS2 backend infrastructure** with C++ implementation                |
 |    ✔   |            | **Professional SDK initialization** with animated spinners and status checking  |
 |    ✔   |            | **Real-time MR app monitoring** with instant Quest 3 connection detection      |
@@ -55,6 +58,7 @@ Both SDKs are being developed in parallel and aim for feature parity.
 |    ✔   |            | **Continuous monitoring mode** with clean Ctrl+C shutdown and process cleanup  |
 |    ✔   |            | **Development testing framework** with interactive test launcher               |
 |    ✔   |            | **Automatic backend management** with comprehensive process lifecycle control  |
+|    ✔   |            | **Comprehensive examples** (Carter robot, live integration, sensor demos)      |
 |        |     🛠     | Async **ROS 2 bridge** (`rclpy`) + ROS 1 (`roslibpy`)                           |
 |        |     🛠     | JSON handshake generator for the MR headset                                     |
 |        |     🛠     | Plugin system (`plugins.Rosbot`, `plugins.Spot`)                                |
@@ -76,8 +80,8 @@ colcon build
 source install/setup.bash
 cd ..
 
-# Test SDK with interactive launcher
-python3 test_horus.py
+# Test SDK with quick test
+python3 examples/quick_test.py
 ```
 
 ### Full Documentation
@@ -100,19 +104,25 @@ Python/C++ SDK ←→ HORUS Backend (C++) ←→ ROS-TCP-Endpoint ←→ HORUS M
 ### SDK Structure
 ```text
 client        ← orchestrator
- ├─ core/        ← pure logic (TopicMap, EventBus…)
+ ├─ core/        ← pure logic (TopicMap, EventBus, exceptions)
+ ├─ robot/       ← robot management and control
+ ├─ sensors/     ← sensor modeling and management
+ ├─ dataviz/     ← data visualization for MR
+ ├─ color/       ← color management for multi-robot
  ├─ bridge/      ← IO adapters (ros1, ros2, unity_tcp)
- ├─ robot/       ← façade for users (status, task, teleop)
- └─ plugins/     ← ready-made robot presets
+ ├─ plugins/     ← ready-made robot presets
+ └─ utils/       ← supporting infrastructure
 ```
 
 ### Key Components
-- **HORUS Backend**: C++ ROS2 node with TCP server and plugin system
+- **HORUS Backend**: C++ ROS2 node with TCP server and robot registration system
 - **ROS-TCP-Endpoint**: Quest 3 integration bridge (as git submodule)
 - **SDK Client**: Professional initialization with real-time MR app monitoring
+- **Robot Management**: Complete robot modeling with sensor integration
+- **Data Visualization**: Advanced MR visualization with automatic color assignment
 - **Connection Monitor**: Live detection of Quest 3 device connections/disconnections
 - **Process Manager**: Comprehensive cleanup and lifecycle management
-- **Testing Framework**: Interactive development tools with continuous monitoring mode
+- **Examples Framework**: Comprehensive robot integration examples and demos
 
 Everything outside **`bridge/`** is ROS-agnostic and therefore unit-testable
 without running a roscore.
@@ -124,6 +134,7 @@ without running a roscore.
 | Milestone | Target                                             | Status |
 | --------- | -------------------------------------------------- | ------ |
 | **M0**    | Real-time MR app connection monitoring             | ✅ Complete |
+| **M0.5**  | Python SDK reorganization and robot registration   | ✅ Complete |
 | **M1**    | Implement `TopicSpec`, `TopicMap`, and `EventBus`  | 🔄 Ready for implementation |
 | **M2**    | TCP bridge + JSON handshake, full unit tests       | ✅ Infrastructure complete |
 | **M3**    | ROS 2 bridge + first working control loop          | ✅ Backend ready |

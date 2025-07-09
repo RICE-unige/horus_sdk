@@ -5,8 +5,8 @@ This workspace contains the HORUS ROS2 backend system with Quest 3 MR app integr
 ## Packages
 
 ### Core Packages
-- **`horus_interfaces`**: Custom ROS2 message and service definitions
-- **`horus_backend`**: Main C++ backend node for robot management
+- **`horus_interfaces`**: Custom ROS2 message and service definitions with robot registration
+- **`horus_backend`**: Main C++ backend node for robot management and registration
 
 ### Dependencies
 - **`ros_tcp_endpoint`**: Quest 3 TCP communication bridge (git submodule)
@@ -81,6 +81,22 @@ from horus import Client
 client = Client(backend='ros2')  # Automatically starts backend
 ```
 
+## ROS2 Interface Definitions
+
+### Messages
+- **`RobotCommand`**: Commands from MR app to robots (teleop, goto, emergency_stop)
+- **`RobotStatus`**: Real-time robot status updates (pose, velocity, battery, health)
+- **`RobotConfig`**: Complete robot configuration for registration
+- **`SensorConfig`**: Individual sensor configurations 
+- **`VisualizationConfig`**: MR visualization settings
+- **`RobotState`**: Basic robot state information
+
+### Services
+- **`RegisterRobot`**: Full robot registration with validation and color assignment
+- **`UnregisterRobot`**: Robot removal from system
+- **`ConnectRobot`**: Simple robot connection
+- **`ExecuteCommand`**: Command execution interface
+
 ## Development
 
 ### Adding Custom Messages
@@ -92,6 +108,13 @@ client = Client(backend='ros2')  # Automatically starts backend
 1. Modify `horus_backend/src/backend_node.cpp`
 2. Add new services/topics in `horus_backend/include/horus_backend/backend_node.hpp`
 3. Rebuild: `colcon build --packages-select horus_backend`
+
+### Robot Registration System
+The backend now includes a comprehensive robot registration system:
+- Automatic robot ID generation
+- Color assignment for MR visualization
+- Configuration validation
+- Health monitoring and status tracking
 
 ## Troubleshooting
 
