@@ -1,3 +1,9 @@
-"""stub"""
+"""
+HORUS SDK Robot Module
 
-pass
+Robot management and control functionality.
+"""
+
+from .robot import Robot, RobotType
+
+__all__ = ['Robot', 'RobotType']
