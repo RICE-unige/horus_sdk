@@ -3,8 +3,6 @@
 import threading
 import time
 import subprocess
-import re
-import os
 from typing import Optional, Callable
 
 
@@ -50,7 +48,7 @@ class UnityConnectionMonitor:
             try:
                 # Monitor network connections directly
                 self._monitor_network_connections()
-            except Exception as e:
+            except Exception:
                 if (
                     self.is_monitoring
                 ):  # Only log if we're still supposed to be monitoring

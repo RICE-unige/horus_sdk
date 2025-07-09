@@ -2,7 +2,6 @@ import subprocess
 import time
 import os
 import socket
-from pathlib import Path
 
 
 class BackendManager:
@@ -15,7 +14,8 @@ class BackendManager:
                 "package": "horus_backend",
                 "launch_file": "horus_complete_backend.launch.py",
                 "check_command": "ros2 pkg list | grep horus_backend",
-                "launch_command": "ros2 launch horus_backend horus_complete_backend.launch.py",
+                "launch_command": ("ros2 launch horus_backend "
+                                  "horus_complete_backend.launch.py"),
                 "tcp_port": 8080,
                 "unity_port": 10000,
             },
@@ -42,10 +42,11 @@ class BackendManager:
             spinner.stop()
             config = self.backend_configs[self.backend_type]
             print(
-                f"  \033[92m✓\033[0m Backend startup: \033[90mReady on port {config['tcp_port']}\033[0m"
+                f"  \033[92m✓\033[0m Backend startup: "
+                f"\033[90mReady on port {config['tcp_port']}\033[0m"
             )
         else:
-            print(f"  \033[92m✓\033[0m Backend status: \033[90mAlready running\033[0m")
+            print("  \033[92m✓\033[0m Backend status: \033[90mAlready running\033[0m")
 
     def _is_backend_running(self):
         """Check if backend is already running"""
@@ -55,7 +56,7 @@ class BackendManager:
             result = sock.connect_ex(("localhost", config["tcp_port"]))
             sock.close()
             return result == 0
-        except:
+        except Exception:
             return False
 
     def _is_unity_endpoint_running(self):
@@ -67,7 +68,7 @@ class BackendManager:
             result = sock.connect_ex(("localhost", unity_port))
             sock.close()
             return result == 0
-        except:
+        except Exception:
             return False
 
     def _start_backend_process(self):
@@ -133,20 +134,21 @@ class BackendManager:
             return
         self._shutdown_called = True
 
-        print(f"\033[90mStopping HORUS backend processes...\033[0m")
+        print("\033[90mStopping HORUS backend processes...\033[0m")
 
         # First, try to stop our launched process gracefully
         if self.backend_process:
             try:
-                # Send SIGTERM to the process group (this will stop both backend and unity endpoint)
+                # Send SIGTERM to the process group (this will stop both
+                # backend and unity endpoint)
                 os.killpg(os.getpgid(self.backend_process.pid), 15)
                 self.backend_process.wait(timeout=8)
-                print(f"\033[90m  ✓ Launch process stopped gracefully\033[0m")
+                print("\033[90m  ✓ Launch process stopped gracefully\033[0m")
             except (ProcessLookupError, subprocess.TimeoutExpired):
                 # Force kill if graceful shutdown fails
                 try:
                     os.killpg(os.getpgid(self.backend_process.pid), 9)
-                    print(f"\033[90m  ✓ Launch process force-killed\033[0m")
+                    print("\033[90m  ✓ Launch process force-killed\033[0m")
                 except ProcessLookupError:
                     pass
             finally:
@@ -155,7 +157,7 @@ class BackendManager:
         # Additionally, ensure all HORUS-related processes are stopped
         self._cleanup_horus_processes()
 
-        print(f"\033[90m  ✓ All HORUS backend processes stopped\033[0m")
+        print("\033[90m  ✓ All HORUS backend processes stopped\033[0m")
 
     def _cleanup_horus_processes(self):
         """Cleanup any remaining HORUS-related ROS2 processes"""
@@ -172,7 +174,9 @@ class BackendManager:
                     ["pkill", "-f", process_name], capture_output=True, timeout=3
                 )
                 if result.returncode == 0:
-                    print(f"\033[90m  ✓ Terminated {process_name} processes\033[0m")
+                    print(
+                        f"\033[90m  ✓ Terminated {process_name} processes\033[0m"
+                    )
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
 

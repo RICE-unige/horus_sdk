@@ -2,12 +2,12 @@
 Data visualization system for robot sensors and environmental data in HORUS SDK
 """
 
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from abc import ABC, abstractmethod
+from abc import ABC
 
-from ..sensors import SensorInstance, SensorType
+from ..sensors import SensorInstance
 
 
 class DataSourceType(Enum):
@@ -187,7 +187,7 @@ class DataViz:
 
     name: str
     visualizations: List[VisualizationConfig] = field(default_factory=list)
-    color_manager: Optional["ColorManager"] = None
+    color_manager: Optional[Any] = None
 
     def __post_init__(self):
         """Validate DataViz configuration"""
@@ -196,7 +196,7 @@ class DataViz:
 
         # Initialize color manager if not provided
         if self.color_manager is None:
-            from ..color import ColorManager
+            from ..color.color_manager import ColorManager
 
             self.color_manager = ColorManager()
 
@@ -275,7 +275,8 @@ class DataViz:
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add robot global path planning visualization with automatic color assignment"""
+        """Add robot global path planning visualization with automatic color
+        assignment"""
         if render_options is None:
             render_options = {}
 
@@ -310,7 +311,8 @@ class DataViz:
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add robot local path planning visualization with automatic color assignment"""
+        """Add robot local path planning visualization with automatic color
+        assignment"""
         if render_options is None:
             render_options = {}
 
@@ -462,7 +464,8 @@ class DataViz:
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add global navigation path visualization (alias for add_global_navigation_path)"""
+        """Add global navigation path visualization (alias for
+        add_global_navigation_path)"""
         return self.add_global_navigation_path(topic, frame_id, render_options)
 
     def add_tf_tree(

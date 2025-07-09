@@ -5,7 +5,7 @@ Color assignment system for robot visualizations in HORUS SDK
 import random
 import hashlib
 from typing import Dict, Tuple, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 

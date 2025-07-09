@@ -1,6 +1,4 @@
-import subprocess
 import time
-import socket
 from .utils.backend_manager import BackendManager
 from .utils.requirements_checker import RequirementsChecker
 from .utils.branding import show_ascii_art
@@ -72,7 +70,8 @@ class Client:
             except Exception as e:
                 spinner.stop()
                 print(
-                    f"  \033[91m✗\033[0m {req_name}: \033[91mCheck failed: {str(e)}\033[0m"
+                    f"  \033[91m✗\033[0m {req_name}: "
+                    f"\033[91mCheck failed: {str(e)}\033[0m"
                 )
                 requirements[req_name] = {
                     "available": False,
@@ -85,8 +84,8 @@ class Client:
             missing = [
                 name for name, status in requirements.items() if not status["available"]
             ]
-            print(f"\n\033[91mError: Missing required components\033[0m")
-            print(f"\033[93mPlease install missing requirements and try again\033[0m")
+            print("\n\033[91mError: Missing required components\033[0m")
+            print("\033[93mPlease install missing requirements and try again\033[0m")
             raise RuntimeError(f"Missing requirements: {', '.join(missing)}")
 
         return requirements
@@ -103,7 +102,8 @@ class Client:
             spinner.stop()
             port = self.backend_manager.get_port()
             print(
-                f"  \033[92m✓\033[0m Backend connection: \033[90mConnected on port {port}\033[0m"
+                f"  \033[92m✓\033[0m Backend connection: "
+                f"\033[90mConnected on port {port}\033[0m"
             )
 
             # Test Unity endpoint connection
@@ -115,22 +115,25 @@ class Client:
                 unity_spinner.stop()
                 unity_port = self.backend_manager.get_unity_port()
                 print(
-                    f"  \033[92m✓\033[0m Unity TCP endpoint: \033[90mRunning on port {unity_port}\033[0m"
+                    f"  \033[92m✓\033[0m Unity TCP endpoint: "
+                    f"\033[90mRunning on port {unity_port}\033[0m"
                 )
             else:
                 unity_spinner.stop()
                 print(
-                    f"  \033[93m⚠\033[0m Unity TCP endpoint: \033[93mNot yet ready (may still be starting)\033[0m"
+                    f"  \033[93m⚠\033[0m Unity TCP endpoint: "
+                    f"\033[93mNot yet ready (may still be starting)\033[0m"
                 )
 
             # Show Unity MR connection information
             self._display_unity_connection_info()
 
-            print(f"\n\033[92mSDK initialized successfully\033[0m")
+            print("\n\033[92mSDK initialized successfully\033[0m")
         else:
             spinner.stop()
             print(
-                f"  \033[91m✗\033[0m Backend connection: \033[91mFailed to connect\033[0m"
+                "  \033[91m✗\033[0m Backend connection: "
+                "\033[91mFailed to connect\033[0m"
             )
             raise RuntimeError("Backend connection failed")
 
@@ -140,8 +143,8 @@ class Client:
         import time
         from .utils.spinner import Spinner
 
-        print(f"\n\033[96m🎮 Unity Mixed Reality Connection\033[0m")
-        print(f"\033[96m{'═' * 45}\033[0m")
+        print("\n\033[96m🎮 Unity Mixed Reality Connection\033[0m")
+        print("\033[96m" + "═" * 45 + "\033[0m")
 
         # Get local IP address
         try:
@@ -150,22 +153,22 @@ class Client:
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
             s.close()
-        except:
+        except Exception:
             local_ip = "127.0.0.1"
 
         unity_port = 10000
 
-        print(f"  \033[94m📡 Connection Details:\033[0m")
+        print("  \033[94m📡 Connection Details:\033[0m")
         print(f"     IP Address: \033[93m{local_ip}\033[0m")
         print(f"     Port:       \033[93m{unity_port}\033[0m")
-        print(f"     Protocol:   \033[93mTCP\033[0m")
+        print("     Protocol:   \033[93mTCP\033[0m")
 
-        print(f"\n  \033[95m🔗 HORUS MR App Configuration:\033[0m")
-        print(f"     Enter these details in your Quest 3 HORUS app")
+        print("\n  \033[95m🔗 HORUS MR App Configuration:\033[0m")
+        print("     Enter these details in your Quest 3 HORUS app")
         print(f"     Host: \033[92m{local_ip}:{unity_port}\033[0m")
 
         # Start Unity connection monitoring
-        print(f"\n  \033[96m⏳ Monitoring for Unity MR connections...\033[0m")
+        print("\n  \033[96m⏳ Monitoring for Unity MR connections...\033[0m")
 
         # Set up connection callback
         def on_unity_connection(ip_address, is_connected):
@@ -173,12 +176,12 @@ class Client:
                 print(
                     f"  \033[92m✓\033[0m Unity MR connection: \033[92mConnected from {ip_address}\033[0m"
                 )
-                print(f"  \033[90m  → Mixed Reality interface active\033[0m")
+                print("  \033[90m  → Mixed Reality interface active\033[0m")
             else:
                 print(
                     f"  \033[93m⧖\033[0m Unity MR connection: \033[93mDisconnected from {ip_address}\033[0m"
                 )
-                print(f"  \033[90m  → Monitoring for new connections...\033[0m")
+                print("  \033[90m  → Monitoring for new connections...\033[0m")
 
         self.unity_monitor.set_connection_callback(on_unity_connection)
         self.unity_monitor.start_monitoring()
@@ -200,7 +203,7 @@ class Client:
             print(
                 f"  \033[93m⧖\033[0m Unity MR connection: \033[93mStandby mode (monitoring for connections)\033[0m"
             )
-            print(f"  \033[90m  → Launch HORUS app on Quest 3 to connect\033[0m")
+            print("  \033[90m  → Launch HORUS app on Quest 3 to connect\033[0m")
 
     def _check_unity_connection(self, port):
         """Check if Unity MR application is connected"""
@@ -213,16 +216,16 @@ class Client:
             return
         self._shutdown_called = True
 
-        print(f"\n\033[96mShutting down HORUS SDK...\033[0m")
+        print("\n\033[96mShutting down HORUS SDK...\033[0m")
 
         # Stop Unity connection monitoring
         if hasattr(self, "unity_monitor"):
-            print(f"\033[90m  Stopping Unity connection monitoring...\033[0m")
+            print("\033[90m  Stopping Unity connection monitoring...\033[0m")
             self.unity_monitor.stop_monitoring()
-            print(f"\033[90m  ✓ Unity monitoring stopped\033[0m")
+            print("\033[90m  ✓ Unity monitoring stopped\033[0m")
 
         # Stop backend and all ROS2 processes
         if hasattr(self, "backend_manager"):
             self.backend_manager.stop_backend()
 
-        print(f"\033[92m  ✓ HORUS SDK shutdown complete\033[0m")
+        print("\033[92m  ✓ HORUS SDK shutdown complete\033[0m")

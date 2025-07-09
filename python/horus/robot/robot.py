@@ -3,8 +3,12 @@ Robot object system for HORUS SDK
 """
 
 from enum import Enum
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
+
+if TYPE_CHECKING:
+    from ..sensors import SensorInstance, SensorType
+    from ..dataviz import DataViz
 
 
 class RobotType(Enum):
@@ -50,7 +54,10 @@ class Robot:
 
     def __repr__(self) -> str:
         """Detailed representation of the robot"""
-        return f"Robot(name='{self.name}', robot_type={self.robot_type}, metadata={self.metadata})"
+        return (
+            f"Robot(name='{self.name}', robot_type={self.robot_type}, "
+            f"metadata={self.metadata})"
+        )
 
     def get_type_str(self) -> str:
         """Get robot type as string"""
@@ -91,8 +98,6 @@ class Robot:
 
     def get_sensors_by_type(self, sensor_type: "SensorType") -> List["SensorInstance"]:
         """Get all sensors of a specific type"""
-        from ..sensors import SensorType
-
         return [sensor for sensor in self.sensors if sensor.sensor_type == sensor_type]
 
     def get_sensor_count(self) -> int:
@@ -108,7 +113,8 @@ class Robot:
         Create a DataViz instance for this robot with all its sensors
 
         Args:
-            dataviz_name: Name for the DataViz instance (defaults to robot name + "_viz")
+            dataviz_name: Name for the DataViz instance (defaults to robot name +
+                         "_viz")
 
         Returns:
             DataViz instance configured with this robot's sensors

@@ -4,13 +4,11 @@ Robot registry client for HORUS SDK
 Handles robot registration with the HORUS backend system
 """
 
-import subprocess
 import time
-from typing import Optional, Dict, List, Tuple
+from typing import Dict, Tuple
 
 try:
     import rclpy
-    from rclpy.node import Node
     from horus_interfaces.srv import RegisterRobot, UnregisterRobot
     from horus_interfaces.msg import RobotConfig, SensorConfig, VisualizationConfig
 
@@ -263,5 +261,5 @@ class RobotRegistryClient:
         if self.ros_initialized and self.node:
             try:
                 self.node.destroy_node()
-            except:
+            except Exception:
                 pass

@@ -84,7 +84,7 @@ class RequirementsChecker:
             if "horus_backend" in result.stdout:
                 return True, "HORUS backend package found"
             return False, "Install with: sudo apt install ros-humble-horus-backend"
-        except:
+        except Exception:
             return False, "Unable to check package list"
 
     def _check_horus_backend_ros1_package(self, backend_type):
@@ -99,7 +99,7 @@ class RequirementsChecker:
             if result.returncode == 0:
                 return True, "HORUS ROS1 backend package found"
             return False, "Install with: sudo apt install ros-noetic-horus-backend"
-        except:
+        except Exception:
             return False, "Unable to check package"
 
     def _check_port_availability(self, backend_type):
@@ -113,7 +113,7 @@ class RequirementsChecker:
             if result == 0:
                 return True, f"Port {port} is in use (backend may be running)"
             return True, f"Port {port} is available"
-        except:
+        except Exception:
             return False, f"Unable to check port {port}"
 
     def _check_unity_endpoint(self, backend_type):
@@ -130,5 +130,5 @@ class RequirementsChecker:
                 True,
                 "Unity TCP endpoint not detected (will be started automatically)",
             )
-        except:
+        except Exception:
             return False, "Unable to check Unity TCP endpoint"
