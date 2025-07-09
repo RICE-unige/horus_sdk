@@ -18,12 +18,17 @@ set(msg_files
   "msg/RobotCommand.msg"
   "msg/RobotStatus.msg"
   "msg/RobotState.msg"
+  "msg/RobotConfig.msg"
+  "msg/SensorConfig.msg"
+  "msg/VisualizationConfig.msg"
 )
 
 # Service files
 set(srv_files
   "srv/ConnectRobot.srv"
   "srv/ExecuteCommand.srv"
+  "srv/RegisterRobot.srv"
+  "srv/UnregisterRobot.srv"
 )
 
 # Generate interfaces
