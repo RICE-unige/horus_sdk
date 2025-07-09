@@ -14,8 +14,9 @@ class BackendManager:
                 "package": "horus_backend",
                 "launch_file": "horus_complete_backend.launch.py",
                 "check_command": "ros2 pkg list | grep horus_backend",
-                "launch_command": ("ros2 launch horus_backend "
-                                  "horus_complete_backend.launch.py"),
+                "launch_command": (
+                    "ros2 launch horus_backend " "horus_complete_backend.launch.py"
+                ),
                 "tcp_port": 8080,
                 "unity_port": 10000,
             },
@@ -174,9 +175,7 @@ class BackendManager:
                     ["pkill", "-f", process_name], capture_output=True, timeout=3
                 )
                 if result.returncode == 0:
-                    print(
-                        f"\033[90m  ✓ Terminated {process_name} processes\033[0m"
-                    )
+                    print(f"\033[90m  ✓ Terminated {process_name} processes\033[0m")
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
 
