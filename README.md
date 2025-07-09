@@ -1,6 +1,17 @@
 | ![horus\_logo\_medium](https://github.com/user-attachments/assets/895961b0-c4b5-4f20-994f-be4ad20efe7f) | <h1 align="center"><a href="https://rice.dibris.unige.it/">**H**olistic **O**perational **R**eality for **U**nified **S**ystems – SDK</a></h1> |
 | :-----------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------- |
 
+<div align="center">
+
+[![CI Pipeline](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
+[![Release](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml)
+[![Documentation](https://github.com/RICE-unige/horus_sdk/actions/workflows/docs.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/docs.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![ROS2](https://img.shields.io/badge/ros2-humble-blue.svg)](https://docs.ros.org/en/humble/)
+
+</div>
+
 ---
 
 ## 📚 Table of Contents
