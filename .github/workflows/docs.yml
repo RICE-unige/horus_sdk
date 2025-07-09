@@ -1,0 +1,580 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'python/**'
+      - 'cpp/**'
+      - 'README.md'
+      - 'examples/**'
+      - 'horus_ros2_ws/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'python/**'
+      - 'cpp/**'
+      - 'README.md'
+      - 'examples/**'
+      - 'horus_ros2_ws/**'
+
+env:
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  # Build Documentation
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz plantuml
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            sphinx \
+            sphinx-rtd-theme \
+            sphinx-autoapi \
+            sphinx-autodoc-typehints \
+            sphinxcontrib-plantuml \
+            myst-parser \
+            nbsphinx
+          pip install -e python/
+
+      - name: Create Python documentation structure
+        run: |
+          mkdir -p docs/
+          cat > docs/conf.py << 'EOF'
+          import os
+          import sys
+          sys.path.insert(0, os.path.abspath('../python'))
+
+          # Project information
+          project = 'HORUS SDK'
+          copyright = '2025, RICE Lab - University of Genoa'
+          author = 'RICE Lab'
+          release = '0.1.0-alpha'
+
+          # Extensions
+          extensions = [
+              'sphinx.ext.autodoc',
+              'sphinx.ext.viewcode',
+              'sphinx.ext.napoleon',
+              'sphinx.ext.intersphinx',
+              'sphinx.ext.todo',
+              'sphinx.ext.coverage',
+              'sphinx.ext.mathjax',
+              'sphinx.ext.ifconfig',
+              'sphinx.ext.githubpages',
+              'autoapi.extension',
+              'sphinx_autodoc_typehints',
+              'myst_parser',
+              'nbsphinx',
+          ]
+
+          # AutoAPI configuration
+          autoapi_dirs = ['../python/horus']
+          autoapi_type = 'python'
+          autoapi_root = 'api'
+          autoapi_add_toctree_entry = True
+
+          # Templates and static files
+          templates_path = ['_templates']
+          html_static_path = ['_static']
+
+          # HTML theme
+          html_theme = 'sphinx_rtd_theme'
+          html_theme_options = {
+              'logo_only': False,
+              'display_version': True,
+              'prev_next_buttons_location': 'bottom',
+              'style_external_links': False,
+              'collapse_navigation': True,
+              'sticky_navigation': True,
+              'navigation_depth': 4,
+              'includehidden': True,
+              'titles_only': False
+          }
+
+          # Napoleon settings
+          napoleon_google_docstring = True
+          napoleon_numpy_docstring = True
+          napoleon_include_init_with_doc = False
+          napoleon_include_private_with_doc = False
+          napoleon_include_special_with_doc = True
+          napoleon_use_admonition_for_examples = False
+          napoleon_use_admonition_for_notes = False
+          napoleon_use_admonition_for_references = False
+          napoleon_use_ivar = False
+          napoleon_use_param = True
+          napoleon_use_rtype = True
+
+          # Intersphinx mapping
+          intersphinx_mapping = {
+              'python': ('https://docs.python.org/3/', None),
+              'numpy': ('https://numpy.org/doc/stable/', None),
+          }
+
+          # Source file suffixes
+          source_suffix = {
+              '.rst': None,
+              '.md': 'myst_parser',
+          }
+
+          # Master document
+          master_doc = 'index'
+
+          # Exclude patterns
+          exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+
+          # Todo extension
+          todo_include_todos = True
+          EOF
+
+      - name: Create documentation index
+        run: |
+          cat > docs/index.rst << 'EOF'
+          HORUS SDK Documentation
+          =======================
+
+          **HORUS SDK** is the official toolkit for connecting ROS robots to the HORUS Mixed-Reality application running on Meta Quest 3.
+
+          .. toctree::
+             :maxdepth: 2
+             :caption: Contents:
+
+             overview
+             installation
+             quickstart
+             examples
+             api/index
+             architecture
+             contributing
+
+          Overview
+          --------
+
+          HORUS SDK provides a comprehensive solution for robot-to-Mixed Reality integration:
+
+          * **Modular Python SDK** with dedicated modules for robots, sensors, visualization, and color management
+          * **Complete ROS2 backend** with C++ implementation for high-performance robot management
+          * **Robot registration system** with automatic color assignment and health monitoring
+          * **Real-time MR app monitoring** with Quest 3 connection detection
+          * **Comprehensive examples** for quick integration and testing
+
+          Key Features
+          -----------
+
+          * Real-time robot status monitoring and control
+          * Advanced data visualization for Mixed Reality
+          * Multi-robot support with automatic color management
+          * Comprehensive sensor support (Camera, LiDAR, LaserScan)
+          * Professional SDK initialization with status checking
+          * Continuous monitoring with clean shutdown handling
+
+          Indices and tables
+          ==================
+
+          * :ref:`genindex`
+          * :ref:`modindex`
+          * :ref:`search`
+          EOF
+
+      - name: Create additional documentation files
+        run: |
+          # Overview
+          cat > docs/overview.md << 'EOF'
+          # Overview
+
+          The HORUS SDK bridges the gap between ROS robotics and Mixed Reality applications, enabling seamless robot monitoring and control through Meta Quest 3 devices.
+
+          ## Architecture
+
+          ```
+          Python/C++ SDK ←→ HORUS Backend (C++) ←→ ROS-TCP-Endpoint ←→ HORUS MR App (Quest 3)
+              (port 8080)                            (port 10000)
+          ```
+
+          ## Key Components
+
+          - **HORUS Backend**: C++ ROS2 node with TCP server and robot registration system
+          - **ROS-TCP-Endpoint**: Quest 3 integration bridge (as git submodule)
+          - **SDK Client**: Professional initialization with real-time MR app monitoring
+          - **Robot Management**: Complete robot modeling with sensor integration
+          - **Data Visualization**: Advanced MR visualization with automatic color assignment
+
+          ## Module Structure
+
+          The Python SDK is organized into logical modules:
+
+          - `robot/` - Robot management and control
+          - `sensors/` - Sensor modeling and management
+          - `dataviz/` - Data visualization for MR
+          - `color/` - Color management for multi-robot scenarios
+          - `bridge/` - IO adapters (ROS1, ROS2, Unity)
+          - `core/` - Pure logic (EventBus, TopicMap, exceptions)
+          - `utils/` - Supporting infrastructure
+          EOF
+
+          # Installation
+          cat > docs/installation.md << 'EOF'
+          # Installation
+
+          ## Prerequisites
+
+          - Ubuntu 22.04 LTS
+          - ROS2 Humble
+          - Python 3.10+
+          - Git with submodules support
+
+          ## Quick Installation
+
+          ```bash
+          # Clone repository with submodules
+          git clone --recursive https://github.com/RICE-unige/horus_sdk.git
+          cd horus_sdk
+
+          # Build ROS2 workspace
+          cd horus_ros2_ws
+          colcon build
+          source install/setup.bash
+          cd ..
+
+          # Install Python SDK
+          pip install -e python/
+
+          # Test installation
+          python3 examples/quick_test.py
+          ```
+
+          ## Development Installation
+
+          For development work, follow the editable installation:
+
+          ```bash
+          # Create virtual environment (recommended)
+          python3 -m venv horus_env
+          source horus_env/bin/activate
+
+          # Install in development mode
+          pip install -e python/
+
+          # Install development dependencies
+          pip install pytest black flake8 mypy
+          ```
+          EOF
+
+          # Quick Start
+          cat > docs/quickstart.md << 'EOF'
+          # Quick Start
+
+          ## Basic Usage
+
+          ```python
+          from horus import Client, Robot, RobotType, Camera, Lidar3D
+
+          # Initialize HORUS client
+          client = Client(backend='ros2')
+
+          # Create a robot
+          robot = Robot("my_robot", RobotType.WHEELED)
+
+          # Add sensors
+          camera = Camera("front_camera", topic="/camera/image_raw")
+          lidar = Lidar3D("lidar", topic="/lidar/points")
+          robot.add_sensor(camera)
+          robot.add_sensor(lidar)
+
+          # Create visualization
+          dataviz = robot.create_full_dataviz()
+
+          # Register with HORUS backend
+          success, result = robot.register_with_horus(dataviz)
+          if success:
+              print(f"Robot registered with ID: {result['robot_id']}")
+          ```
+
+          ## Running Examples
+
+          The SDK includes comprehensive examples:
+
+          ```bash
+          # Basic initialization test
+          python3 examples/quick_test.py
+
+          # Carter robot setup
+          python3 examples/carter_robot_setup.py
+
+          # Live robot integration
+          python3 examples/live_robot_integration.py
+          ```
+          EOF
+
+          # Examples
+          cat > docs/examples.md << 'EOF'
+          # Examples
+
+          The HORUS SDK includes comprehensive examples demonstrating various use cases:
+
+          ## Available Examples
+
+          ### 1. Basic Examples
+          - `quick_test.py` - Basic SDK initialization test
+          - `basic_initialization.py` - Complete initialization flow
+          - `robot_creation.py` - Simple robot creation demo
+
+          ### 2. Robot Integration
+          - `carter_robot_setup.py` - NVIDIA Carter robot setup
+          - `live_robot_integration.py` - Live robot with auto-discovery
+          - `robot_sensors_dataviz.py` - Advanced sensor visualization
+
+          ### 3. Specialized Demos
+          - `color_assignment_path_planning.py` - Multi-robot color management
+          - `sensor_import_test.py` - Sensor type testing
+          - `color_import_test.py` - Color system testing
+
+          ### 4. Shell Scripts
+          - `run_carter_with_registration.sh` - Automated Carter setup
+          - `run_live_robot_integration.sh` - Live integration launcher
+
+          ## Running Examples
+
+          All examples can be run directly after installing the SDK:
+
+          ```bash
+          # Ensure ROS2 workspace is sourced
+          source horus_ros2_ws/install/setup.bash
+
+          # Run any example
+          python3 examples/[example_name].py
+          ```
+          EOF
+
+          # Architecture
+          cat > docs/architecture.md << 'EOF'
+          # Architecture
+
+          ## System Architecture
+
+          The HORUS SDK follows a modular architecture with clear separation of concerns:
+
+          ```
+          ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+          │   Python SDK    │    │  HORUS Backend  │    │   Quest 3 MR    │
+          │                 │    │     (C++)       │    │   Application   │
+          │  - Robot Mgmt   │◄──►│  - TCP Server   │◄──►│  - Visualization│
+          │  - Sensors      │    │  - Registration │    │  - Control      │
+          │  - DataViz      │    │  - Monitoring   │    │  - Interaction  │
+          │  - Color Mgmt   │    │  - Plugin Sys   │    │                 │
+          └─────────────────┘    └─────────────────┘    └─────────────────┘
+               Port 8080               Port 10000
+          ```
+
+          ## Component Details
+
+          ### Python SDK Modules
+
+          - **Client**: Main orchestrator with backend lifecycle management
+          - **Robot**: Complete robot modeling with sensor integration
+          - **Sensors**: Comprehensive sensor support (Camera, LiDAR, LaserScan)
+          - **DataViz**: Advanced visualization for Mixed Reality
+          - **Color**: Intelligent color assignment for multi-robot scenarios
+          - **Bridge**: Communication interfaces (ROS1, ROS2, Unity)
+          - **Core**: Pure logic components (EventBus, TopicMap, exceptions)
+          - **Utils**: Supporting infrastructure and tools
+
+          ### ROS2 Backend
+
+          - **Backend Node**: Central robot management and coordination
+          - **TCP Server**: Multi-threaded client communication
+          - **Plugin Manager**: Extensible robot type support
+          - **Registration System**: Robot lifecycle management
+
+          ### Communication Flow
+
+          1. **Robot Registration**: SDK → Backend → Validation → ID Assignment
+          2. **Status Updates**: Robot → Backend → SDK → MR App
+          3. **Commands**: MR App → Backend → Robot
+          4. **Visualization**: Sensors → DataViz → MR App
+          EOF
+
+          # Contributing
+          cat > docs/contributing.md << 'EOF'
+          # Contributing
+
+          We welcome contributions to the HORUS SDK! Here's how to get started:
+
+          ## Development Setup
+
+          1. Fork the repository
+          2. Clone your fork with submodules:
+             ```bash
+             git clone --recursive https://github.com/yourusername/horus_sdk.git
+             ```
+          3. Install development dependencies:
+             ```bash
+             pip install -e python/
+             pip install pytest black flake8 mypy bandit
+             ```
+
+          ## Code Style
+
+          - **Python**: Follow PEP 8, use Black for formatting
+          - **C++**: Follow Google C++ Style Guide, use clang-format
+          - **Commits**: Use conventional commits with emoji prefixes
+
+          ## Testing
+
+          Run tests before submitting:
+
+          ```bash
+          # Python tests
+          pytest python/tests/
+
+          # ROS2 tests
+          cd horus_ros2_ws
+          colcon test
+
+          # Example tests
+          python3 examples/quick_test.py
+          ```
+
+          ## Pull Request Process
+
+          1. Create a feature branch
+          2. Make your changes
+          3. Add tests for new functionality
+          4. Update documentation
+          5. Submit pull request
+
+          ## Reporting Issues
+
+          Please use GitHub issues for bug reports and feature requests.
+          EOF
+
+      - name: Build Python documentation
+        run: |
+          cd docs/
+          sphinx-build -b html . _build/html -W
+
+      - name: Build C++ documentation
+        run: |
+          cd cpp/
+          cat > Doxyfile << 'EOF'
+          PROJECT_NAME = "HORUS C++ SDK"
+          PROJECT_NUMBER = "0.1.0-alpha"
+          INPUT = include/ src/
+          RECURSIVE = YES
+          GENERATE_HTML = YES
+          GENERATE_LATEX = NO
+          OUTPUT_DIRECTORY = docs/
+          HTML_OUTPUT = html
+          EXTRACT_ALL = YES
+          EXTRACT_PRIVATE = YES
+          EXTRACT_STATIC = YES
+          HIDE_UNDOC_MEMBERS = NO
+          HIDE_UNDOC_CLASSES = NO
+          BRIEF_MEMBER_DESC = YES
+          REPEAT_BRIEF = YES
+          JAVADOC_AUTOBRIEF = YES
+          MULTILINE_CPP_IS_BRIEF = NO
+          INHERIT_DOCS = YES
+          SEPARATE_MEMBER_PAGES = NO
+          TAB_SIZE = 4
+          OPTIMIZE_OUTPUT_FOR_C = NO
+          OPTIMIZE_OUTPUT_JAVA = NO
+          OPTIMIZE_FOR_FORTRAN = NO
+          OPTIMIZE_OUTPUT_VHDL = NO
+          BUILTIN_STL_SUPPORT = YES
+          CPP_CLI_SUPPORT = NO
+          SIP_SUPPORT = NO
+          IDL_PROPERTY_SUPPORT = YES
+          DISTRIBUTE_GROUP_DOC = NO
+          SUBGROUPING = YES
+          TYPEDEF_HIDES_STRUCT = NO
+          SYMBOL_CACHE_SIZE = 0
+          LOOKUP_CACHE_SIZE = 0
+          EOF
+          doxygen Doxyfile
+
+      - name: Combine documentation
+        run: |
+          mkdir -p combined_docs/
+          cp -r docs/_build/html/* combined_docs/
+          mkdir -p combined_docs/cpp/
+          cp -r cpp/docs/html/* combined_docs/cpp/ 2>/dev/null || true
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation
+          path: combined_docs/
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./combined_docs
+          force_orphan: true
+
+  # Link Check
+  link-check:
+    name: Check Links
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check links in README
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: '.markdown-link-check.json'
+
+      - name: Create link check config
+        run: |
+          cat > .markdown-link-check.json << 'EOF'
+          {
+            "ignorePatterns": [
+              {
+                "pattern": "^http://localhost"
+              },
+              {
+                "pattern": "^https://localhost"
+              },
+              {
+                "pattern": "^http://127.0.0.1"
+              }
+            ],
+            "httpHeaders": [
+              {
+                "urls": ["https://github.com/"],
+                "headers": {
+                  "Accept-Encoding": "zstd, br, gzip, deflate"
+                }
+              }
+            ],
+            "timeout": "20s",
+            "retryOn429": true,
+            "retryCount": 3,
+            "fallbackHttp2": false
+          }
+          EOF

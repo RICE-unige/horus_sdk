@@ -1,0 +1,336 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v0.1.0)'
+        required: true
+        type: string
+
+env:
+  ROS_DISTRO: humble
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  # Validate Release
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+      - name: Validate version format
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+            echo "Invalid version format: $VERSION"
+            exit 1
+          fi
+
+  # Build Release Artifacts
+  build:
+    name: Build Release Artifacts
+    needs: validate
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up ROS2 environment
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: ${{ env.ROS_DISTRO }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine wheel
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
+
+      - name: Update version in Python package
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          sed -i "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" python/horus/utils/branding.py
+
+      - name: Build ROS2 workspace
+        run: |
+          cd horus_ros2_ws
+          source /opt/ros/${{ env.ROS_DISTRO }}/setup.bash
+          colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build Python package
+        run: |
+          cd python/
+          python -m build
+
+      - name: Create release tarball
+        run: |
+          tar -czf horus-sdk-${{ needs.validate.outputs.version }}.tar.gz \
+            --exclude='.git*' \
+            --exclude='horus_ros2_ws/build' \
+            --exclude='horus_ros2_ws/log' \
+            --exclude='python/dist' \
+            --exclude='python/horus.egg-info' \
+            --exclude='__pycache__' \
+            .
+
+      - name: Upload Python package artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: python-package
+          path: python/dist/
+
+      - name: Upload release tarball
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-tarball
+          path: horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
+
+  # Build Docker Images
+  docker:
+    name: Build Docker Images
+    needs: validate
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Dockerfile
+        run: |
+          cat > Dockerfile << 'EOF'
+          FROM ros:humble-ros-base-jammy
+
+          # Install system dependencies
+          RUN apt-get update && apt-get install -y \
+              python3-pip \
+              python3-colcon-common-extensions \
+              git \
+              && rm -rf /var/lib/apt/lists/*
+
+          # Set up workspace
+          WORKDIR /opt/horus_sdk
+          COPY . .
+
+          # Install Python dependencies
+          RUN pip3 install -e python/
+
+          # Build ROS2 workspace
+          RUN cd horus_ros2_ws && \
+              /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build"
+
+          # Set up entrypoint
+          COPY docker-entrypoint.sh /
+          RUN chmod +x /docker-entrypoint.sh
+
+          ENTRYPOINT ["/docker-entrypoint.sh"]
+          CMD ["bash"]
+          EOF
+
+      - name: Create Docker entrypoint
+        run: |
+          cat > docker-entrypoint.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          # Source ROS2 environment
+          source /opt/ros/humble/setup.bash
+          source /opt/horus_sdk/horus_ros2_ws/install/setup.bash
+
+          # Execute the command
+          exec "$@"
+          EOF
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Generate Documentation
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install documentation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install sphinx sphinx-rtd-theme sphinx-autoapi doxygen
+          pip install -e python/
+
+      - name: Generate C++ documentation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz
+          cd cpp/
+          doxygen -g Doxyfile
+          sed -i 's/PROJECT_NAME.*/PROJECT_NAME = "HORUS C++ SDK"/' Doxyfile
+          sed -i 's/INPUT.*/INPUT = include\/ src\//' Doxyfile
+          sed -i 's/RECURSIVE.*/RECURSIVE = YES/' Doxyfile
+          sed -i 's/GENERATE_HTML.*/GENERATE_HTML = YES/' Doxyfile
+          doxygen Doxyfile
+
+      - name: Generate Python documentation
+        run: |
+          cd python/
+          mkdir -p docs/
+          sphinx-quickstart docs/ --quiet --project="HORUS Python SDK" --author="RICE Lab" --release="${{ needs.validate.outputs.version }}" --language="en" --makefile --batchfile
+          cd docs/
+          make html
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation
+          path: |
+            python/docs/_build/html/
+            cpp/html/
+
+  # Create GitHub Release
+  release:
+    name: Create GitHub Release
+    needs: [validate, build, docker, documentation]
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$LAST_TAG" ]; then
+            COMMITS=$(git log --oneline --pretty=format:"- %s" HEAD)
+          else
+            COMMITS=$(git log --oneline --pretty=format:"- %s" $LAST_TAG..HEAD)
+          fi
+          
+          # Create changelog
+          cat > CHANGELOG.md << EOF
+          # Release ${{ needs.validate.outputs.tag }}
+          
+          ## Changes
+          $COMMITS
+          
+          ## Features
+          - Complete Python SDK with modular architecture
+          - ROS2 backend with robot registration system
+          - Comprehensive examples and integration demos
+          - Real-time Mixed Reality app monitoring
+          - Docker containerization support
+          
+          ## Installation
+          \`\`\`bash
+          # Download and extract
+          wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
+          tar -xzf horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
+          cd horus_sdk
+          
+          # Build and install
+          cd horus_ros2_ws
+          colcon build
+          source install/setup.bash
+          cd ..
+          pip install -e python/
+          \`\`\`
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: HORUS SDK ${{ needs.validate.outputs.tag }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          files: |
+            release-tarball/horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
+            python-package/horus-*.whl
+            python-package/horus-*.tar.gz
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish to PyPI (when ready)
+  # pypi:
+  #   name: Publish to PyPI
+  #   needs: [validate, build]
+  #   runs-on: ubuntu-22.04
+  #   if: startsWith(github.ref, 'refs/tags/v') && !contains(needs.validate.outputs.version, '-')
+  #   
+  #   steps:
+  #     - name: Download Python package
+  #       uses: actions/download-artifact@v3
+  #       with:
+  #         name: python-package
+  #         path: dist/
+  #     
+  #     - name: Publish to PyPI
+  #       uses: pypa/gh-action-pypi-publish@v1.8.10
+  #       with:
+  #         user: __token__
+  #         password: ${{ secrets.PYPI_API_TOKEN }}
+  #         packages_dir: dist/

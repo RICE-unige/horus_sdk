@@ -1,0 +1,208 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "horus-sdk"
+version = "0.1.0-alpha"
+description = "HORUS Mixed Reality Robot Management SDK"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Omotoye S. Adekoya", email = "omotoye.adekoya@edu.unige.it"},
+    {name = "RICE Lab", email = "rice@dibris.unige.it"},
+]
+maintainers = [
+    {name = "RICE Lab", email = "rice@dibris.unige.it"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+    "Topic :: System :: Distributed Computing",
+]
+keywords = ["robotics", "mixed-reality", "ros2", "meta-quest", "visualization"]
+requires-python = ">=3.10"
+dependencies = [
+    "rclpy>=3.0.0",
+    "std_msgs",
+    "geometry_msgs",
+    "sensor_msgs",
+    "nav_msgs",
+    "tf2_ros",
+    "numpy>=1.21.0",
+    "dataclasses-json>=0.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xvfb>=3.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.5.0",
+    "bandit>=1.7.0",
+    "safety>=2.0.0",
+    "pre-commit>=3.0.0",
+]
+docs = [
+    "sphinx>=7.0.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "sphinx-autoapi>=2.1.0",
+    "sphinx-autodoc-typehints>=1.24.0",
+    "myst-parser>=2.0.0",
+    "nbsphinx>=0.9.0",
+    "sphinxcontrib-plantuml>=0.25.0",
+]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-xvfb>=3.0.0",
+    "pytest-mock>=3.11.0",
+    "coverage>=7.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/RICE-unige/horus_sdk"
+Documentation = "https://rice-unige.github.io/horus_sdk"
+Repository = "https://github.com/RICE-unige/horus_sdk"
+Issues = "https://github.com/RICE-unige/horus_sdk/issues"
+Changelog = "https://github.com/RICE-unige/horus_sdk/blob/main/CHANGELOG.md"
+
+[project.scripts]
+horus-sdk = "horus.client:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["horus*"]
+
+[tool.setuptools.package-data]
+horus = ["py.typed"]
+
+# Black configuration
+[tool.black]
+line-length = 88
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | horus_ros2_ws
+)/
+'''
+
+# isort configuration
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+src_paths = ["python/horus"]
+
+# MyPy configuration
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+disallow_untyped_decorators = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+ignore_missing_imports = true
+strict_optional = false
+
+[[tool.mypy.overrides]]
+module = [
+    "rclpy.*",
+    "std_msgs.*",
+    "geometry_msgs.*",
+    "sensor_msgs.*",
+    "nav_msgs.*",
+    "tf2_ros.*",
+]
+ignore_missing_imports = true
+
+# Bandit configuration
+[tool.bandit]
+exclude_dirs = ["tests", "horus_ros2_ws"]
+skips = ["B101", "B601"]
+
+# Pytest configuration
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--verbose",
+    "--cov=horus",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["python/horus"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/.*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"

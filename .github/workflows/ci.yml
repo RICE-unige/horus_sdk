@@ -1,0 +1,242 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  ROS_DISTRO: humble
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  # Code Quality Checks
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 mypy bandit safety
+          pip install -e python/
+
+      - name: Format check (Black)
+        run: black --check --diff python/
+
+      - name: Lint Python code (Flake8)
+        run: flake8 python/ --max-line-length=88 --extend-ignore=E203,W503
+
+      - name: Type check (MyPy)
+        run: mypy python/horus/ --ignore-missing-imports
+
+      - name: Security scan (Bandit)
+        run: bandit -r python/horus/ -f json -o bandit-report.json || true
+
+      - name: Dependency vulnerability scan
+        run: safety check --json --output safety-report.json || true
+
+      - name: Install C++ tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format cppcheck clang-tidy
+
+      - name: Format check C++ (clang-format)
+        run: |
+          find cpp/ horus_ros2_ws/src/horus_backend/ -name "*.cpp" -o -name "*.hpp" | \
+          xargs clang-format --dry-run --Werror
+
+      - name: C++ static analysis (cppcheck)
+        run: |
+          cppcheck --enable=all --inconclusive --xml --xml-version=2 \
+          cpp/ horus_ros2_ws/src/horus_backend/ 2> cppcheck-report.xml || true
+
+  # Build and Test Matrix
+  build-test:
+    name: Build & Test
+    needs: quality
+    strategy:
+      matrix:
+        ros-distro: [humble]
+        ubuntu-version: [22.04]
+        arch: [x86_64]
+    runs-on: ubuntu-${{ matrix.ubuntu-version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up ROS2 ${{ matrix.ros-distro }}
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: ${{ matrix.ros-distro }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip python3-pytest python3-coverage
+          sudo apt-get install -y ros-${{ matrix.ros-distro }}-rmw-cyclonedx-cpp
+          sudo apt-get install -y build-essential cmake
+
+      - name: Set up Python environment
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-xvfb
+          pip install -e python/
+
+      - name: Build ROS2 workspace
+        run: |
+          cd horus_ros2_ws
+          source /opt/ros/${{ matrix.ros-distro }}/setup.bash
+          colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release
+
+      - name: Test ROS2 workspace
+        run: |
+          cd horus_ros2_ws
+          source /opt/ros/${{ matrix.ros-distro }}/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_direct+
+          colcon test-result --verbose
+
+      - name: Test Python SDK
+        run: |
+          source horus_ros2_ws/install/setup.bash
+          python -m pytest python/tests/ -v --cov=python/horus --cov-report=xml --cov-report=html
+
+      - name: Test Examples
+        run: |
+          source horus_ros2_ws/install/setup.bash
+          # Test quick initialization
+          timeout 30 python3 examples/quick_test.py || true
+          # Test basic initialization
+          timeout 30 python3 examples/basic_initialization.py || true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+
+  # Integration Tests
+  integration:
+    name: Integration Tests
+    needs: build-test
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up ROS2 environment
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: humble
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip ros-humble-rmw-cyclonedx-cpp
+          python -m pip install --upgrade pip
+          pip install -e python/
+
+      - name: Build workspace
+        run: |
+          cd horus_ros2_ws
+          source /opt/ros/humble/setup.bash
+          colcon build --event-handlers console_direct+
+
+      - name: Test robot registration system
+        run: |
+          source horus_ros2_ws/install/setup.bash
+          # Start backend in background
+          timeout 60 ros2 launch horus_backend horus_complete_backend.launch.py &
+          sleep 10
+          # Test robot registration
+          timeout 30 python3 examples/carter_robot_setup.py || true
+          # Cleanup
+          pkill -f horus_backend_node || true
+
+      - name: Test live integration
+        run: |
+          source horus_ros2_ws/install/setup.bash
+          # Test live robot integration (with timeout)
+          timeout 30 python3 examples/live_robot_integration.py || true
+
+
+  # Build Documentation
+  docs:
+    name: Documentation
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install documentation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install sphinx sphinx-rtd-theme sphinx-autoapi
+          pip install -e python/
+
+      - name: Generate Python documentation
+        run: |
+          cd python/
+          mkdir -p docs/
+          sphinx-quickstart docs/ --quiet --project="HORUS SDK" --author="RICE Lab" --release="0.1.0-alpha" --language="en" --makefile --batchfile
+          echo "sphinx_rtd_theme" >> docs/requirements.txt
+          # Build docs
+          cd docs/
+          make html
+
+      - name: Upload documentation artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: documentation
+          path: python/docs/_build/html/
+
+  # Collect Results
+  results:
+    name: Collect Results
+    needs: [quality, build-test, integration, docs]
+    runs-on: ubuntu-22.04
+    if: always()
+    
+    steps:
+      - name: Check job results
+        run: |
+          echo "Quality: ${{ needs.quality.result }}"
+          echo "Build & Test: ${{ needs.build-test.result }}"
+          echo "Integration: ${{ needs.integration.result }}"
+          echo "Documentation: ${{ needs.docs.result }}"
+          
+          if [[ "${{ needs.quality.result }}" == "failure" || "${{ needs.build-test.result }}" == "failure" ]]; then
+            echo "Critical jobs failed"
+            exit 1
+          fi
