@@ -30,12 +30,10 @@ class Client:
 
     def _setup_backend(self):
         """Check requirements and launch backend"""
-        from .utils.spinner import Spinner
-
         print(f"\n\033[96mInitializing {self.backend_type.upper()} backend\033[0m")
 
         # Check requirements with loading animation
-        requirements = self._check_requirements_with_loading()
+        self._check_requirements_with_loading()
 
         # Launch backend if needed
         if self.auto_launch:
@@ -121,8 +119,8 @@ class Client:
             else:
                 unity_spinner.stop()
                 print(
-                    f"  \033[93m⚠\033[0m Unity TCP endpoint: "
-                    f"\033[93mNot yet ready (may still be starting)\033[0m"
+                    "  \033[93m⚠\033[0m Unity TCP endpoint: "
+                    "\033[93mNot yet ready (may still be starting)\033[0m"
                 )
 
             # Show Unity MR connection information
@@ -174,12 +172,14 @@ class Client:
         def on_unity_connection(ip_address, is_connected):
             if is_connected:
                 print(
-                    f"  \033[92m✓\033[0m Unity MR connection: \033[92mConnected from {ip_address}\033[0m"
+                    f"  \033[92m✓\033[0m Unity MR connection: "
+                    f"\033[92mConnected from {ip_address}\033[0m"
                 )
                 print("  \033[90m  → Mixed Reality interface active\033[0m")
             else:
                 print(
-                    f"  \033[93m⧖\033[0m Unity MR connection: \033[93mDisconnected from {ip_address}\033[0m"
+                    f"  \033[93m⧖\033[0m Unity MR connection: "
+                    f"\033[93mDisconnected from {ip_address}\033[0m"
                 )
                 print("  \033[90m  → Monitoring for new connections...\033[0m")
 
@@ -196,12 +196,14 @@ class Client:
             connected_clients = self.unity_monitor.get_connected_clients()
             for ip in connected_clients:
                 print(
-                    f"  \033[92m✓\033[0m Unity MR connection: \033[92mAlready connected from {ip}\033[0m"
+                    f"  \033[92m✓\033[0m Unity MR connection: "
+                    f"\033[92mAlready connected from {ip}\033[0m"
                 )
-            print(f"  \033[90m  → Mixed Reality interface active\033[0m")
+            print("  \033[90m  → Mixed Reality interface active\033[0m")
         else:
             print(
-                f"  \033[93m⧖\033[0m Unity MR connection: \033[93mStandby mode (monitoring for connections)\033[0m"
+                "  \033[93m⧖\033[0m Unity MR connection: "
+                "\033[93mStandby mode (monitoring for connections)\033[0m"
             )
             print("  \033[90m  → Launch HORUS app on Quest 3 to connect\033[0m")
 

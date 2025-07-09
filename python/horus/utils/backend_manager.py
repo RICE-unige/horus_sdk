@@ -205,7 +205,8 @@ class BackendManager:
                         try:
                             subprocess.run(["kill", "-TERM", pid], timeout=2)
                             print(
-                                f"\033[90m  ✓ Terminated process {pid} on port {port}\033[0m"
+                                f"\033[90m  ✓ Terminated process {pid} "
+                                f"on port {port}\033[0m"
                             )
                         except (subprocess.TimeoutExpired, FileNotFoundError):
                             pass

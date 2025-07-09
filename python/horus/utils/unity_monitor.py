@@ -69,7 +69,8 @@ class UnityConnectionMonitor:
                 current_connections = set()
                 for line in result.stdout.split("\n"):
                     if "ESTAB" in line and f":{self.unity_port}" in line:
-                        # Parse ss output: State Recv-Q Send-Q Local_Address:Port Peer_Address:Port
+                        # Parse ss output: State Recv-Q Send-Q Local_Address:Port
+                        # Peer_Address:Port
                         parts = line.split()
                         if len(parts) >= 5:
                             local_addr = parts[3]  # Local address:port
