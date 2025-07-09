@@ -1,0 +1,5 @@
+# Service for unregistering robots from HORUS system
+string robot_id
+---
+bool success
+string error_message

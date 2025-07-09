@@ -1,0 +1,8 @@
+# Service for registering robots with HORUS system
+RobotConfig robot_config
+---
+bool success
+string robot_id           # Unique ID assigned by HORUS system
+string assigned_color     # Hex color assigned for MR visualization
+string error_message      # Error details if registration failed
+string[] validation_errors # Detailed validation issues
