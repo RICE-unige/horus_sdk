@@ -88,7 +88,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pip python3-pytest python3-coverage
-          sudo apt-get install -y ros-${{ matrix.ros-distro }}-rmw-cyclonedx-cpp
+          sudo apt-get install -y ros-${{ matrix.ros-distro }}-rmw-cyclonedds-cpp
           sudo apt-get install -y build-essential cmake
 
       - name: Set up Python environment
@@ -156,7 +156,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-pip ros-humble-rmw-cyclonedx-cpp
+          sudo apt-get install -y python3-pip ros-humble-rmw-cyclonedds-cpp
           python -m pip install --upgrade pip
           pip install -e python/
 
