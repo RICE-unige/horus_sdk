@@ -264,8 +264,10 @@ class Robot:
 
     def get_horus_id(self) -> Optional[str]:
         """Get HORUS-assigned robot ID"""
-        return self.get_metadata("horus_robot_id")
+        result = self.get_metadata("horus_robot_id")
+        return result if isinstance(result, str) else None
 
     def get_horus_color(self) -> Optional[str]:
         """Get HORUS-assigned color"""
-        return self.get_metadata("horus_color")
+        result = self.get_metadata("horus_color")
+        return result if isinstance(result, str) else None

@@ -251,7 +251,7 @@ class RobotRegistryClient:
         if not self.ros_initialized:
             return False
 
-        return (
+        return bool(
             self.register_client.service_is_ready()
             and self.unregister_client.service_is_ready()
         )
