@@ -1,5 +1,4 @@
 // SPDX-FileCopyrightText: 2025 RICE Lab, University of Genoa
-//
 // SPDX-License-Identifier: Apache-2.0
 
 #include "horus_backend/tcp_server.hpp"
