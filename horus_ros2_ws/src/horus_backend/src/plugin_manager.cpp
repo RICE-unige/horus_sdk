@@ -18,7 +18,8 @@ void PluginManager::load_plugins() {
     
     std::cout << "Loaded " << plugins_.size() << " robot plugins" << std::endl;
     for (const auto& plugin : plugins_) {
-        std::cout << "  - " << plugin.first << " (" << plugin.second->get_robot_type() << ")" << std::endl;
+        std::cout << "  - " << plugin.first << " ("
+                  << plugin.second->get_robot_type() << ")" << std::endl;
     }
 }
 
@@ -61,7 +62,8 @@ bool PluginManager::connect_robot(const std::string& robot_id, const std::string
     try {
         plugin->initialize(robot_id);
         connected_robots_[robot_id] = robot_type;
-        std::cout << "Connected robot: " << robot_id << " (type: " << robot_type << ")" << std::endl;
+        std::cout << "Connected robot: " << robot_id << " (type: "
+                  << robot_type << ")" << std::endl;
         return true;
     } catch (const std::exception& e) {
         std::cerr << "Failed to connect robot " << robot_id << ": " << e.what() << std::endl;

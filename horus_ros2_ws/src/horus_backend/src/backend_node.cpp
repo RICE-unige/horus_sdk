@@ -145,7 +145,8 @@ void BackendNode::display_startup_info() {
     
     // Check Unity endpoint status
     if (check_unity_endpoint_status()) {
-        RCLCPP_INFO(get_logger(), "Unity TCP Endpoint: Available on port %d", unity_tcp_port_);
+        RCLCPP_INFO(get_logger(), "Unity TCP Endpoint: Available on port %d",
+                    unity_tcp_port_);
     } else {
         RCLCPP_WARN(get_logger(), "Unity TCP Endpoint: Not detected on port %d", unity_tcp_port_);
     }
@@ -274,7 +275,8 @@ void BackendNode::register_robot_callback(
     response->assigned_color = assigned_color;
     response->error_message = "";
     
-    RCLCPP_INFO(get_logger(), "Robot registered successfully: %s -> %s (color: %s)", 
+    RCLCPP_INFO(get_logger(),
+                "Robot registered successfully: %s -> %s (color: %s)", 
                 request->robot_config.name.c_str(), robot_id.c_str(), assigned_color.c_str());
 }
 
@@ -306,7 +308,8 @@ void BackendNode::unregister_robot_callback(
 std::string BackendNode::generate_robot_id(const std::string& robot_name) {
     // Create unique ID based on name and timestamp
     auto now_time = std::chrono::system_clock::now();
-    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(now_time.time_since_epoch()).count();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now_time.time_since_epoch()).count();
     return robot_name + "_" + std::to_string(timestamp);
 }
 

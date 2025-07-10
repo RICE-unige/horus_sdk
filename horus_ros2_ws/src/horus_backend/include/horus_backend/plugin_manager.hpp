@@ -24,21 +24,21 @@ class PluginManager {
 public:
     PluginManager();
     ~PluginManager();
-    
+
     void load_plugins();
     void register_plugin(const std::string& name, std::unique_ptr<RobotPlugin> plugin);
     RobotPlugin* get_plugin(const std::string& robot_type);
     std::vector<std::string> get_available_plugins() const;
-    
+
     // Robot management
     bool connect_robot(const std::string& robot_id, const std::string& robot_type);
     bool disconnect_robot(const std::string& robot_id);
     bool is_robot_connected(const std::string& robot_id) const;
-    
+
 private:
     std::map<std::string, std::unique_ptr<RobotPlugin>> plugins_;
-    std::map<std::string, std::string> connected_robots_; // robot_id -> robot_type
-    
+    std::map<std::string, std::string> connected_robots_;  // robot_id -> robot_type
+
     void load_builtin_plugins();
 };
 
