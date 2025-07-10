@@ -11,51 +11,51 @@ from launch_ros.actions import Node
 def generate_launch_description():
     # Declare launch arguments
     tcp_port_arg = DeclareLaunchArgument(
-        "tcp_port", default_value="8080", description="TCP port for SDK communication"
+        'tcp_port', default_value='8080', description='TCP port for SDK communication'
     )
 
     log_level_arg = DeclareLaunchArgument(
-        "log_level",
-        default_value="info",
-        description="Log level (debug, info, warn, error)",
+        'log_level',
+        default_value='info',
+        description='Log level (debug, info, warn, error)',
     )
 
     verbose_arg = DeclareLaunchArgument(
-        "verbose", default_value="false", description="Enable verbose logging"
+        'verbose', default_value='false', description='Enable verbose logging'
     )
 
     # Main backend node
     backend_node = Node(
-        package="horus_backend",
-        executable="horus_backend_node",
-        name="horus_backend",
-        output="screen",
+        package='horus_backend',
+        executable='horus_backend_node',
+        name='horus_backend',
+        output='screen',
         parameters=[
             {
-                "tcp_port": LaunchConfiguration("tcp_port"),
-                "log_level": LaunchConfiguration("log_level"),
+                'tcp_port': LaunchConfiguration('tcp_port'),
+                'log_level': LaunchConfiguration('log_level'),
             }
         ],
-        arguments=["--ros-args", "--log-level", LaunchConfiguration("log_level")],
+        arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
         condition=IfCondition(
-            PythonExpression(['"', LaunchConfiguration("verbose"), '" == "true"'])
+            PythonExpression(['"', LaunchConfiguration('verbose'), '" == "true"'])
         ),
     )
 
     # Alternative node for non-verbose mode
     backend_node_quiet = Node(
-        package="horus_backend",
-        executable="horus_backend_node",
-        name="horus_backend",
-        output="screen",
+        package='horus_backend',
+        executable='horus_backend_node',
+        name='horus_backend',
+        output='screen',
         parameters=[
             {
-                "tcp_port": LaunchConfiguration("tcp_port"),
-                "log_level": LaunchConfiguration("log_level"),
+                'tcp_port': LaunchConfiguration('tcp_port'),
+                'log_level': LaunchConfiguration('log_level'),
             }
         ],
         condition=IfCondition(
-            PythonExpression(['"', LaunchConfiguration("verbose"), '" == "false"'])
+            PythonExpression(['"', LaunchConfiguration('verbose'), '" == "false"'])
         ),
     )
 

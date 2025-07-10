@@ -10,17 +10,20 @@
 
 std::shared_ptr<horus_backend::BackendNode> g_node = nullptr;
 
-void signal_handler(int signum) {
+void signal_handler(int signum)
+{
   if (g_node) {
-    RCLCPP_INFO(g_node->get_logger(), "Received signal %d, shutting down...",
-                signum);
+    RCLCPP_INFO(
+      g_node->get_logger(), "Received signal %d, shutting down...",
+      signum);
     g_node->shutdown();
     rclcpp::shutdown();
   }
   exit(signum);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char ** argv)
+{
   // Initialize ROS2
   rclcpp::init(argc, argv);
 
@@ -33,13 +36,13 @@ int main(int argc, char** argv) {
     g_node = std::make_shared<horus_backend::BackendNode>();
     g_node->initialize();
 
-    RCLCPP_INFO(g_node->get_logger(),
-                "HORUS Backend Node started successfully");
+    RCLCPP_INFO(
+      g_node->get_logger(),
+      "HORUS Backend Node started successfully");
 
     // Spin the node
     rclcpp::spin(g_node);
-
-  } catch (const std::exception& e) {
+  } catch (const std::exception & e) {
     RCLCPP_ERROR(rclcpp::get_logger("main"), "Exception: %s", e.what());
     return 1;
   }

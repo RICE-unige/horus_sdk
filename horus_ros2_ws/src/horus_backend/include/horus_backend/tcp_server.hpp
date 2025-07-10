@@ -9,11 +9,13 @@
 #include <string>
 #include <thread>
 
-namespace horus_backend {
+namespace horus_backend
+{
 
-class TcpServer {
- public:
-  using MessageCallback = std::function<std::string(const std::string&)>;
+class TcpServer
+{
+public:
+  using MessageCallback = std::function<std::string(const std::string &)>;
 
   explicit TcpServer(int port);
   ~TcpServer();
@@ -24,7 +26,7 @@ class TcpServer {
 
   void set_message_callback(MessageCallback callback);
 
- private:
+private:
   int port_;
   int server_socket_;
   std::atomic<bool> running_;
@@ -33,7 +35,7 @@ class TcpServer {
 
   void server_loop();
   void handle_client(int client_socket);
-  std::string process_message(const std::string& message);
+  std::string process_message(const std::string & message);
 
   // Utility methods
   bool create_socket();
