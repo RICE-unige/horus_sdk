@@ -1,9 +1,9 @@
 from launch import LaunchDescription
-from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition
-from launch.substitutions import PythonExpression
+from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
+
 
 def generate_launch_description():
     # Declare launch arguments
@@ -36,7 +36,9 @@ def generate_launch_description():
             'log_level': LaunchConfiguration('log_level'),
         }],
         arguments=['--ros-args', '--log-level', LaunchConfiguration('log_level')],
-        condition=IfCondition(PythonExpression(['"', LaunchConfiguration('verbose'), '" == "true"']))
+        condition=IfCondition(PythonExpression([
+            '"', LaunchConfiguration('verbose'), '" == "true"'
+        ]))
     )
     
     # Alternative node for non-verbose mode
@@ -49,7 +51,9 @@ def generate_launch_description():
             'tcp_port': LaunchConfiguration('tcp_port'),
             'log_level': LaunchConfiguration('log_level'),
         }],
-        condition=IfCondition(PythonExpression(['"', LaunchConfiguration('verbose'), '" == "false"']))
+        condition=IfCondition(PythonExpression([
+            '"', LaunchConfiguration('verbose'), '" == "false"'
+        ]))
     )
     
     return LaunchDescription([
