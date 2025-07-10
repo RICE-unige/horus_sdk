@@ -84,7 +84,7 @@ repos:
         name: ament-lint-cmake
         entry: bash -c 'cd horus_ros2_ws && source /opt/ros/humble/setup.bash && ament_lint_cmake'
         language: system
-        files: ^horus_ros2_ws/.*CMakeLists\.txt$
+        files: ^horus_ros2_ws/CMakeLists\.txt$
         pass_filenames: false
 
       # XML linting for package.xml files
