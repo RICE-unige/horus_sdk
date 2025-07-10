@@ -110,3 +110,11 @@ repos:
         language: system
         files: ^horus_ros2_ws/src/.*\.(cpp|hpp|py|xml|txt)$
         pass_filenames: false
+
+      # Python SDK tests
+      - id: pytest-sdk
+        name: pytest-sdk
+        entry: bash -c 'cd python && python3 -m pytest tests/ -v --tb=short'
+        language: system
+        files: ^python/.*\.(py)$
+        pass_filenames: false
