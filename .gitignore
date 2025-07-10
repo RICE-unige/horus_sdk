@@ -161,7 +161,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Built application files - Often change, rebuildable 
+# Built application files - Often change, rebuildable
 *.exe
 *.out
 *.o
@@ -181,7 +181,7 @@ obj/
 *.log
 .history/
 
-# Dependency directories 
+# Dependency directories
 node_modules/
 jspm_packages/
 

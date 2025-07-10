@@ -1,7 +1,7 @@
-import subprocess
-import shutil
 import os
+import shutil
 import socket
+import subprocess
 
 
 class RequirementsChecker:

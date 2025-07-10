@@ -2,10 +2,10 @@
 Sensor system for robot data visualization in HORUS SDK
 """
 
-from enum import Enum
-from typing import Dict, Any, Union
-from dataclasses import dataclass, field
 from abc import ABC
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, Union
 
 
 class SensorType(Enum):

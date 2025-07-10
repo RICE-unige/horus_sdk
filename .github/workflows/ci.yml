@@ -72,7 +72,7 @@ jobs:
         ubuntu-version: [22.04]
         arch: [x86_64]
     runs-on: ubuntu-${{ matrix.ubuntu-version }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -141,7 +141,7 @@ jobs:
     name: Integration Tests
     needs: build-test
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -192,14 +192,14 @@ jobs:
     needs: [quality, build-test, integration]
     runs-on: ubuntu-22.04
     if: always()
-    
+
     steps:
       - name: Check job results
         run: |
           echo "Quality: ${{ needs.quality.result }}"
           echo "Build & Test: ${{ needs.build-test.result }}"
           echo "Integration: ${{ needs.integration.result }}"
-          
+
           if [[ "${{ needs.quality.result }}" == "failure" || "${{ needs.build-test.result }}" == "failure" ]]; then
             echo "Critical jobs failed"
             exit 1

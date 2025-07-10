@@ -2,10 +2,10 @@
 Data visualization system for robot sensors and environmental data in HORUS SDK
 """
 
-from typing import List, Dict, Any, Optional
+from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from abc import ABC
+from typing import Any, Dict, List, Optional
 
 from ..sensors import SensorInstance
 

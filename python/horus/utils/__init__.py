@@ -1,7 +1,7 @@
 """HORUS SDK utilities"""
 
-from .branding import show_ascii_art, __version__
 from .backend_manager import BackendManager
+from .branding import __version__, show_ascii_art
 from .requirements_checker import RequirementsChecker
 from .spinner import Spinner
 

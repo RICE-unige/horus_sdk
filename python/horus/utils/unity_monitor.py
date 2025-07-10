@@ -1,9 +1,9 @@
 """Unity MR Connection Monitor"""
 
+import subprocess
 import threading
 import time
-import subprocess
-from typing import Optional, Callable
+from typing import Callable, Optional
 
 
 class UnityConnectionMonitor:

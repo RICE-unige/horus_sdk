@@ -23,7 +23,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,7 +55,7 @@ jobs:
     name: Build Release Artifacts
     needs: validate
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -123,7 +123,7 @@ jobs:
     name: Build Docker Images
     needs: validate
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -202,7 +202,7 @@ jobs:
     name: Create GitHub Release
     needs: [validate, build, docker]
     runs-on: ubuntu-22.04
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -220,28 +220,28 @@ jobs:
           else
             COMMITS=$(git log --oneline --pretty=format:"- %s" $LAST_TAG..HEAD)
           fi
-          
+
           # Create changelog
           cat > CHANGELOG.md << EOF
           # Release ${{ needs.validate.outputs.tag }}
-          
+
           ## Changes
           $COMMITS
-          
+
           ## Features
           - Complete Python SDK with modular architecture
           - ROS2 backend with robot registration system
           - Comprehensive examples and integration demos
           - Real-time Mixed Reality app monitoring
           - Docker containerization support
-          
+
           ## Installation
           \`\`\`bash
           # Download and extract
           wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
           tar -xzf horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
           cd horus_sdk
-          
+
           # Build and install
           cd horus_ros2_ws
           colcon build
@@ -271,14 +271,14 @@ jobs:
   #   needs: [validate, build]
   #   runs-on: ubuntu-22.04
   #   if: startsWith(github.ref, 'refs/tags/v') && !contains(needs.validate.outputs.version, '-')
-  #   
+  #
   #   steps:
   #     - name: Download Python package
   #       uses: actions/download-artifact@v4
   #       with:
   #         name: python-package
   #         path: dist/
-  #     
+  #
   #     - name: Publish to PyPI
   #       uses: pypa/gh-action-pypi-publish@v1.8.10
   #       with:

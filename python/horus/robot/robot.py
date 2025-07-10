@@ -2,13 +2,13 @@
 Robot object system for HORUS SDK
 """
 
-from enum import Enum
-from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
-    from ..sensors import SensorInstance, SensorType
     from ..dataviz import DataViz
+    from ..sensors import SensorInstance, SensorType
 
 
 class RobotType(Enum):

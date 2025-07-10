@@ -1,7 +1,8 @@
 import time
+
 from .utils.backend_manager import BackendManager
-from .utils.requirements_checker import RequirementsChecker
 from .utils.branding import show_ascii_art
+from .utils.requirements_checker import RequirementsChecker
 from .utils.unity_monitor import UnityConnectionMonitor
 
 
@@ -139,6 +140,7 @@ class Client:
         """Display Unity MR application connection information"""
         import socket
         import time
+
         from .utils.spinner import Spinner
 
         print("\n\033[96m🎮 Unity Mixed Reality Connection\033[0m")

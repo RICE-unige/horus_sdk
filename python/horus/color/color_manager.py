@@ -2,11 +2,11 @@
 Color assignment system for robot visualizations in HORUS SDK
 """
 
-import random
 import hashlib
-from typing import Dict, Tuple, List, Optional
+import random
 from dataclasses import dataclass
 from enum import Enum
+from typing import Dict, List, Optional, Tuple
 
 
 class ColorScheme(Enum):

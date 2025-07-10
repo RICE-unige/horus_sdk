@@ -9,8 +9,8 @@ from typing import Dict, Tuple
 
 try:
     import rclpy
-    from horus_interfaces.srv import RegisterRobot, UnregisterRobot
     from horus_interfaces.msg import RobotConfig, SensorConfig, VisualizationConfig
+    from horus_interfaces.srv import RegisterRobot, UnregisterRobot
 
     ROS2_AVAILABLE = True
 except ImportError:
