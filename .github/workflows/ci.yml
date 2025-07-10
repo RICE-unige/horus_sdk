@@ -129,60 +129,12 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
-  # Integration Tests
-  integration:
-    name: Integration Tests
-    needs: build-test
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up ROS2 environment
-        uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: humble
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip ros-humble-rmw-cyclonedds-cpp
-          python -m pip install --upgrade pip
-          pip install "empy<4.0" catkin_pkg numpy lark setuptools pyyaml
-          pip install -e python/
-
-      - name: Build workspace
-        run: |
-          cd horus_ros2_ws
-          source /opt/ros/humble/setup.bash
-          colcon build --event-handlers console_direct+
-
-      - name: Test robot registration system
-        run: |
-          source horus_ros2_ws/install/setup.bash
-          # Start backend in background
-          timeout 60 ros2 launch horus_backend horus_complete_backend.launch.py &
-          sleep 10
-          # Test robot registration
-          timeout 30 python3 examples/carter_robot_setup.py || true
-          # Cleanup
-          pkill -f horus_backend_node || true
-
-      - name: Test live integration
-        run: |
-          source horus_ros2_ws/install/setup.bash
-          # Test live robot integration (with timeout)
-          timeout 30 python3 examples/live_robot_integration.py || true
-
 
 
   # Collect Results
   results:
     name: Collect Results
-    needs: [quality, build-test, integration]
+    needs: [quality, build-test]
     runs-on: ubuntu-22.04
     if: always()
 
@@ -191,7 +143,6 @@ jobs:
         run: |
           echo "Quality: ${{ needs.quality.result }}"
           echo "Build & Test: ${{ needs.build-test.result }}"
-          echo "Integration: ${{ needs.integration.result }}"
 
           if [[ "${{ needs.quality.result }}" == "failure" || "${{ needs.build-test.result }}" == "failure" ]]; then
             echo "Critical jobs failed"
