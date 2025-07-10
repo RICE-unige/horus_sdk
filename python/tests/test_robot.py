@@ -6,10 +6,10 @@ import pytest
 def test_robot_imports():
     """Test that robot module imports work correctly"""
     try:
-        from horus.color import ColorManager
-        from horus.dataviz import DataViz
-        from horus.robot import Robot, RobotType
-        from horus.sensors import Camera, LaserScan, Lidar3D
+        from horus.color import ColorManager  # noqa: F401
+        from horus.dataviz import DataViz  # noqa: F401
+        from horus.robot import Robot, RobotType  # noqa: F401
+        from horus.sensors import Camera, LaserScan, Lidar3D  # noqa: F401
 
         assert True
     except ImportError as e:
