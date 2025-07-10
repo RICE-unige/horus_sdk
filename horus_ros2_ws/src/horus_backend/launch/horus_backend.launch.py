@@ -12,19 +12,19 @@ def generate_launch_description():
         default_value='8080',
         description='TCP port for SDK communication'
     )
-    
+
     log_level_arg = DeclareLaunchArgument(
         'log_level',
         default_value='info',
         description='Log level (debug, info, warn, error)'
     )
-    
+
     verbose_arg = DeclareLaunchArgument(
         'verbose',
         default_value='false',
         description='Enable verbose logging'
     )
-    
+
     # Main backend node
     backend_node = Node(
         package='horus_backend',
@@ -40,7 +40,7 @@ def generate_launch_description():
             '"', LaunchConfiguration('verbose'), '" == "true"'
         ]))
     )
-    
+
     # Alternative node for non-verbose mode
     backend_node_quiet = Node(
         package='horus_backend',
@@ -55,7 +55,7 @@ def generate_launch_description():
             '"', LaunchConfiguration('verbose'), '" == "false"'
         ]))
     )
-    
+
     return LaunchDescription([
         tcp_port_arg,
         log_level_arg,
