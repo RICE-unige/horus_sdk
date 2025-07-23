@@ -1,0 +1,215 @@
+site_name: HORUS SDK Documentation
+site_description: Holistic Operational Reality for Unified Systems - Mixed Reality Robot Management SDK
+site_author: RICE Lab, University of Genoa
+site_url: https://rice-unige.github.io/horus_sdk
+
+repo_name: RICE-unige/horus_sdk
+repo_url: https://github.com/RICE-unige/horus_sdk
+edit_uri: edit/main/docs/docs/
+
+copyright: |
+  Copyright &copy; 2025 <a href="https://rice.dibris.unige.it/" target="_blank">RICE Lab</a>,
+  <a href="https://unige.it/en" target="_blank">University of Genoa</a> -
+  Made with ❤️ for robotics research
+
+theme:
+  name: material
+  logo: assets/images/imgs/horus_logo.jpg
+  favicon: assets/images/imgs/horus_logo.jpg
+  palette:
+    # Dark cyberpunk theme (default)
+    - scheme: slate
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+    # Light mode toggle
+    - scheme: default
+      primary: deep purple
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.prune
+    - navigation.indexes
+    - toc.follow
+    - navigation.top
+    - search.highlight
+    - search.share
+    - search.suggest
+    - header.autohide
+    - content.code.copy
+    - content.code.select
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+    - content.action.edit
+    - content.action.view
+
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+extra:
+  version:
+    provider: mike
+    default: latest
+
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/RICE-unige/horus_sdk
+      name: GitHub Repository
+    - icon: fontawesome/solid/globe
+      link: https://rice.dibris.unige.it/
+      name: RICE Lab
+    - icon: fontawesome/solid/graduation-cap
+      link: https://unige.it/en
+      name: University of Genoa
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/horus/
+      name: PyPI Package
+
+# analytics:
+#   provider: google
+#   property: !ENV GOOGLE_ANALYTICS_KEY
+
+# extra_css:
+#   - assets/stylesheets/extra.css
+
+# extra_javascript:
+#   - assets/javascripts/extra.js
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+
+  - mermaid2:
+      arguments:
+        theme: |
+          ^(JSON.parse(__md_get("__palette").index == 0)) ?
+            'dark' : 'light'
+
+  - mkdocstrings:
+      enabled: true
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_toc_entry: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            merge_init_into_class: true
+            filters: ["!^_"]
+            heading_level: 1
+            inherited_members: true
+            members_order: source
+            separate_signature: true
+            unwrap_annotated: true
+            line_length: 60
+            show_signature_annotations: true
+            signature_crossrefs: true
+
+  - gen-files:
+      scripts:
+        - gen_ref_pages.py
+
+  - literate-nav:
+      nav_file: SUMMARY.md
+
+  - section-index
+
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      title: On this page
+
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Overview: getting-started/index.md
+    - Quick Start: getting-started/quickstart.md
+    - Installation: getting-started/installation.md
+    - First Robot: getting-started/first-robot.md
+  - User Guide:
+    - user-guide/index.md
+    - Architecture: user-guide/architecture.md
+    - Robot Management: user-guide/robots.md
+    - Sensors: user-guide/sensors.md
+    - Data Visualization: user-guide/dataviz.md
+    - Color Management: user-guide/colors.md
+    - Mixed Reality: user-guide/mixed-reality.md
+  - Developer Guide:
+    - developer-guide/index.md
+    - Contributing: developer-guide/contributing.md
+    - Plugin Development: developer-guide/plugins.md
+    - ROS Integration: developer-guide/ros-integration.md
+    - Testing: developer-guide/testing.md
+    - Deployment: developer-guide/deployment.md
+  - API Reference:
+    - api/index.md
+    - Client: api/client.md
+    - Robot: api/robot.md
+    - Sensors: api/sensors.md
+    - Data Visualization: api/dataviz.md
+    - Color Management: api/color.md
+    - Bridge: api/bridge.md
+    - Utils: api/utils.md
+  - Examples:
+    - examples/index.md
+    - Basic Usage: examples/basic.md
+    - Carter Robot: examples/carter.md
+    - Multi-Robot: examples/multi-robot.md
+    - Custom Plugins: examples/plugins.md
+  - Changelog: changelog.md
+  - Support: support.md
