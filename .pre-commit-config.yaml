@@ -134,3 +134,11 @@ repos:
         language: system
         files: ^docs/.*\.(md|yml|yaml)$
         pass_filenames: false
+
+      # GitHub Actions workflow validation
+      - id: actionlint
+        name: actionlint
+        entry: bash -c 'if command -v actionlint >/dev/null 2>&1; then actionlint; else echo "actionlint not installed"; fi'
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: false
