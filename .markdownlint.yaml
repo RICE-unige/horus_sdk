@@ -1,0 +1,89 @@
+# Markdownlint configuration for HORUS SDK documentation
+# This ensures consistent markdown formatting in docs
+
+# Line length configuration
+MD013:
+  line_length: 120
+  headings: false
+  code_blocks: false
+  tables: false
+
+# Allow HTML in markdown (needed for custom styling)
+MD033: false
+
+# Allow inline HTML
+MD034: false
+
+# Allow bare URLs (common in documentation)
+MD044: false
+
+# Headers should be surrounded by blank lines
+MD022: true
+
+# Headers should increment by one level at a time
+MD001: true
+
+# First line in file should be a top level header
+MD041: false
+
+# Trailing spaces not allowed
+MD009: true
+
+# Hard tabs not allowed
+MD010: true
+
+# No multiple consecutive blank lines
+MD012: true
+
+# Dollar signs used before commands without showing output
+MD014: false
+
+# No missing space after hash on atx style header
+MD018: true
+
+# No multiple spaces after hash on atx style header
+MD019: true
+
+# No missing space inside hashes on closed atx style header
+MD020: true
+
+# Multiple spaces inside hashes on closed atx style header
+MD021: true
+
+# Headers must start at the beginning of the line
+MD023: true
+
+# Multiple headers with the same content
+MD024:
+  allow_different_nesting: true
+
+# Multiple top level headers in the same document
+MD025:
+  front_matter_title: ""
+
+# Trailing punctuation in headers
+MD026:
+  punctuation: ".,;:!?"
+
+# Multiple spaces after blockquote symbol
+MD027: true
+
+# Blank line inside blockquote
+MD028: true
+
+# Ordered list item prefix
+MD029:
+  style: "ordered"
+
+# Spaces after list markers
+MD030:
+  ul_single: 1
+  ol_single: 1
+  ul_multi: 1
+  ol_multi: 1
+
+# Fenced code blocks should be surrounded by blank lines
+MD031: true
+
+# Lists should be surrounded by blank lines
+MD032: true
