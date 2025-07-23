@@ -258,7 +258,7 @@ if success:
         <h3 style="margin: 0; font-size: 1.2rem;">Developer Guide</h3>
     </div>
     <p style="margin-bottom: 1rem; opacity: 0.9;">Deep dive into plugin development, ROS integration, testing, and contributing to HORUS.</p>
-    <a href="developer-guide/index.md" style="background: rgba(255,255,255,0.2); color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: bold;">Developer Guide →</a>
+    <span style="background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); padding: 0.5rem 1rem; border-radius: 6px; font-weight: bold;">Coming Soon</span>
 </div>
 
 <div style="background: linear-gradient(135deg, #feca57 0%, #ff9f43 100%); padding: 1.5rem; border-radius: 12px; box-shadow: 0 8px 25px rgba(254,202,87,0.25); color: white;">
@@ -322,7 +322,7 @@ if success:
 
 ### Contributing
 
-HORUS SDK is open source and welcomes contributions! See our [Contributing Guide](developer-guide/contributing.md) to get started.
+HORUS SDK is open source and welcomes contributions! Check our documentation for contribution guidelines.
 
 ### Research & Citation
 

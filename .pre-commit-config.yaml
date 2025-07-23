@@ -130,7 +130,7 @@ repos:
       # Documentation checks
       - id: mkdocs-build
         name: mkdocs-build
-        entry: bash -c 'cd docs && pip install mkdocs-material mkdocstrings[python] mkdocs-gen-files mkdocs-literate-nav mkdocs-section-index && pip install -e ../python/ && mkdocs build --clean --strict'
+        entry: bash -c 'cd docs && pip install mkdocs-material mkdocstrings[python] mkdocs-gen-files mkdocs-literate-nav mkdocs-section-index && mkdocs build --clean --strict'
         language: system
         files: ^docs/.*\.(md|yml|yaml)$
         pass_filenames: false
