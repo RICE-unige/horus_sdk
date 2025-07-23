@@ -96,11 +96,6 @@ plugins:
   - search:
       separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
 
-  - mermaid2:
-      arguments:
-        theme: |
-          ^(JSON.parse(__md_get("__palette").index == 0)) ?
-            'dark' : 'light'
 
   - mkdocstrings:
       enabled: true

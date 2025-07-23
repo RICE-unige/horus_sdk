@@ -232,39 +232,43 @@ if success:
 
 ## 📚 Documentation Structure
 
-<div class="grid cards" markdown>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin: 2rem 0;">
 
--   :material-rocket-launch-outline:{ .lg .middle } **Getting Started**
+<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 1.5rem; border-radius: 12px; box-shadow: 0 8px 25px rgba(102,126,234,0.25); color: white;">
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <span style="font-size: 1.5rem;">🚀</span>
+        <h3 style="margin: 0; font-size: 1.2rem;">Getting Started</h3>
+    </div>
+    <p style="margin-bottom: 1rem; opacity: 0.9;">New to HORUS? Start here for installation, basic concepts, and your first robot setup.</p>
+    <a href="getting-started/quickstart.md" style="background: rgba(255,255,255,0.2); color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: bold;">Quick Start →</a>
+</div>
 
-    ---
+<div style="background: linear-gradient(135deg, #4ecdc4 0%, #44a08d 100%); padding: 1.5rem; border-radius: 12px; box-shadow: 0 8px 25px rgba(78,205,196,0.25); color: white;">
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <span style="font-size: 1.5rem;">👥</span>
+        <h3 style="margin: 0; font-size: 1.2rem;">User Guide</h3>
+    </div>
+    <p style="margin-bottom: 1rem; opacity: 0.9;">Comprehensive guides for robot management, sensors, visualization, and Mixed Reality integration.</p>
+    <a href="user-guide/index.md" style="background: rgba(255,255,255,0.2); color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: bold;">User Guide →</a>
+</div>
 
-    New to HORUS? Start here for installation, basic concepts, and your first robot setup.
+<div style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%); padding: 1.5rem; border-radius: 12px; box-shadow: 0 8px 25px rgba(255,107,107,0.25); color: white;">
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <span style="font-size: 1.5rem;">🔧</span>
+        <h3 style="margin: 0; font-size: 1.2rem;">Developer Guide</h3>
+    </div>
+    <p style="margin-bottom: 1rem; opacity: 0.9;">Deep dive into plugin development, ROS integration, testing, and contributing to HORUS.</p>
+    <a href="developer-guide/index.md" style="background: rgba(255,255,255,0.2); color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: bold;">Developer Guide →</a>
+</div>
 
-    [:octicons-arrow-right-24: Quick Start](getting-started/quickstart.md)
-
--   :material-account-group:{ .lg .middle } **User Guide**
-
-    ---
-
-    Comprehensive guides for robot management, sensors, visualization, and Mixed Reality integration.
-
-    [:octicons-arrow-right-24: User Guide](user-guide/index.md)
-
--   :material-code-braces:{ .lg .middle } **Developer Guide**
-
-    ---
-
-    Deep dive into plugin development, ROS integration, testing, and contributing to HORUS.
-
-    [:octicons-arrow-right-24: Developer Guide](developer-guide/index.md)
-
--   :material-api:{ .lg .middle } **API Reference**
-
-    ---
-
-    Complete API documentation with examples for all HORUS SDK modules and classes.
-
-    [:octicons-arrow-right-24: API Reference](api/index.md)
+<div style="background: linear-gradient(135deg, #feca57 0%, #ff9f43 100%); padding: 1.5rem; border-radius: 12px; box-shadow: 0 8px 25px rgba(254,202,87,0.25); color: white;">
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <span style="font-size: 1.5rem;">📋</span>
+        <h3 style="margin: 0; font-size: 1.2rem;">API Reference</h3>
+    </div>
+    <p style="margin-bottom: 1rem; opacity: 0.9;">Complete API documentation with examples for all HORUS SDK modules and classes.</p>
+    <a href="api/index.md" style="background: rgba(255,255,255,0.2); color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: bold;">API Reference →</a>
+</div>
 
 </div>
 

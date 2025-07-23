@@ -8,59 +8,19 @@ HORUS transforms robot fleet management by providing immersive Mixed Reality int
 
 ## What You'll Learn
 
-This user guide is organized into focused sections covering all aspects of HORUS MR fleet management:
+This user guide covers all key aspects of HORUS MR fleet management:
 
-<div class="grid cards" markdown>
+### 📋 **Guide Sections** *(Coming Soon)*
 
--   :material-sitemap:{ .lg .middle } **Architecture**
+- **🏗️ System Architecture** - Understanding HORUS system architecture and data flow from robots to MR
+- **🤖 Robot Management** - Complete guide to robot registration, configuration, and lifecycle management  
+- **📡 Sensor Integration** - Sensor integration, configuration, and 3D visualization in Mixed Reality
+- **📊 Data Visualization** - Advanced 3D data visualization, real-time streaming, and MR overlays
+- **🎨 Color Management** - Multi-robot fleet color coding and visual identification systems
+- **🥽 Mixed Reality Interface** - Quest 3 interface, spatial controls, and immersive robot interaction
 
-    ---
-
-    Understanding the HORUS system architecture and data flow from robots to MR.
-
-    [:octicons-arrow-right-24: System Architecture](architecture.md)
-
--   :material-robot:{ .lg .middle } **Robot Management**
-
-    ---
-
-    Complete guide to robot registration, configuration, and lifecycle management.
-
-    [:octicons-arrow-right-24: Robot Management](robots.md)
-
--   :material-radar:{ .lg .middle } **Sensors**
-
-    ---
-
-    Sensor integration, configuration, and 3D visualization in Mixed Reality.
-
-    [:octicons-arrow-right-24: Sensor Integration](sensors.md)
-
--   :material-chart-line:{ .lg .middle } **Data Visualization**
-
-    ---
-
-    Advanced 3D data visualization, real-time streaming, and MR overlays.
-
-    [:octicons-arrow-right-24: Data Visualization](dataviz.md)
-
--   :material-palette:{ .lg .middle } **Color Management**
-
-    ---
-
-    Multi-robot fleet color coding and visual identification systems.
-
-    [:octicons-arrow-right-24: Color Management](colors.md)
-
--   :material-mixed-reality:{ .lg .middle } **Mixed Reality**
-
-    ---
-
-    Quest 3 interface, spatial controls, and immersive robot interaction.
-
-    [:octicons-arrow-right-24: Mixed Reality Interface](mixed-reality.md)
-
-</div>
+!!! info "Documentation Status"
+    The detailed user guide sections are currently being developed. For now, explore the [Getting Started](../getting-started/index.md) guides and [API Reference](../api/index.md).
 
 ## Core Concepts
 
@@ -109,9 +69,8 @@ Before diving into the user guide, ensure you have:
 
 - [ ] Complete [Installation Guide](../getting-started/installation.md)
 - [ ] Test robot connection with [First Robot](../getting-started/first-robot.md)
-- [ ] Understand [System Architecture](architecture.md)
-- [ ] Configure [Robot Management](robots.md)
-- [ ] Set up [Sensor Integration](sensors.md)
+- [ ] Review [Quick Start Guide](../getting-started/quickstart.md)
+- [ ] Explore [API Reference](../api/index.md) for detailed SDK usage
 
 ## Advanced Topics
 
@@ -156,19 +115,19 @@ HORUS is open source and welcomes contributions:
 Choose your path based on your needs:
 
 ### For New Users
-1. **[Architecture](architecture.md)** - Understand the system
-2. **[Robot Management](robots.md)** - Learn robot basics
-3. **[Sensors](sensors.md)** - Configure sensor integration
+1. **[Getting Started](../getting-started/index.md)** - Installation and basic setup
+2. **[First Robot](../getting-started/first-robot.md)** - Your first robot integration
+3. **[Quick Start](../getting-started/quickstart.md)** - Complete walkthrough
 
-### For Experienced Users
-1. **[Data Visualization](dataviz.md)** - Advanced 3D visualization
-2. **[Mixed Reality](mixed-reality.md)** - Quest 3 interface details
-3. **[Color Management](colors.md)** - Fleet visual management
+### For Advanced Users
+1. **[API Reference](../api/index.md)** - Complete SDK documentation
+2. **[Examples](../examples/index.md)** - Real-world implementations
+3. **GitHub Repository** - Latest source code and issues
 
 ### For Developers
-1. **[Developer Guide](../developer-guide/index.md)** - SDK development
-2. **[API Reference](../api/index.md)** - Complete API documentation
-3. **[Examples](../examples/index.md)** - Real-world implementations
+1. **[API Reference](../api/index.md)** - Complete API documentation
+2. **[Examples](../examples/index.md)** - Integration examples
+3. **GitHub Issues** - Report bugs and request features
 
 ---
 
