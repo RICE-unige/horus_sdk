@@ -54,15 +54,6 @@ dev = [
     "safety>=2.0.0",
     "pre-commit>=3.0.0",
 ]
-docs = [
-    "sphinx>=7.0.0",
-    "sphinx-rtd-theme>=1.3.0",
-    "sphinx-autoapi>=2.1.0",
-    "sphinx-autodoc-typehints>=1.24.0",
-    "myst-parser>=2.0.0",
-    "nbsphinx>=0.9.0",
-    "sphinxcontrib-plantuml>=0.25.0",
-]
 test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -73,10 +64,9 @@ test = [
 
 [project.urls]
 Homepage = "https://github.com/RICE-unige/horus_sdk"
-Documentation = "https://rice-unige.github.io/horus_sdk"
+Documentation = "https://github.com/RICE-unige/horus_sdk#readme"
 Repository = "https://github.com/RICE-unige/horus_sdk"
 Issues = "https://github.com/RICE-unige/horus_sdk/issues"
-Changelog = "https://github.com/RICE-unige/horus_sdk/blob/main/CHANGELOG.md"
 
 [project.scripts]
 horus-sdk = "horus.client:main"
@@ -104,7 +94,6 @@ extend-exclude = '''
   | buck-out
   | build
   | dist
-  | horus_ros2_ws
 )/
 '''
 
@@ -149,7 +138,7 @@ ignore_missing_imports = true
 
 # Bandit configuration
 [tool.bandit]
-exclude_dirs = ["tests", "horus_ros2_ws"]
+exclude_dirs = ["tests"]
 skips = ["B101", "B601"]
 
 # Pytest configuration

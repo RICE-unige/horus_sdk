@@ -1,199 +1,165 @@
-| ![horus\_logo\_medium](https://github.com/user-attachments/assets/895961b0-c4b5-4f20-994f-be4ad20efe7f) | <h1 align="center"><a href="https://rice.dibris.unige.it/">**H**olistic **O**perational **R**eality for **U**nified **S**ystems – SDK</a></h1> |
+# HORUS SDK
+
+| ![horus_logo_medium](https://github.com/user-attachments/assets/895961b0-c4b5-4f20-994f-be4ad20efe7f) | <h1 align="center"><a href="https://rice.dibris.unige.it/">Holistic Operational Reality for Unified Systems – SDK</a></h1> |
 | :-----------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------- |
 
 <div align="center">
 
-[![CI Pipeline](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
-[![ROS2 Build](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
+[![CI](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
 [![Release](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![ROS2 Humble](https://img.shields.io/badge/ros2-humble-blue.svg)](https://docs.ros.org/en/humble/)
 
 </div>
+
+> [!IMPORTANT]
+> This repo combines the Python SDK, the C++ reference implementation, and the ROS 2 backend that interfaces with Unity’s ROS-TCP-Endpoint. Clone with `--recursive` (or run `git submodule update --init --recursive`) to ensure the Unity bridge is present.
 
 ---
 
 ## 📚 Table of Contents
 
-* [🔍 Overview](#-overview)
-
-  * [**Current Version:** `0.1.0-alpha`](#current-version-010-alpha)
-* [🌟 Features](#-features)
-* [🛠 Installation](#-installation)
-
-  * [From PyPI *(soon)*](#from-pypi)
-  * [Editable (Dev) Install](#editable-dev-install)
-* [🚀 Quick Start](#-quickstart)
-* [📐 Architecture Glimpse](#-architecture-glimpse)
-* [🗺 Roadmap](#-roadmap)
-* [🤝 Contributing](#-contributing)
-* [📝 License](#-license)
-* [📖 Citation](#-citation)
-* [📬 Contact](#-contact)
-* [💡 Acknowledgments](#-acknowledgments)
+- [Overview](#-overview)
+  - [Current Version](#current-version-010-alpha)
+- [Features](#-features)
+- [Install & Build](#-install--build)
+  - [Python SDK](#python-sdk)
+  - [ROS 2 Backend](#ros-2-backend)
+  - [C++ SDK](#c-sdk)
+- [Quick Start](#-quick-start)
+- [Architecture](#-architecture)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
 ## 🔍 Overview
 
-**Horus-SDK** is the official toolkit that glues your ROS robots to the **HORUS Mixed-Reality application** running on Meta Quest 3. It discovers robots, builds a JSON *Initial Payload* for the headset, and relays traffic both ways.
+HORUS-SDK unifies ROS robots with the HORUS mixed-reality application on Meta Quest headsets. It auto-discovers robots, publishes a JSON handshake for the MR client, and mirrors telemetry/commands over TCP.
 
-This repository contains two parallel SDK implementations:
+| Directory        | Highlights                                                                 |
+| ---------------- | ---------------------------------------------------------------------------- |
+| `python/`        | Primary SDK (client orchestration, robot & sensor models, monitoring utils) |
+| `cpp/`           | High-performance SDK mirroring the Python API surface                        |
+| `horus_ros2_ws/` | ROS 2 Humble workspace with the backend nodes and Unity ROS-TCP-Endpoint     |
 
-*   **`./python`**: A flexible and easy-to-use Python SDK.
-*   **`./cpp`**: A high-performance C++ SDK for production environments.
+### Current Version: `0.1.0-alpha`
 
-Both SDKs are being developed in parallel and aim for feature parity.
-
-### **Current Version:** `0.1.0-alpha`
-
-> **🎉 Latest Update**: Python SDK reorganized with dedicated modules for better architecture!
-> Complete robot registration system with comprehensive examples and improved backend integration.
-> Ready for advanced robot management and mixed reality visualization.
+> [!NOTE]
+> The API is still evolving. Expect occasional breaking changes while we finalize the TopicMap/EventBus contracts.
 
 ---
 
 ## 🌟 Features
 
-| Done ✔ | Planned 🛠 | Description                                                                     |
-| :----: | :--------: | ------------------------------------------------------------------------------- |
-|    ✔   |            | **Modular Python SDK** with dedicated robot, sensor, dataviz, and color modules |
-|    ✔   |            | **Complete robot registration system** with ROS2 service integration          |
-|    ✔   |            | **Comprehensive sensor support** (Camera, LiDAR, LaserScan) with auto-config  |
-|    ✔   |            | **Advanced data visualization** with automatic color assignment for MR        |
-|    ✔   |            | **Complete ROS2 backend infrastructure** with C++ implementation                |
-|    ✔   |            | **Professional SDK initialization** with animated spinners and status checking  |
-|    ✔   |            | **Real-time MR app monitoring** with instant Quest 3 connection detection      |
-|    ✔   |            | **TCP bridge integration** via ROS-TCP-Endpoint for Quest 3 communication     |
-|    ✔   |            | **Continuous monitoring mode** with clean Ctrl+C shutdown and process cleanup  |
-|    ✔   |            | **Development testing framework** with interactive test launcher               |
-|    ✔   |            | **Automatic backend management** with comprehensive process lifecycle control  |
-|    ✔   |            | **Comprehensive examples** (Carter robot, live integration, sensor demos)      |
-|        |     🛠     | Async **ROS 2 bridge** (`rclpy`) + ROS 1 (`roslibpy`)                           |
-|        |     🛠     | JSON handshake generator for the MR headset                                     |
-|        |     🛠     | Plugin system (`plugins.Rosbot`, `plugins.Spot`)                                |
-|        |     🛠     | Teleop profile mapping (axes / buttons → `/cmd_vel`)                            |
+| Done ✔ | Planned 🛠 | Description                                                                   |
+| :----: | :--------: | ----------------------------------------------------------------------------- |
+| ✔      |            | Modular Python SDK (client, bridge, sensors, dataviz, plugins, utils)         |
+| ✔      |            | Full robot registration + color assignment + dataviz wiring                   |
+| ✔      |            | Topic subscription monitoring + TTY-friendly dashboards                       |
+| ✔      |            | Managed ROS backend processes & TCP bridge integration                        |
+| ✔      |            | Reference C++ SDK and ROS 2 backend workspace                                 |
+|        | 🛠         | Async ROS 1/ROS 2 bridge parity in Python                                     |
+|        | 🛠         | Plugin presets (Rosbot, Spot) + teleop profile mapping                        |
+|        | 🛠         | JSON handshake generator + MR telemetry replay tooling                        |
 
 ---
 
-## 🚀 Getting Started
+## 🛠 Install & Build
 
-### Quick Test
+### Python SDK
+
 ```bash
-# Clone and test the SDK
+python -m venv .venv
+source .venv/bin/activate          # Windows: .\.venv\Scripts\activate
+pip install --upgrade pip
+pip install -e ".[dev]"
+pytest python/tests
+```
+
+The editable install exposes the `horus-sdk` console entry point so you can orchestrate robots or run the monitoring utilities directly.
+
+### ROS 2 Backend
+
+```bash
+cd horus_ros2_ws
+rosdep install --from-paths src -y --rosdistro humble
+colcon build
+source install/setup.bash
+ros2 launch horus_backend horus_backend.launch.py
+```
+
+This spins up the backend node, Unity bridge (`ROS-TCP-Endpoint` submodule), and TCP server that the Quest headset connects to.
+
+### C++ SDK
+
+```bash
+cmake -S cpp -B build/cpp
+cmake --build build/cpp
+```
+
+Link against headers in `cpp/include/horus` to embed HORUS primitives directly inside your ROS nodes or robotics middleware.
+
+---
+
+## 🚀 Quick Start
+
+```bash
 git clone --recursive https://github.com/RICE-unige/horus_sdk.git
 cd horus_sdk
 
-# Build ROS2 workspace
-cd horus_ros2_ws
-colcon build
-source install/setup.bash
-cd ..
+# Backend
+cd horus_ros2_ws && colcon build && source install/setup.bash
+ros2 launch horus_backend horus_backend.launch.py
 
-# Test SDK with quick test
-python3 examples/quick_test.py
+# Python client (separate shell)
+cd ../
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+python examples/quick_test.py
 ```
 
-### Full Documentation
-
-*   [**Python SDK**](./python/README.md)
-*   [**C++ SDK**](./cpp/README.md)
-*   [**ROS2 Backend**](./horus_ros2_ws/README.md)
-*   [**Testing Guide**](./TESTING.md)
+> [!TIP]
+> When iterating on robot configs, use `python/tests/test_topic_status_*.py` as a fast signal that topic subscriptions are being announced correctly without a running ROS graph.
 
 ---
 
-## 📐 Architecture Overview
+## 📐 Architecture
 
-### System Architecture
 ```text
-Python/C++ SDK ←→ HORUS Backend (C++) ←→ ROS-TCP-Endpoint ←→ HORUS MR App (Quest 3)
-    (port 8080)                            (port 10000)
+Python / C++ SDKs  <-->  HORUS Backend (ROS 2)  <-->  ROS-TCP-Endpoint  <-->  HORUS MR App
+        (8080)                       (10000)                        (Unity TCP bridge)
 ```
 
-### SDK Structure
-```text
-client        ← orchestrator
- ├─ core/        ← pure logic (TopicMap, EventBus, exceptions)
- ├─ robot/       ← robot management and control
- ├─ sensors/     ← sensor modeling and management
- ├─ dataviz/     ← data visualization for MR
- ├─ color/       ← color management for multi-robot
- ├─ bridge/      ← IO adapters (ros1, ros2, unity_tcp)
- ├─ plugins/     ← ready-made robot presets
- └─ utils/       ← supporting infrastructure
-```
-
-### Key Components
-- **HORUS Backend**: C++ ROS2 node with TCP server and robot registration system
-- **ROS-TCP-Endpoint**: Quest 3 integration bridge (as git submodule)
-- **SDK Client**: Professional initialization with real-time MR app monitoring
-- **Robot Management**: Complete robot modeling with sensor integration
-- **Data Visualization**: Advanced MR visualization with automatic color assignment
-- **Connection Monitor**: Live detection of Quest 3 device connections/disconnections
-- **Process Manager**: Comprehensive cleanup and lifecycle management
-- **Examples Framework**: Comprehensive robot integration examples and demos
-
-Everything outside **`bridge/`** is ROS-agnostic and therefore unit-testable
-without running a roscore.
+- **SDK Client** – CLI orchestrator that brings up backend processes, monitors Unity presence, and registers robots.
+- **Robot & Sensor Models** – Declarative descriptions of robots, sensors, and visualization streams.
+- **DataViz** – Builds the JSON payload consumed by the MR app with color-coded overlays.
+- **Topic Monitor** – Watches ROS graph activity and renders TTY or non-TTY dashboards.
+- **Backend** – ROS 2 nodes manage TCP connections, robot registry, and relay telemetry to the headset.
 
 ---
 
 ## 🗺 Roadmap
 
-| Milestone | Target                                             | Status |
-| --------- | -------------------------------------------------- | ------ |
-| **M0**    | Real-time MR app connection monitoring             | ✅ Complete |
-| **M0.5**  | Python SDK reorganization and robot registration   | ✅ Complete |
-| **M1**    | Implement `TopicSpec`, `TopicMap`, and `EventBus`  | 🔄 Ready for implementation |
-| **M2**    | TCP bridge + JSON handshake, full unit tests       | ✅ Infrastructure complete |
-| **M3**    | ROS 2 bridge + first working control loop          | ✅ Backend ready |
-| **M4**    | Plugins: Rosbot (diff-drive), Spot (legged)        | 🔄 Awaiting M1 completion |
-| **M5**    | ROS 1 bridge & docs deployment                     | 📋 Planned |
+| Milestone | Target                                           | Status |
+| --------- | ------------------------------------------------ | ------ |
+| M0        | Real-time MR connection monitoring               | ✅     |
+| M1        | TopicMap & EventBus parity across Python/C++     | 🔄     |
+| M2        | TCP bridge + JSON handshake tooling              | ✅     |
+| M3        | ROS 2 bridge + closed-loop control demo          | ✅     |
+| M4        | Plugin presets (Rosbot, Spot)                    | 🔄     |
+| M5        | ROS 1 bridge & docs site refresh                 | 📋     |
 
 ---
 
 ## 🤝 Contributing
 
-PRs are welcome!
-See **`CONTRIBUTING.md`** (coming soon) for coding style, branching model, and how to run the test suite.
+PRs and discussions are welcome! Please include tests (or manual repro steps) for any behavior changes and run `pytest python/tests` before submitting.
 
 ---
 
 ## 📝 License
 
-Released under the [Apache 2.0](LICENSE) license.
-
----
-
-## 📖 Citation
-
-If you use HORUS or the SDK in academic work, please cite:
-
-```bibtex
-@misc{adekoya2025horus,
-  title   = {HORUS: A Mixed Reality Interface for Managing Teams of Mobile Robots},
-  author  = {Adekoya, Omotoye Shamsudeen and Sgorbissa, Antonio and Recchiuto, Carmine T.},
-  year    = {2025},
-  eprint  = {2506.02622},
-  archivePrefix = {arXiv},
-  primaryClass  = {cs.RO}
-}
-```
-
----
-
-## 📬 Contact
-
-|                        |                                                                                                                               |
-| :--------------------- | :---------------------------------------------------------------------------------------------------------------------------- |
-| **Omotoye S. Adekoya** | [homepage](https://rubrica.unige.it/personale/UkFEXVhg) · [omotoye.adekoya@edu.unige.it](mailto:omotoye.adekoya@edu.unige.it) |
-
----
-
-## 💡 Acknowledgments
-
-Developed at the **[RICE Lab](https://rice.dibris.unige.it/)**,
-[University of Genoa](https://unige.it/en), under
-Prof. Carmine Recchiuto & Prof. Antonio Sgorbissa.
+Distributed under the [Apache 2.0](LICENSE) license.

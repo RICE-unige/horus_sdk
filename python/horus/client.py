@@ -4,6 +4,7 @@ from .utils.backend_manager import BackendManager
 from .utils.branding import show_ascii_art
 from .utils.requirements_checker import RequirementsChecker
 from .utils.unity_monitor import UnityConnectionMonitor
+from .utils.rosout_monitor import get_rosout_monitor
 
 
 class Client:
@@ -13,6 +14,7 @@ class Client:
         self.backend_manager = BackendManager(backend)
         self.requirements_checker = RequirementsChecker()
         self.unity_monitor = UnityConnectionMonitor()
+        self.rosout_monitor = None  # Will be initialized after backend is ready
         self._shutdown_called = False  # Prevent duplicate shutdowns
 
         # Initialize with backend management
@@ -126,6 +128,13 @@ class Client:
 
             # Show Unity MR connection information
             self._display_unity_connection_info()
+            
+            # Start rosout monitor for topic subscription tracking
+            try:
+                self.rosout_monitor = get_rosout_monitor()
+                self.rosout_monitor.start()
+            except Exception:
+                pass
 
             print("\n\033[92mSDK initialized successfully\033[0m")
         else:
@@ -227,6 +236,21 @@ class Client:
             print("\033[90m  Stopping Unity connection monitoring...\033[0m")
             self.unity_monitor.stop_monitoring()
             print("\033[90m  ✓ Unity monitoring stopped\033[0m")
+
+        # Stop rosout monitor
+        if hasattr(self, "rosout_monitor") and self.rosout_monitor:
+            try:
+                self.rosout_monitor.stop()
+            except Exception:
+                pass
+
+        # Stop live topic status board (if running)
+        try:
+            from .utils.topic_status import get_topic_status_board
+
+            get_topic_status_board().stop()
+        except Exception:
+            pass
 
         # Stop backend and all ROS2 processes
         if hasattr(self, "backend_manager"):

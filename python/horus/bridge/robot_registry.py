@@ -4,8 +4,9 @@ Robot registry client for HORUS SDK
 Handles robot registration with the HORUS backend system
 """
 
+import threading
 import time
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 try:
     import rclpy
@@ -15,6 +16,7 @@ try:
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
+    RobotConfig = Any  # Placeholder type when ROS2 is not available
 
 
 class RobotRegistryClient:
@@ -26,7 +28,8 @@ class RobotRegistryClient:
         self.register_client = None
         self.unregister_client = None
         self.ros_initialized = False
-
+        self._registration_lock = threading.Lock()  # Prevent concurrent registrations
+        
         if ROS2_AVAILABLE:
             self._initialize_ros2()
 
@@ -70,47 +73,62 @@ class RobotRegistryClient:
         if not self.ros_initialized:
             return False, {"error": "ROS2 not available"}
 
-        # Wait for service to be available
-        if not self.register_client.wait_for_service(timeout_sec=5.0):
-            return False, {"error": "Registration service not available"}
-
-        # Build robot config message
-        config_msg = self._build_robot_config(robot, dataviz)
-
-        # Create service request
-        request = RegisterRobot.Request()
-        request.robot_config = config_msg
-
-        # Call service
+        # Prevent concurrent registrations
+        if not self._registration_lock.acquire(blocking=False):
+            return False, {"error": "Registration already in progress"}
+        
         try:
-            future = self.register_client.call_async(request)
+            # Wait for service to be available
+            if not self.register_client.wait_for_service(timeout_sec=5.0):
+                return False, {"error": "Registration service not available"}
 
-            # Wait for response with timeout
-            start_time = time.time()
-            while rclpy.ok() and not future.done():
-                rclpy.spin_once(self.node, timeout_sec=0.1)
-                if time.time() - start_time > timeout_sec:
-                    return False, {"error": "Service call timeout"}
+            # Build robot config message
+            config_msg = self._build_robot_config(robot, dataviz)
 
-            if future.done():
-                response = future.result()
+            # Create service request
+            request = RegisterRobot.Request()
+            request.robot_config = config_msg
 
-                if response.success:
-                    return True, {
-                        "robot_id": response.robot_id,
-                        "assigned_color": response.assigned_color,
-                        "message": "Robot registered successfully",
-                    }
-                else:
-                    return False, {
-                        "error": response.error_message,
-                        "validation_errors": response.validation_errors,
-                    }
+            # Call service
+            try:
+                # Create new executor for this call to avoid generator reuse
+                import rclpy.executors
+                executor = rclpy.executors.SingleThreadedExecutor()
+                executor.add_node(self.node)
+                
+                future = self.register_client.call_async(request)
+                
+                # Wait for response with timeout
+                start_time = time.time()
+                while rclpy.ok() and not future.done():
+                    executor.spin_once(timeout_sec=0.1)
+                    if time.time() - start_time > timeout_sec:
+                        executor.shutdown()
+                        return False, {"error": "Service call timeout"}
+                
+                executor.shutdown()
+                
+                if future.done():
+                    response = future.result()
 
-        except Exception as e:
-            return False, {"error": f"Service call failed: {str(e)}"}
+                    if response.success:
+                        return True, {
+                            "robot_id": response.robot_id,
+                            "assigned_color": response.assigned_color,
+                            "message": "Robot registered successfully",
+                        }
+                    else:
+                        return False, {
+                            "error": response.error_message,
+                            "validation_errors": response.validation_errors,
+                        }
 
-        return False, {"error": "Unknown registration failure"}
+            except Exception as e:
+                return False, {"error": f"Service call failed: {str(e)}"}
+
+            return False, {"error": "Unknown registration failure"}
+        finally:
+            self._registration_lock.release()
 
     def unregister_robot(
         self, robot_id: str, timeout_sec: float = 10.0
@@ -160,8 +178,10 @@ class RobotRegistryClient:
 
         return False, {"error": "Unknown unregistration failure"}
 
-    def _build_robot_config(self, robot, dataviz) -> RobotConfig:
+    def _build_robot_config(self, robot, dataviz):
         """Build ROS message from robot and dataviz objects"""
+        if not ROS2_AVAILABLE:
+            raise RuntimeError("ROS2 is not available")
         config = RobotConfig()
 
         # Basic robot info

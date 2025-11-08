@@ -2,6 +2,10 @@
 
 from .client import Client
 from .color import ColorManager, ColorScheme, RGBColor
+from .core import (
+    Event, EventBus, EventPriority, get_event_bus, publish, subscribe, unsubscribe,
+    TopicMap, TopicInfo, TopicType, TopicDirection, get_topic_map
+)
 from .dataviz import DataSourceType, DataViz, VisualizationType
 from .robot import Robot, RobotType
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
@@ -22,4 +26,16 @@ __all__ = [
     "ColorManager",
     "ColorScheme",
     "RGBColor",
+    "Event",
+    "EventBus", 
+    "EventPriority",
+    "get_event_bus",
+    "publish",
+    "subscribe", 
+    "unsubscribe",
+    "TopicMap",
+    "TopicInfo", 
+    "TopicType",
+    "TopicDirection",
+    "get_topic_map",
 ]
