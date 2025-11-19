@@ -23,6 +23,8 @@
   <depend>rosidl_typesupport_introspection_cpp</depend>
   <depend>std_srvs</depend>
   <depend>example_interfaces</depend>
+  <depend>libdatachannel</depend>
+  <depend>gstreamer-1.0</depend>
   
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
