@@ -120,6 +120,12 @@ public:
     return send_message("", std::vector<uint8_t>());
   }
   
+  bool send_webrtc_offer(const std::string& sdp)
+  {
+    std::string params = "{\"sdp\":\"" + sdp + "\",\"type\":\"offer\"}";
+    return send_system_command("__webrtc_offer", params);
+  }
+  
   void receive_loop(int duration_sec)
   {
     std::cout << "Receiving messages for " << duration_sec << " seconds..." << std::endl;
@@ -173,6 +179,12 @@ public:
               }
             }
           }
+        } else if (destination == "__webrtc_answer") {
+          std::string json(payload.begin(), payload.end());
+          std::cout << "  Received WebRTC Answer: " << json.substr(0, 50) << "..." << std::endl;
+        } else if (destination == "__webrtc_candidate") {
+          std::string json(payload.begin(), payload.end());
+          std::cout << "  Received WebRTC Candidate: " << json << std::endl;
         } else if (!destination.empty() && destination[0] == '_') {
           std::cout << "  System message: " << destination << " (" << payload.size() << " bytes)" << std::endl;
         } else if (!destination.empty()) {
@@ -365,6 +377,12 @@ int main(int argc, char** argv)
   req.insert(req.end(), b.begin(), b.end());
   uint32_t srv_id = 42;
   client.send_service_request(srv_id, "/test/add_two_ints", req);
+  
+  // WebRTC tests
+  std::cout << "\n10. Sending WebRTC Offer..." << std::endl;
+  // Dummy SDP for testing
+  std::string dummy_sdp = "v=0\\r\\no=- 4611731400430051336 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\na=group:BUNDLE 0\\r\\na=msid-semantic: WMS\\r\\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\\r\\nc=IN IP4 0.0.0.0\\r\\na=candidate:2838008079 1 udp 2122260223 127.0.0.1 59582 typ host generation 0\\r\\n";
+  client.send_webrtc_offer(dummy_sdp);
   
   // Wait to receive response (not fully parsed here, just ensure flow works)
   client.receive_loop(5);
