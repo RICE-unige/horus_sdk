@@ -111,9 +111,12 @@ class RobotRegistryClient:
     def _initialize_ros2(self):
         """Initialize ROS2 components"""
         try:
-            # Check if rclpy is already initialized
+            from horus.utils import cli
             if not rclpy.ok():
                 rclpy.init()
+            cli.print_success("ROS2 Context Initialized")
+            
+            self.ros_initialized = True
             
             # Register cleanup
             atexit.register(self._cleanup_ros)
@@ -133,15 +136,7 @@ class RobotRegistryClient:
                 String, "/horus/registration", qos_profile
             )
 
-            # Ack subscription - Use BestEffort to ensure compatibility with all Publisher types
-            # (Reliable Sub cannot hear BestEffort Pub, but BestEffort Sub can hear both if matched?)
-            # Wait, actually:
-            # Reliable Pub -> Reliable Sub (OK)
-            # Reliable Pub -> BestEffort Sub (OK - degrades)
-            # BestEffort Pub -> Reliable Sub (FAIL)
-            # BestEffort Pub -> BestEffort Sub (OK)
-            # So BestEffort Subscriber is compatible with EVERYTHING.
-            
+            # Ack subscription - Use BestEffort or Reliable
             ack_qos = QoSProfile(
                 reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.VOLATILE,
@@ -152,25 +147,26 @@ class RobotRegistryClient:
                 String, "/horus/registration_ack", self._ack_callback, ack_qos
             )
 
-            self.ros_initialized = True
+            # QoS for Heartbeat (Best Effort)
+            hb_qos = QoSProfile(
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+                depth=1
+            )
+            
+            self.node.create_subscription(
+                String, 
+                "/horus/heartbeat", 
+                self._heartbeat_callback, 
+                hb_qos
+            )
 
         except Exception as e:
-            print(f"Warning: ROS2 initialization failed: {e}")
+            cli.print_error(f"Failed to init ROS context: {e}")
+            import traceback
+            traceback.print_exc()
             self.ros_initialized = False
 
-        # QoS for Heartbeat (Best Effort)
-        hb_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            durability=DurabilityPolicy.VOLATILE,
-            depth=1
-        )
-        
-        self.node.create_subscription(
-            String,
-            '/horus/heartbeat',
-            self._heartbeat_callback,
-            hb_qos
-        )
         
         # Give ROS time to initialize
         time.sleep(1.0)
@@ -212,53 +208,54 @@ class RobotRegistryClient:
             return False, {"error": "Registration already in progress"}
         
         try:
-            # 1. Bridge Detection & Auto-Start
+            # 1. Bridge Detection (Infrastructure must be external)
             bridge_running = False
             
             def is_port_open(port):
                 import socket
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(1.0)
+                    s.settimeout(0.5)
                     return s.connect_ex(('localhost', port)) == 0
 
-            # Check if port 10000 is already in use (Bridge likely running)
             if is_port_open(10000):
                 bridge_running = True
-                cli.print_info("Existing Horus Bridge detected on port 10000.")
-
-            if not bridge_running:
-                cli.print_info("No Bridge detected. Auto-starting...")
+                cli.print_info("Horus Bridge detected on port 10000.")
+            else:
+                cli.print_info("No Bridge on port 10000. Attempting auto-start...")
+                # Try to launch via ROS 2
                 try:
-                    # Attempt to run bridge using launch file
-                    self.bridge_process = subprocess.Popen(
-                        ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
-                        stdout=subprocess.DEVNULL, # Keep it clean for dashboard
-                        stderr=subprocess.DEVNULL,
-                        start_new_session=True
+                    # Check if package exists
+                    check_pkg = subprocess.run(
+                        ['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], 
+                        capture_output=True
                     )
+                    if check_pkg.returncode == 0:
+                        self.bridge_process = subprocess.Popen(
+                            ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True
+                        )
+                        atexit.register(self._cleanup_bridge)
+                        
+                        # Wait for start
+                        with cli.status("Launching Horus Bridge...", spinner="dots"):
+                            for _ in range(15):
+                                if is_port_open(10000):
+                                    bridge_running = True
+                                    cli.print_success("Horus Bridge launched successfully.")
+                                    break
+                                time.sleep(1.0)
                     
-                    atexit.register(self._cleanup_bridge)
-                    
-                    # Wait for port to open
-                    with cli.status("Initializing Horus Bridge...", spinner="dots"):
-                        waited = 0
-                        while not is_port_open(10000) and waited < 15:
-                            time.sleep(1.0)
-                            waited += 1
-                            if self.bridge_process.poll() is not None:
-                                break
-                    
-                    if is_port_open(10000):
-                        cli.print_success("Horus Bridge started and listening.")
-                        bridge_running = True
-                    else:
-                        cli.print_error("Bridge failed to bind port 10000.")
-                        if self.bridge_process.poll() is not None:
-                            cli.print_error("Bridge process exited prematurely.")
+                    if not bridge_running:
+                        cli.print_error("Failed to auto-launch bridge.")
+                        cli.print_info("Ensure 'horus_unity_bridge' is in your ROS workspace and sourced.")
+                        cli.print_info("  source install/setup.bash")
                         return False, {"error": "Bridge Start Failed"}
                         
                 except FileNotFoundError:
-                    cli.print_error("Could not find 'ros2'. check path.")
+                     cli.print_error("'ros2' command not found.")
+                     return False, {"error": "ROS2 Not Found"}
 
             # Display Connect Info using Dashboard
             local_ip = self._get_local_ip()
@@ -294,15 +291,10 @@ class RobotRegistryClient:
                 while True:
                     rclpy.spin_once(self.node, timeout_sec=0.1)
                     
-                    # Check Bridge Process Status
-                    if self.bridge_process:
-                        retcode = self.bridge_process.poll()
-                        if retcode is None:
-                            dashboard.update_bridge("Active")
-                        else:
-                            dashboard.update_bridge(f"Stopped (Code {retcode})")
-                    else:
-                        pass # External
+                    # Bridge is external, assume active if we started active.
+                    # Optional: Re-check port occasionally?
+                    # For now, just keep status as is.
+
 
                     # Update Topic Stats (every ~1s)
                     if int(time.time()) % 1 == 0:
