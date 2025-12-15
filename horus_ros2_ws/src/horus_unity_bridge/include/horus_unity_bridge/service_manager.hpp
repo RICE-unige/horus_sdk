@@ -5,6 +5,8 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/serialization.hpp>
+#include <rclcpp/generic_client.hpp>
+// #include <rclcpp/generic_service.hpp> // Not available in Humble
 #include <example_interfaces/srv/add_two_ints.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -51,6 +53,12 @@ inline void fill_serialized_message(const std::vector<uint8_t>& data,
 {
   serialized_msg.reserve(data.size());
   auto& rcl_msg = serialized_msg.get_rcl_serialized_message();
+  // Ensure buffer is large enough
+  if (rcl_msg.buffer_capacity < data.size()) {
+    rcl_msg.allocator.deallocate(rcl_msg.buffer, rcl_msg.allocator.state);
+    rcl_msg.buffer = static_cast<uint8_t*>(rcl_msg.allocator.allocate(data.size(), rcl_msg.allocator.state));
+    rcl_msg.buffer_capacity = data.size();
+  }
   std::memcpy(rcl_msg.buffer, data.data(), data.size());
   rcl_msg.buffer_length = data.size();
 }
@@ -58,14 +66,13 @@ inline void fill_serialized_message(const std::vector<uint8_t>& data,
 
 
 /**
- * @brief Manages ROS2 service calls between Unity and ROS
+ * @brief Manages ROS2 service calls between Unity and ROS using Generic Types
  * 
  * Features:
- * - Typed async ROS service calls (Unity -> ROS)
- * - Unity service servers (ROS -> Unity) with typed support
+ * - Generic async ROS service calls (Unity -> ROS) (supports ANY service type)
+ * - Generic Unity service servers (ROS -> Unity) (supports ANY service type)
  * - Request/response ID matching
  * - Timeout handling (10s default)
- * - Support for common service types (AddTwoInts, Trigger, SetBool)
  */
 class ServiceManager
 {
@@ -145,105 +152,23 @@ public:
   };
   
   const ServiceStatistics& get_statistics() const { return stats_; }
+  
+  // Clean up all pending service calls (useful on client disconnect if we tracked it)
+  // For now, timeouts handle this.
 
 private:
   rclcpp::Node* node_;
   
-  // Base class for type-erased service client wrappers
-  struct RosServiceClientBase {
-    virtual ~RosServiceClientBase() = default;
-    virtual bool is_ready() const = 0;
-    virtual bool call_async(uint32_t srv_id, const std::vector<uint8_t>& request) = 0;
-    virtual bool check_response(uint32_t srv_id, std::vector<uint8_t>& response) = 0;
-    virtual bool has_timedout(uint32_t srv_id) const = 0;
-    virtual void cleanup(uint32_t srv_id) = 0;
-  };
-  
-  // Typed service client wrapper
-  template<typename ServiceT>
-  struct TypedServiceClient : public RosServiceClientBase {
-    typename rclcpp::Client<ServiceT>::SharedPtr client;
+  // Wrapper for Generic Client
+  struct GenericServiceClientWrapper {
+    std::shared_ptr<rclcpp::GenericClient> client;
     struct PendingCall {
-      std::shared_future<typename ServiceT::Response::SharedPtr> future;
+      std::shared_future<std::shared_ptr<void>> future; 
       rclcpp::Time start_time;
     };
     std::unordered_map<uint32_t, PendingCall> pending;
-    rclcpp::Node* node;
     
-    TypedServiceClient(typename rclcpp::Client<ServiceT>::SharedPtr c, rclcpp::Node* n)
-      : client(c), node(n) {}
-    
-    bool is_ready() const override { return client->service_is_ready(); }
-    
-    bool call_async(uint32_t srv_id, const std::vector<uint8_t>& request) override {
-      try {
-        // Deserialize request using introspection type support
-        auto req = std::make_shared<typename ServiceT::Request>();
-        std::vector<uint8_t> normalized_request;
-        const std::vector<uint8_t>* payload = &request;
-        if (!detail::has_cdr_header(request)) {
-          normalized_request = detail::add_cdr_header(request);
-          payload = &normalized_request;
-        }
-        rclcpp::SerializedMessage serialized_msg;
-        detail::fill_serialized_message(*payload, serialized_msg);
-
-        // Deserialize using default type support
-        rclcpp::Serialization<typename ServiceT::Request> serializer;
-        serializer.deserialize_message(&serialized_msg, req.get());
-        
-        // Call service async
-        auto future = client->async_send_request(req);
-        
-        PendingCall call;
-        call.future = future.share();
-        call.start_time = node->now();
-        pending[srv_id] = call;
-        
-        return true;
-      } catch (const std::exception& e) {
-        RCLCPP_ERROR(node->get_logger(), "Failed to deserialize service request: %s", e.what());
-        return false;
-      }
-    }
-    
-    bool check_response(uint32_t srv_id, std::vector<uint8_t>& response) override {
-      auto it = pending.find(srv_id);
-      if (it == pending.end()) return false;
-      
-      if (it->second.future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-        try {
-          auto resp = it->second.future.get();
-          
-          // Serialize response using default type support
-          rclcpp::Serialization<typename ServiceT::Response> serializer;
-          rclcpp::SerializedMessage serialized_msg;
-          serializer.serialize_message(resp.get(), &serialized_msg);
-          
-          auto& rcl_msg = serialized_msg.get_rcl_serialized_message();
-          response.assign(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
-          
-          pending.erase(it);
-          return true;
-        } catch (const std::exception& e) {
-          RCLCPP_ERROR(node->get_logger(), "Failed to serialize service response: %s", e.what());
-          pending.erase(it);
-          return false;
-        }
-      }
-      return false;
-    }
-    
-    bool has_timedout(uint32_t srv_id) const override {
-      auto it = pending.find(srv_id);
-      if (it == pending.end()) return false;
-      auto elapsed = node->now() - it->second.start_time;
-      return elapsed.seconds() > 10.0;
-    }
-    
-    void cleanup(uint32_t srv_id) override {
-      pending.erase(srv_id);
-    }
+    GenericServiceClientWrapper(std::shared_ptr<rclcpp::GenericClient> c) : client(c) {}
   };
   
   // Base class for Unity service servers
@@ -264,7 +189,7 @@ private:
       : server(s), request_callback(cb) {}
   };
   
-  std::unordered_map<std::string, std::shared_ptr<RosServiceClientBase>> ros_service_clients_;
+  std::unordered_map<std::string, std::shared_ptr<GenericServiceClientWrapper>> ros_service_clients_;
   std::unordered_map<uint32_t, std::string> pending_service_names_;  // srv_id -> service_name
   std::mutex ros_clients_mutex_;
   
@@ -278,10 +203,10 @@ private:
   
   ServiceStatistics stats_;
   
-  // Factory methods for creating typed clients/servers
-  std::shared_ptr<RosServiceClientBase> create_service_client(const std::string& service_name,
-                                                              const std::string& service_type);
+  // Helper to normalize service types
+  std::string normalize_service_type(const std::string& type);
   
+  // Factory for Unity services (Typed fallback)
   std::shared_ptr<UnityServiceServerBase> create_unity_service_server(
     const std::string& service_name,
     const std::string& service_type,
