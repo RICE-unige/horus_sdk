@@ -6,6 +6,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.align import Align
 from rich.layout import Layout
+from rich.control import Control
 from contextlib import contextmanager
 import time
 
@@ -93,8 +94,8 @@ class ConnectionDashboard:
         self.connection_state = "Waiting for App..."
         self.topic_stats = {}
         self.spinner = Spinner("dots", style="bold white")
-        # Disable auto-refresh to avoid fighting with manual updates and potential double-rendering
-        self.live = Live(self.render(), auto_refresh=False, console=console)
+        # Disable auto-refresh to avoid fighting with manual updates
+        self.live = Live("", auto_refresh=False, console=console)
         
     def render(self):
         # We compose the status line here to pass a single renderable or string
@@ -137,12 +138,15 @@ class ConnectionDashboard:
 
     def __enter__(self):
         self.live.start()
-        # Force initial render
-        self.live.refresh()
+        # Set initial content after Live starts
+        self.live.update(self.render(), refresh=True)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.live.stop()
+        if exc_type is not None:
+             # Add a spacer for clear separation on exception
+             console.print("")
 
 def print_step(message):
     """Print a step description"""
