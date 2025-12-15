@@ -33,8 +33,8 @@ horus_unity_bridge:
       depth: 10
     
     # Logging
-    log_level: "info"          # debug, info, warn, error
-    log_protocol_messages: false
+    log_level: "debug"          # debug, info, warn, error
+    log_protocol_messages: true
     log_connection_events: true
     
     # Features
