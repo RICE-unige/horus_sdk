@@ -1,4 +1,8 @@
 """HORUS Mixed Reality Robot Management SDK"""
+from .utils.branding import show_ascii_art
+
+# Display branding automatically on import
+show_ascii_art()
 
 from .client import Client
 from .color import ColorManager, ColorScheme, RGBColor
