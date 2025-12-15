@@ -10,12 +10,12 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![ROS2 Humble](https://img.shields.io/badge/ros2-humble-blue.svg)](https://docs.ros.org/en/humble/)
-[![Documentation](https://img.shields.io/badge/docs-mkdocs-green.svg)](https://rice-unige.github.io/horus_sdk/)
+
 
 </div>
 
 > [!IMPORTANT]
-> This repo combines the Python SDK, the C++ reference implementation, and the ROS 2 backend that interfaces with Unity’s ROS-TCP-Endpoint. Clone with `--recursive` (or run `git submodule update --init --recursive`) to ensure the Unity bridge is present.
+> The SDK manages the Client-side logic. The ROS 2 Bridge Infrastructure has moved to a separate repository: [`horus_ros2`](https://github.com/RICE-unige/horus_ros2).
 
 ---
 
@@ -44,7 +44,7 @@ HORUS-SDK unifies ROS robots with the HORUS mixed-reality application on Meta Qu
 | ---------------- | ---------------------------------------------------------------------------- |
 | `python/`        | Primary SDK (client orchestration, robot & sensor models, monitoring utils) |
 | `cpp/`           | High-performance SDK mirroring the Python API surface                        |
-| `horus_ros2_ws/` | ROS 2 Humble workspace with the backend nodes and Unity ROS-TCP-Endpoint     |
+
 
 ### Current Version: `0.1.0-alpha`
 
@@ -70,29 +70,40 @@ HORUS-SDK unifies ROS robots with the HORUS mixed-reality application on Meta Qu
 
 ## 🛠 Install & Build
 
-### Python SDK
+### Python SDK (Build from Source)
 
+**For Development (Editable):**
 ```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows: .\.venv\Scripts\activate
-pip install --upgrade pip
+source .venv/bin/activate
 pip install -e ".[dev]"
-pytest python/tests
 ```
 
-The editable install exposes the `horus-sdk` console entry point so you can orchestrate robots or run the monitoring utilities directly.
+**For Release (Wheel Generation):**
+```bash
+pip install build
+python3 -m build
+# Output in dist/ (e.g., horus_sdk-0.1.0-py3-none-any.whl)
+```
 
-### ROS 2 Backend
+### ROS 2 Bridge Infrastructure
+
+The infrastructure (Bridge + Request Handlers) lives in `horus_ros2`.
 
 ```bash
-cd horus_ros2_ws
-rosdep install --from-paths src -y --rosdistro humble
-colcon build
-source install/setup.bash
-ros2 launch horus_backend horus_backend.launch.py
-```
+git clone https://github.com/RICE-unige/horus_ros2.git
+cd horus_ros2
 
-This spins up the backend node, Unity bridge (`ROS-TCP-Endpoint` submodule), and TCP server that the Quest headset connects to.
+# Install dependencies
+rosdep install --from-paths . -y --ignore-src
+
+# Build
+colcon build --symlink-install
+source install/setup.bash
+
+# Run
+ros2 launch horus_unity_bridge unity_bridge.launch.py
+```
 
 ### C++ SDK
 
@@ -108,18 +119,16 @@ Link against headers in `cpp/include/horus` to embed HORUS primitives directly i
 ## 🚀 Quick Start
 
 ```bash
-git clone --recursive https://github.com/RICE-unige/horus_sdk.git
+git clone https://github.com/RICE-unige/horus_sdk.git
 cd horus_sdk
 
-# Backend
-cd horus_ros2_ws && colcon build && source install/setup.bash
-ros2 launch horus_backend horus_backend.launch.py
+# 1. Start Infrastructure (in horus_ros2 repo)
+cd horus_ros2
+source install/setup.bash
+ros2 launch horus_unity_bridge unity_bridge.launch.py
 
-# Python client (separate shell)
-cd ../
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-python examples/quick_test.py
+# 2. Run SDK Client (in horus_sdk repo)
+python3 python/examples/sdk_registration_demo.py
 ```
 
 > [!TIP]
@@ -151,7 +160,7 @@ Python / C++ SDKs  <-->  HORUS Backend (ROS 2)  <-->  ROS-TCP-Endpoint  <-->  HO
 | M2        | TCP bridge + JSON handshake tooling              | ✅     |
 | M3        | ROS 2 bridge + closed-loop control demo          | ✅     |
 | M4        | Plugin presets (Rosbot, Spot)                    | 🔄     |
-| M5        | ROS 1 bridge & docs site refresh                 | 📋     |
+| M5        | Docs site refresh                                | 📋     |
 
 ---
 

@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include pyproject.toml
+
+recursive-include python/horus py.typed
+recursive-include python/horus *.yaml
+recursive-include python/horus *.json
