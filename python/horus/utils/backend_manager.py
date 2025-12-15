@@ -20,13 +20,6 @@ class BackendManager:
                 "tcp_port": 8080,
                 "unity_port": 10000,
             },
-            "ros1": {
-                "package": "horus_backend_ros1",
-                "launch_file": "horus_backend.launch",
-                "check_command": "rospack find horus_backend_ros1",
-                "launch_command": "roslaunch horus_backend_ros1 horus_backend.launch",
-                "tcp_port": 8081,
-            },
         }
 
     def launch_backend(self):

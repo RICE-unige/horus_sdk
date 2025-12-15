@@ -13,11 +13,6 @@ class RequirementsChecker:
                 ("Network Port 8080", self._check_port_availability),
                 ("Unity TCP Endpoint (Port 10000)", self._check_unity_endpoint),
             ],
-            "ros1": [
-                ("ROS1 Installation", self._check_ros1_installation),
-                ("HORUS Backend Package", self._check_horus_backend_ros1_package),
-                ("Network Port 8081", self._check_port_availability),
-            ],
         }
 
     def get_backend_checks(self, backend_type):
@@ -65,15 +60,7 @@ class RequirementsChecker:
             "ROS2 not found - install with: sudo apt install ros-humble-desktop",
         )
 
-    def _check_ros1_installation(self, backend_type):
-        """Check if ROS1 is installed"""
-        if shutil.which("roscore") and "ROS_DISTRO" in os.environ:
-            distro = os.environ.get("ROS_DISTRO", "unknown")
-            return True, f"ROS1 {distro} detected"
-        return (
-            False,
-            "ROS1 not found - install with: sudo apt install ros-noetic-desktop-full",
-        )
+
 
     def _check_horus_backend_package(self, backend_type):
         """Check if HORUS ROS2 backend package is installed"""
@@ -87,24 +74,11 @@ class RequirementsChecker:
         except Exception:
             return False, "Unable to check package list"
 
-    def _check_horus_backend_ros1_package(self, backend_type):
-        """Check if HORUS ROS1 backend package is installed"""
-        try:
-            result = subprocess.run(
-                ["rospack", "find", "horus_backend_ros1"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                return True, "HORUS ROS1 backend package found"
-            return False, "Install with: sudo apt install ros-noetic-horus-backend"
-        except Exception:
-            return False, "Unable to check package"
+
 
     def _check_port_availability(self, backend_type):
         """Check if required port is available"""
-        port = 8080 if backend_type == "ros2" else 8081
+        port = 8080
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             result = sock.connect_ex(("localhost", port))
