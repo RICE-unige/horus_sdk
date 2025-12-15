@@ -1,0 +1,11 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find ROS 2 dependencies if needed
+# find_dependency(rclcpp REQUIRED)
+
+# Include target exports
+include("${CMAKE_CURRENT_LIST_DIR}/horus_cpp_sdkTargets.cmake")
+
+check_required_components(horus_cpp_sdk)
