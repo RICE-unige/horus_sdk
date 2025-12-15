@@ -4,6 +4,17 @@
 #include "horus_unity_bridge/message_router.hpp"
 #include <sstream>
 #include <nlohmann/json.hpp>
+#include <sensor_msgs/image_encodings.hpp>
+#include <rclcpp/qos.hpp>
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+
+#ifdef ENABLE_WEBRTC
+#include <opencv2/opencv.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
+#endif
 
 namespace horus_unity_bridge
 {
@@ -11,8 +22,77 @@ namespace horus_unity_bridge
 MessageRouter::MessageRouter()
   : Node("horus_unity_bridge")
 {
+  auto webrtc_enabled_param = this->declare_parameter<bool>("webrtc.enabled", false);
+  auto webrtc_camera_topic_param = this->declare_parameter<std::string>("webrtc.camera_topic", "");
+  auto webrtc_bitrate_param = this->declare_parameter<int>("webrtc.bitrate_kbps", 2000);
+  auto webrtc_framerate_param = this->declare_parameter<int>("webrtc.framerate", 30);
+  auto webrtc_encoder_param = this->declare_parameter<std::string>("webrtc.encoder", "x264enc");
+  auto webrtc_pipeline_param = this->declare_parameter<std::string>("webrtc.pipeline", "");
+  auto webrtc_stun_param = this->declare_parameter<std::vector<std::string>>(
+    "webrtc.stun_servers", std::vector<std::string>{"stun:stun.l.google.com:19302"});
+  
   topic_manager_ = std::make_unique<TopicManager>(this);
   service_manager_ = std::make_unique<ServiceManager>(this);
+
+#ifdef ENABLE_WEBRTC
+  webrtc_enabled_param_ = webrtc_enabled_param;
+  webrtc_camera_topic_ = webrtc_camera_topic_param;
+  webrtc_bitrate_kbps_ = webrtc_bitrate_param;
+  webrtc_framerate_ = webrtc_framerate_param;
+  webrtc_encoder_ = webrtc_encoder_param;
+  webrtc_pipeline_ = webrtc_pipeline_param;
+  webrtc_stun_servers_ = webrtc_stun_param;
+  
+  if (webrtc_enabled_param_) {
+    webrtc_manager_ = std::make_unique<WebRTCManager>();
+    WebRTCManager::Settings settings;
+    settings.stun_servers = webrtc_stun_servers_;
+    settings.encoder = webrtc_encoder_;
+    settings.bitrate_kbps = webrtc_bitrate_kbps_;
+    settings.framerate = webrtc_framerate_;
+    settings.pipeline = webrtc_pipeline_;
+    
+    if (!webrtc_manager_->initialize(settings)) {
+      RCLCPP_WARN(get_logger(), "Failed to initialize WebRTC manager, disabling WebRTC features.");
+      webrtc_manager_.reset();
+    } else {
+      webrtc_manager_->set_signaling_callback(
+        [this](const std::string& type, const nlohmann::json& data) {
+          if (!broadcast_callback_) {
+            RCLCPP_WARN(get_logger(), "WebRTC signaling callback received but no broadcast callback is set.");
+            return;
+          }
+          std::string command;
+          if (type == "offer") command = "__webrtc_offer";
+          else if (type == "answer") command = "__webrtc_answer";
+          else if (type == "candidate") command = "__webrtc_candidate";
+          
+          if (!command.empty()) {
+            std::string json_str = data.dump();
+            std::vector<uint8_t> payload(json_str.begin(), json_str.end());
+            broadcast_callback_(command, payload);
+          }
+        }
+      );
+      
+      if (!webrtc_camera_topic_.empty()) {
+        setup_camera_subscription(webrtc_camera_topic_);
+      }
+    }
+  } else if (!webrtc_camera_topic_.empty()) {
+    RCLCPP_WARN(get_logger(), "Parameter 'webrtc.camera_topic' is set but WebRTC streaming is disabled.");
+  }
+#else
+  if (webrtc_enabled_param) {
+    RCLCPP_WARN(get_logger(), "webrtc.enabled parameter is true but this build was compiled without WebRTC support.");
+  }
+  (void)webrtc_camera_topic_param;
+  (void)webrtc_bitrate_param;
+  (void)webrtc_framerate_param;
+  (void)webrtc_encoder_param;
+  (void)webrtc_pipeline_param;
+  (void)webrtc_stun_param;
+#endif
   
   // Setup service manager callback for sending responses to Unity
   service_manager_->set_response_callback(
@@ -43,7 +123,25 @@ MessageRouter::MessageRouter()
   
   stats_ = Statistics{};
   
+#ifdef ENABLE_WEBRTC
+  if (webrtc_enabled_param_) {
+    processing_running_ = true;
+    worker_thread_ = std::thread(&MessageRouter::process_frames, this);
+  }
+#endif
+
   RCLCPP_INFO(get_logger(), "Message router initialized");
+}
+
+MessageRouter::~MessageRouter()
+{
+#ifdef ENABLE_WEBRTC
+  processing_running_ = false;
+  frame_queue_cv_.notify_all();
+  if (worker_thread_.joinable()) {
+    worker_thread_.join();
+  }
+#endif
 }
 
 bool MessageRouter::route_message(int client_fd, const ProtocolMessage& message)
@@ -118,6 +216,14 @@ bool MessageRouter::handle_system_command(int client_fd, const ProtocolMessage& 
       handle_request_command(client_fd, params_json);
     } else if (command == "__response") {
       handle_response_command(client_fd, params_json);
+#ifdef ENABLE_WEBRTC
+    } else if (command == "__webrtc_offer") {
+      handle_webrtc_offer(client_fd, params_json);
+    } else if (command == "__webrtc_answer") {
+      handle_webrtc_answer(client_fd, params_json);
+    } else if (command == "__webrtc_candidate") {
+      handle_webrtc_candidate(client_fd, params_json);
+#endif
     } else {
       RCLCPP_WARN(get_logger(), "Unknown system command: %s", command.c_str());
       send_error_to_client(client_fd, "Unknown system command: " + command);
@@ -428,5 +534,270 @@ bool MessageRouter::parse_json_params(const std::string& json_str,
     return false;
   }
 }
+
+#ifdef ENABLE_WEBRTC
+void MessageRouter::handle_webrtc_offer(int client_fd, const std::string& params)
+{
+  if (!webrtc_manager_) {
+    send_error_to_client(client_fd, "WebRTC support disabled on server");
+    return;
+  }
+  std::unordered_map<std::string, std::string> param_map;
+  if (!parse_json_params(params, param_map)) {
+    return;
+  }
+  
+  auto it = param_map.find("sdp");
+  if (it != param_map.end()) {
+    webrtc_manager_->handle_offer(it->second);
+  }
+}
+
+void MessageRouter::handle_webrtc_answer(int client_fd, const std::string& params)
+{
+  if (!webrtc_manager_) {
+    send_error_to_client(client_fd, "WebRTC support disabled on server");
+    return;
+  }
+  std::unordered_map<std::string, std::string> param_map;
+  if (!parse_json_params(params, param_map)) {
+    return;
+  }
+  
+  auto it = param_map.find("sdp");
+  if (it != param_map.end()) {
+    webrtc_manager_->handle_answer(it->second);
+  }
+}
+
+void MessageRouter::handle_webrtc_candidate(int client_fd, const std::string& params)
+{
+  if (!webrtc_manager_) {
+    send_error_to_client(client_fd, "WebRTC support disabled on server");
+    return;
+  }
+  std::unordered_map<std::string, std::string> param_map;
+  if (!parse_json_params(params, param_map)) {
+    return;
+  }
+  
+  if (!param_map.count("candidate") || !param_map.count("sdpMid")) {
+    send_error_to_client(client_fd, "Missing required ICE candidate fields");
+    return;
+  }
+  
+  int sdp_mline_index = 0;
+  if (param_map.count("sdpMLineIndex")) {
+    try {
+      sdp_mline_index = std::stoi(param_map["sdpMLineIndex"]);
+    } catch (const std::exception& e) {
+      RCLCPP_WARN(get_logger(), "Invalid sdpMLineIndex value, using 0: %s", e.what());
+    }
+  }
+  
+  webrtc_manager_->handle_candidate(param_map["candidate"], param_map["sdpMid"], sdp_mline_index);
+}
+
+void MessageRouter::setup_camera_subscription(const std::string& topic)
+{
+  if (!webrtc_manager_) {
+    return;
+  }
+  
+  auto qos = rclcpp::SensorDataQoS();
+  
+  // Try to detect if topic is compressed by checking topic name or trying both
+  // First, attempt compressed subscription (common pattern: /camera/image/compressed)
+  if (topic.find("/compressed") != std::string::npos || topic.find("_compressed") != std::string::npos) {
+    compressed_camera_sub_ = create_subscription<sensor_msgs::msg::CompressedImage>(
+      topic, qos,
+      [this](const sensor_msgs::msg::CompressedImage::SharedPtr msg) {
+        handle_compressed_camera_frame(msg);
+      });
+    RCLCPP_INFO(get_logger(), "WebRTC streaming subscribed to compressed image topic: %s", topic.c_str());
+  } else {
+    // Subscribe to raw image topic
+    camera_sub_ = create_subscription<sensor_msgs::msg::Image>(
+      topic, qos,
+      [this](const sensor_msgs::msg::Image::SharedPtr msg) {
+        handle_camera_frame(msg);
+      });
+    RCLCPP_INFO(get_logger(), "WebRTC streaming subscribed to raw image topic: %s", topic.c_str());
+  }
+}
+
+void MessageRouter::handle_camera_frame(const sensor_msgs::msg::Image::SharedPtr& msg)
+{
+  if (!webrtc_manager_) {
+    return;
+  }
+  
+  {
+    std::lock_guard<std::mutex> lock(frame_queue_mutex_);
+    if (frame_queue_.size() >= max_queue_size_) {
+      // Drop oldest frame to keep latency low
+      frame_queue_.pop_front();
+    }
+    frame_queue_.push_back(msg);
+  }
+  frame_queue_cv_.notify_one();
+}
+
+void MessageRouter::handle_compressed_camera_frame(const sensor_msgs::msg::CompressedImage::SharedPtr& msg)
+{
+  if (!webrtc_manager_) {
+    return;
+  }
+  
+  {
+    std::lock_guard<std::mutex> lock(frame_queue_mutex_);
+    if (frame_queue_.size() >= max_queue_size_) {
+      // Drop oldest frame
+      frame_queue_.pop_front();
+    }
+    frame_queue_.push_back(msg);
+  }
+  frame_queue_cv_.notify_one();
+}
+
+void MessageRouter::process_frames()
+{
+  while (processing_running_) {
+    FrameVariant frame_variant;
+    {
+      std::unique_lock<std::mutex> lock(frame_queue_mutex_);
+      frame_queue_cv_.wait(lock, [this] {
+        return !frame_queue_.empty() || !processing_running_;
+      });
+      
+      if (!processing_running_) break;
+      
+      frame_variant = frame_queue_.front();
+      frame_queue_.pop_front();
+    }
+    
+    // Process frame outside the lock
+    std::vector<uint8_t> buffer;
+    if (std::holds_alternative<sensor_msgs::msg::Image::SharedPtr>(frame_variant)) {
+      auto msg = std::get<sensor_msgs::msg::Image::SharedPtr>(frame_variant);
+      if (convert_to_rgb(*msg, buffer)) {
+        webrtc_manager_->push_frame(buffer, msg->width, msg->height, "RGB");
+      }
+    } else {
+      auto msg = std::get<sensor_msgs::msg::CompressedImage::SharedPtr>(frame_variant);
+      int width = 0, height = 0;
+      if (decompress_to_rgb(*msg, buffer, width, height)) {
+        webrtc_manager_->push_frame(buffer, width, height, "RGB");
+      }
+    }
+  }
+}
+
+bool MessageRouter::convert_to_rgb(const sensor_msgs::msg::Image& msg, std::vector<uint8_t>& output)
+{
+  const auto width = static_cast<size_t>(msg.width);
+  const auto height = static_cast<size_t>(msg.height);
+  const auto row_stride = static_cast<size_t>(msg.step);
+  if (width == 0 || height == 0 || row_stride == 0) {
+    return false;
+  }
+  
+  auto equals_ignore_case = [](const std::string& lhs, const std::string& rhs) {
+    if (lhs.size() != rhs.size()) {
+      return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+      if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+          std::tolower(static_cast<unsigned char>(rhs[i]))) {
+        return false;
+      }
+    }
+    return true;
+  };
+  
+  if (equals_ignore_case(msg.encoding, sensor_msgs::image_encodings::RGB8)) {
+    output.resize(width * height * 3);
+    for (size_t y = 0; y < height; ++y) {
+      const uint8_t* row = msg.data.data() + y * row_stride;
+      std::memcpy(output.data() + y * width * 3, row, width * 3);
+    }
+    return true;
+  }
+  
+  if (equals_ignore_case(msg.encoding, sensor_msgs::image_encodings::BGR8)) {
+    output.resize(width * height * 3);
+    for (size_t y = 0; y < height; ++y) {
+      const uint8_t* row = msg.data.data() + y * row_stride;
+      for (size_t x = 0; x < width; ++x) {
+        const uint8_t* pixel = row + x * 3;
+        size_t dst_index = (y * width + x) * 3;
+        output[dst_index] = pixel[2];
+        output[dst_index + 1] = pixel[1];
+        output[dst_index + 2] = pixel[0];
+      }
+    }
+    return true;
+  }
+  
+  if (equals_ignore_case(msg.encoding, sensor_msgs::image_encodings::MONO8)) {
+    output.resize(width * height * 3);
+    for (size_t y = 0; y < height; ++y) {
+      const uint8_t* row = msg.data.data() + y * row_stride;
+      for (size_t x = 0; x < width; ++x) {
+        uint8_t value = row[x];
+        size_t dst_index = (y * width + x) * 3;
+        output[dst_index] = value;
+        output[dst_index + 1] = value;
+        output[dst_index + 2] = value;
+      }
+    }
+    return true;
+  }
+  
+  if (!warned_unsupported_encoding_) {
+    RCLCPP_WARN(get_logger(), "Unsupported camera encoding '%s' for WebRTC streaming", msg.encoding.c_str());
+    warned_unsupported_encoding_ = true;
+  }
+  return false;
+}
+
+bool MessageRouter::decompress_to_rgb(const sensor_msgs::msg::CompressedImage& msg, 
+                                      std::vector<uint8_t>& output, int& width, int& height)
+{
+  try {
+    cv::Mat buffer_mat(1, static_cast<int>(msg.data.size()), CV_8UC1,
+                       const_cast<uint8_t*>(msg.data.data()));
+    
+    cv::Mat decoded = cv::imdecode(buffer_mat, cv::IMREAD_COLOR);
+    
+    if (decoded.empty()) {
+      if (!warned_unsupported_encoding_) {
+        RCLCPP_WARN(get_logger(), "Failed to decompress image with format '%s'", msg.format.c_str());
+        warned_unsupported_encoding_ = true;
+      }
+      return false;
+    }
+    
+    width = decoded.cols;
+    height = decoded.rows;
+    
+    // OpenCV decodes to BGR, convert to RGB
+    cv::Mat rgb;
+    cv::cvtColor(decoded, rgb, cv::COLOR_BGR2RGB);
+    
+    // Copy to output buffer
+    output.resize(width * height * 3);
+    std::memcpy(output.data(), rgb.data, output.size());
+    
+    return true;
+  } catch (const cv::Exception& e) {
+    if (!warned_unsupported_encoding_) {
+      RCLCPP_ERROR(get_logger(), "OpenCV exception during decompression: %s", e.what());
+      warned_unsupported_encoding_ = true;
+    }
+    return false;
+  }
+}
+#endif
 
 } // namespace horus_unity_bridge

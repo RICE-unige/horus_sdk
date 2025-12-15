@@ -4,14 +4,28 @@
 #pragma once
 
 #include "protocol_handler.hpp"
-#include "topic_manager.hpp"
-#include "service_manager.hpp"
+#include "horus_unity_bridge/topic_manager.hpp"
+#include "horus_unity_bridge/service_manager.hpp"
+
+#ifdef ENABLE_WEBRTC
+#include "horus_unity_bridge/webrtc_manager.hpp"
+#endif
 
 #include <rclcpp/rclcpp.hpp>
 #include <memory>
 #include <functional>
 #include <unordered_map>
 #include <mutex>
+#include <vector>
+#include <deque>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
+#include <variant>
+
+#include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
+#include <sensor_msgs/image_encodings.hpp>
 
 namespace horus_unity_bridge
 {
@@ -36,7 +50,7 @@ public:
   using BroadcastCallback = std::function<void(const std::string&, const std::vector<uint8_t>&)>;
   
   explicit MessageRouter();
-  ~MessageRouter() = default;
+  ~MessageRouter();
   
   /**
    * @brief Set callbacks for sending messages to Unity clients
@@ -95,6 +109,20 @@ private:
   // Managers
   std::unique_ptr<TopicManager> topic_manager_;
   std::unique_ptr<ServiceManager> service_manager_;
+
+#ifdef ENABLE_WEBRTC
+  std::unique_ptr<WebRTCManager> webrtc_manager_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr camera_sub_;
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_camera_sub_;
+  bool webrtc_enabled_param_ = false;
+  std::string webrtc_camera_topic_;
+  int webrtc_bitrate_kbps_ = 2000;
+  int webrtc_framerate_ = 30;
+  std::string webrtc_encoder_;
+  std::vector<std::string> webrtc_stun_servers_;
+  std::string webrtc_pipeline_;
+  bool warned_unsupported_encoding_ = false;
+#endif
   
   // Callbacks
   SendCallback send_callback_;
@@ -110,6 +138,30 @@ private:
   void handle_unity_service_command(int client_fd, const std::string& params);
   void handle_request_command(int client_fd, const std::string& params);
   void handle_response_command(int client_fd, const std::string& params);
+  
+#ifdef ENABLE_WEBRTC
+  // WebRTC handlers
+  void handle_webrtc_offer(int client_fd, const std::string& params);
+  void handle_webrtc_answer(int client_fd, const std::string& params);
+  void handle_webrtc_candidate(int client_fd, const std::string& params);
+  void setup_camera_subscription(const std::string& topic);
+  void handle_camera_frame(const sensor_msgs::msg::Image::SharedPtr& msg);
+  void handle_compressed_camera_frame(const sensor_msgs::msg::CompressedImage::SharedPtr& msg);
+  bool convert_to_rgb(const sensor_msgs::msg::Image& msg, std::vector<uint8_t>& output);
+  bool decompress_to_rgb(const sensor_msgs::msg::CompressedImage& msg, std::vector<uint8_t>& output, int& width, int& height);
+
+  // Async frame processing
+  void process_frames();
+  
+  using FrameVariant = std::variant<sensor_msgs::msg::Image::SharedPtr, sensor_msgs::msg::CompressedImage::SharedPtr>;
+  std::deque<FrameVariant> frame_queue_;
+  std::mutex frame_queue_mutex_;
+  std::condition_variable frame_queue_cv_;
+  std::thread worker_thread_;
+  std::atomic<bool> processing_running_{false};
+  size_t max_queue_size_ = 2;
+#endif
+
   void handle_topic_list_command(int client_fd);
   void handle_handshake_command(int client_fd);
   

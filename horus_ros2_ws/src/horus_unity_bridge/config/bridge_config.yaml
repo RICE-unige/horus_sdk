@@ -45,3 +45,13 @@ horus_unity_bridge:
     # Security (for future implementation)
     enable_authentication: false
     enable_encryption: false
+
+    webrtc:
+      enabled: false
+      camera_topic: "/camera/image_raw"
+      bitrate_kbps: 2000
+      framerate: 30
+      encoder: "x264enc"
+      pipeline: ""
+      stun_servers:
+        - "stun:stun.l.google.com:19302"

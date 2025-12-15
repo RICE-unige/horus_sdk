@@ -23,11 +23,11 @@ find_package(rosidl_typesupport_cpp REQUIRED)
 find_package(rosidl_typesupport_introspection_cpp REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(example_interfaces REQUIRED)
+find_package(PkgConfig REQUIRED)
 
-# Find nlohmann_json (header-only library)
+# Find nlohmann_json (required for WebRTC and other JSON operations)
 find_package(nlohmann_json 3.2.0 QUIET)
 if(NOT nlohmann_json_FOUND)
-  # If not found via find_package, try to use system install
   find_path(NLOHMANN_JSON_INCLUDE_DIR nlohmann/json.hpp
     HINTS /usr/include /usr/local/include)
   if(NLOHMANN_JSON_INCLUDE_DIR)
@@ -37,11 +37,50 @@ if(NOT nlohmann_json_FOUND)
   endif()
 endif()
 
+option(ENABLE_WEBRTC "Enable WebRTC support" ON)
+
+if(ENABLE_WEBRTC)
+  pkg_check_modules(GST gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0)
+  if(NOT GST_FOUND)
+    message(WARNING "GStreamer not found. WebRTC support will be disabled.")
+    set(ENABLE_WEBRTC OFF)
+  else()
+    find_package(OpenCV QUIET COMPONENTS core imgcodecs imgproc)
+    if(NOT OpenCV_FOUND)
+      message(WARNING "OpenCV not found. WebRTC support will be disabled.")
+      set(ENABLE_WEBRTC OFF)
+    else()
+      include(FetchContent)
+      FetchContent_Declare(
+        libdatachannel
+        GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
+        GIT_TAG v0.20.1
+        GIT_SHALLOW TRUE
+      )
+      # Disable tests and examples to speed up build
+      set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
+      set(NO_TESTS ON CACHE BOOL "" FORCE)
+      FetchContent_MakeAvailable(libdatachannel)
+    endif()
+  endif()
+endif()
+
 # Include directories
 include_directories(
   include
   ${rclcpp_INCLUDE_DIRS}
 )
+
+if(nlohmann_json_FOUND)
+  include_directories(${nlohmann_json_INCLUDE_DIRS})
+elseif(NLOHMANN_JSON_INCLUDE_DIR)
+  include_directories(${NLOHMANN_JSON_INCLUDE_DIR})
+endif()
+
+if(ENABLE_WEBRTC)
+  include_directories(${GST_INCLUDE_DIRS} ${OpenCV_INCLUDE_DIRS})
+  add_compile_definitions(ENABLE_WEBRTC)
+endif()
 
 # Source files
 set(BRIDGE_SOURCES
@@ -53,6 +92,10 @@ set(BRIDGE_SOURCES
   src/topic_manager.cpp
   src/service_manager.cpp
 )
+
+if(ENABLE_WEBRTC)
+  list(APPEND BRIDGE_SOURCES src/webrtc_manager.cpp)
+endif()
 
 # Unity bridge executable
 add_executable(horus_unity_bridge_node ${BRIDGE_SOURCES})
@@ -74,6 +117,17 @@ ament_target_dependencies(horus_unity_bridge_node
 # Link pthread for threading support
 target_link_libraries(horus_unity_bridge_node pthread)
 
+if(ENABLE_WEBRTC)
+  target_link_libraries(horus_unity_bridge_node 
+    LibDataChannel::LibDataChannel
+    ${GST_LIBRARIES}
+    ${OpenCV_LIBRARIES}
+  )
+endif()
+
+if(nlohmann_json_FOUND)
+  target_link_libraries(horus_unity_bridge_node nlohmann_json::nlohmann_json)
+endif()
 # Install targets
 install(TARGETS horus_unity_bridge_node
   DESTINATION lib/${PROJECT_NAME}
