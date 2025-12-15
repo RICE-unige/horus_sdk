@@ -54,13 +54,13 @@ jobs:
 
       - name: Format check C++ (clang-format)
         run: |
-          find cpp/ horus_ros2_ws/src/horus_backend/ -name "*.cpp" -o -name "*.hpp" | \
+          find cpp/ -name "*.cpp" -o -name "*.hpp" | \
           xargs clang-format --dry-run --Werror || true
 
       - name: C++ static analysis (cppcheck)
         run: |
           cppcheck --enable=all --inconclusive --xml --xml-version=2 \
-          cpp/ horus_ros2_ws/src/horus_backend/ 2> cppcheck-report.xml || true
+          cpp/ 2> cppcheck-report.xml || true
 
   # Build and Test Matrix
   build-test:
@@ -77,7 +77,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Set up ROS2 ${{ matrix.ros-distro }}
         uses: ros-tooling/setup-ros@v0.7
@@ -102,25 +102,23 @@ jobs:
           pip install pytest pytest-cov pytest-xvfb "empy<4.0" catkin_pkg numpy lark setuptools pyyaml
           pip install -e python/
 
-      - name: Build ROS2 workspace
+      - name: Build ROS2 workspace (Integration)
         run: |
-          cd horus_ros2_ws
+          git clone https://github.com/RICE-unige/horus_ros2.git
+          cd horus_ros2
           source /opt/ros/${{ matrix.ros-distro }}/setup.bash
+          rosdep install --from-paths . -y --ignore-src
           colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release
-
-      - name: Test ROS2 workspace
-        run: |
-          cd horus_ros2_ws
-          source /opt/ros/${{ matrix.ros-distro }}/setup.bash
-          source install/setup.bash
           colcon test --event-handlers console_direct+
           colcon test-result --verbose
 
       - name: Test Python SDK
         run: |
-          source horus_ros2_ws/install/setup.bash
+          # Source the ROS2 workspace for integration tests if needed
+          if [ -f horus_ros2/install/setup.bash ]; then
+            source horus_ros2/install/setup.bash
+          fi
           python -m pytest python/tests/ -v --cov=python/horus --cov-report=xml --cov-report=html
-
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
