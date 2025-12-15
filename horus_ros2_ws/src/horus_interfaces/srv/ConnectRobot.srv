@@ -1,6 +1,0 @@
-# Connect to robot service
-string robot_id
-string robot_type
----
-bool success
-string message
