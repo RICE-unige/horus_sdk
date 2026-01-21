@@ -58,9 +58,14 @@ def main():
     # The SDK now handles Auto-Start of Bridge and UI Feedback internally
     my_robot.register_with_horus()
 
-    # The script can now exit or loop.
-    # For demo purposes, we might want to keep it alive if it were a real robot control script.
-    # But for registration demo, we are done.
+    # Keep the script running to maintain the connection
+    cli.print_step("Bridge Active. Press Ctrl+C to exit.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nDisconnecting...")
+
 
 if __name__ == "__main__":
     main()
