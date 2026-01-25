@@ -223,7 +223,7 @@ class Robot:
 
         # Create registry client and register
         registry = RobotRegistryClient()
-        success, result = registry.register_robot(self, dataviz)
+        success, result = registry.register_robot(self, dataviz, keep_alive=True)
 
         if success:
             # Store registration data
@@ -243,7 +243,6 @@ class Robot:
                 # Optimistically reflect subscription state for CLI users
                 try:
                     from ..utils.topic_status import get_topic_status_board
-
                     board = get_topic_status_board()
                     for topic in topics:
                         board.on_subscribe(topic)
@@ -253,7 +252,6 @@ class Robot:
                 # Hand topics to the ROS graph monitor so it can reconcile real state
                 try:
                     from ..utils.topic_monitor import get_topic_monitor
-
                     monitor = get_topic_monitor()
                     monitor.watch_topics(topics)
                     monitor.start()

@@ -193,10 +193,17 @@ class RobotRegistryClient:
                 pass
 
     def register_robot(
-        self, robot, dataviz, timeout_sec: float = 10.0
+        self, robot, dataviz, timeout_sec: float = 10.0, keep_alive: bool = False
     ) -> Tuple[bool, Dict]:
         """
         Register robot with HORUS backend using internal CLI and automatic bridge management.
+        
+        Args:
+            robot: Robot instance
+            dataviz: DataViz instance
+            timeout_sec: Timeout for initial registration
+            keep_alive: If True, blocks and maintains the dashboard after registration, 
+                       handling monitoring and re-registration automatically.
         """
         from horus.utils import cli
 
@@ -217,6 +224,7 @@ class RobotRegistryClient:
                     s.settimeout(0.5)
                     return s.connect_ex(('localhost', port)) == 0
 
+            # ... (Bridge Auto-start logic omitted for brevity, keeping existing flow) ...
             if is_port_open(10000):
                 bridge_running = True
                 cli.print_info("Horus Bridge detected on port 10000.")
@@ -224,21 +232,13 @@ class RobotRegistryClient:
                 cli.print_info("No Bridge on port 10000. Attempting auto-start...")
                 # Try to launch via ROS 2
                 try:
-                    # Check if package exists
-                    check_pkg = subprocess.run(
-                        ['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], 
-                        capture_output=True
-                    )
+                    check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
                     if check_pkg.returncode == 0:
                         self.bridge_process = subprocess.Popen(
                             ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            start_new_session=True
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
                         )
                         atexit.register(self._cleanup_bridge)
-                        
-                        # Wait for start
                         with cli.status("Launching Horus Bridge...", spinner="dots"):
                             for _ in range(15):
                                 if is_port_open(10000):
@@ -249,10 +249,7 @@ class RobotRegistryClient:
                     
                     if not bridge_running:
                         cli.print_error("Failed to auto-launch bridge.")
-                        cli.print_info("Ensure 'horus_unity_bridge' is in your ROS workspace and sourced.")
-                        cli.print_info("  source install/setup.bash")
                         return False, {"error": "Bridge Start Failed"}
-                        
                 except FileNotFoundError:
                      cli.print_error("'ros2' command not found.")
                      return False, {"error": "ROS2 Not Found"}
@@ -276,75 +273,103 @@ class RobotRegistryClient:
             
             # Initial publish
             self.publisher.publish(msg)
+            
+            registration_success = False
+            final_ack = {}
 
             # --- Enter Dashboard Mode ---
             with cli.ConnectionDashboard(local_ip, 10000, bridge_state) as dashboard:
                 dashboard.update_status("Waiting for Horus App...")
                 
-                # Monitor these topics
-                monitored_topics = [
-                    '/horus/registration', 
-                    '/horus/registration_ack', 
-                    '/horus/heartbeat'
-                ]
+                monitored_topics = ['/horus/registration', '/horus/registration_ack', '/horus/heartbeat']
+                
+                # Connection Monitoring State (for keep_alive)
+                last_connection_state = True # Assume true initially to avoid "Re-established" log on first connect
                 
                 while True:
-                    rclpy.spin_once(self.node, timeout_sec=0.1)
+                    # spin to process callbacks (Ack, Heartbeat)
+                    try:
+                        rclpy.spin_once(self.node, timeout_sec=0.1)
+                    except Exception:
+                        pass
                     
-                    # Bridge is external, assume active if we started active.
-                    # Optional: Re-check port occasionally?
-                    # For now, just keep status as is.
-
-
                     # Update Topic Stats (every ~1s)
                     if int(time.time()) % 1 == 0:
                         stats = {}
                         for topic in monitored_topics:
-                            pubs = self.node.count_publishers(topic)
-                            subs = self.node.count_subscribers(topic)
-                            # Always show these topics
-                            stats[topic] = {'pubs': pubs, 'subs': subs}
+                            stats[topic] = {'pubs': self.node.count_publishers(topic), 'subs': self.node.count_subscribers(topic)}
                         dashboard.update_topics(stats)
 
-                    # Check Heartbeat for Unity Status
-                    time_since_hb = time.time() - self._last_heartbeat_time
-                    if time_since_hb < 3.0 and self._last_heartbeat_time > 0:
-                        ip_str = f" ({self._remote_ip})" if self._remote_ip else ""
-                        dashboard.update_status(f"Connected{ip_str}")
-                    else:
-                        dashboard.update_status("Waiting for Horus App...")
+                    # --- Registration Phase ---
+                    if not registration_success:
+                        # Re-publish occasionally
+                        if int(time.time()) % 2 == 0:
+                            self.publisher.publish(msg)
 
-                    # Re-publish occasionally
-                    if int(time.time()) % 3 == 0:
-                        self.publisher.publish(msg)
-
-                    if self._ack_received.is_set():
-                        ack = self._last_ack_data
-                        recv_name = ack.get("robot_name", "UNKNOWN")
-                        if recv_name == robot_name:
-                            if ack.get("success"):
-                                status_msg = ack.get('robot_id')
-                                dashboard.update_status(f"Success! {status_msg}")
-                                time.sleep(1.5) # Let user see success
-                                return True, ack
+                        if self._ack_received.is_set():
+                            ack = self._last_ack_data
+                            recv_name = ack.get("robot_name", "UNKNOWN")
+                            if recv_name == robot_name:
+                                if ack.get("success"):
+                                    status_msg = ack.get('robot_id')
+                                    dashboard.update_status(f"Success! {status_msg}")
+                                    registration_success = True
+                                    final_ack = ack
+                                    
+                                    # If NOT keep_alive, we are done
+                                    if not keep_alive:
+                                        time.sleep(1.5)
+                                        return True, ack
+                                    
+                                    # If keep_alive, we transition to monitoring
+                                    # Reset connection state to 'Connected' explicitly
+                                    last_connection_state = True 
+                                    self._last_heartbeat_time = time.time() # Fake a fresh heartbeat to prevent immediate timeout
+                                else:
+                                    dashboard.update_status(f"Refused: {ack.get('error')}")
+                                    time.sleep(2.0)
+                                    return False, ack
                             else:
-                                dashboard.update_status(f"Refused: {ack.get('error')}")
-                                time.sleep(2.0)
-                                return False, ack
-                        else:
-                            # Name mismatch
-                            dashboard.update_status(f"Ignored Ack for: {recv_name}")
-                            self._ack_received.clear()
+                                self._ack_received.clear()
                     
+                    # --- Monitoring Phase (keep_alive=True) ---
+                    else:
+                        # Check Heartbeat
+                        time_since_hb = time.time() - self._last_heartbeat_time
+                        is_connected = time_since_hb < 4.0 and self._last_heartbeat_time > 0
+                        
+                        if is_connected:
+                            ip_str = f" ({self._remote_ip})" if self._remote_ip else ""
+                            dashboard.update_status(f"Connected{ip_str}")
+                            
+                            if not last_connection_state:
+                                # Start Re-registration
+                                dashboard.update_status(f"Re-connecting{ip_str}...")
+                                # Re-publish fresh config
+                                config = self._build_robot_config_dict(robot, dataviz)
+                                msg = String()
+                                msg.data = json.dumps(config)
+                                self.publisher.publish(msg)
+                                dashboard.update_status(f"Re-registering...")
+                                time.sleep(0.5) # Give it a moment
+                        else:
+                            dashboard.update_status("Disconnected (Waiting for App...)")
+                        
+                        last_connection_state = is_connected
+
                     # Update animated elements
                     dashboard.tick()
-                    time.sleep(0.05)
+                    
+                    # Simple loop throttle
+                    # Note: rclpy.spin_once acts as the sleep/throttle
             
         except KeyboardInterrupt:
-            cli.print_info("Registration cancelled by user.")
+            cli.print_info("Registration/Monitoring cancelled by user.")
             return False, {"error": "Cancelled"}
         except Exception as e:
             cli.print_error(f"Structure Error: {e}")
+            import traceback
+            traceback.print_exc()
             return False, {"error": str(e)}
         finally:
             self._registration_lock.release()
@@ -393,6 +418,8 @@ class RobotRegistryClient:
             },
             "timestamp": time.time()
         }
+
+
 
     def check_backend_availability(self) -> bool:
         """Check if ROS is OK"""

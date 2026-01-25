@@ -56,15 +56,11 @@ def main():
 
     # 3. Register with Horus
     # The SDK now handles Auto-Start of Bridge and UI Feedback internally
+    # register_with_horus() now blocks and maintains the connection dashboard
     my_robot.register_with_horus()
 
-    # Keep the script running to maintain the connection
-    cli.print_step("Bridge Active. Press Ctrl+C to exit.")
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nDisconnecting...")
+    # When dashboard exits (Ctrl+C), script ends
+    print("\nDisconnecting...")
 
 
 if __name__ == "__main__":
