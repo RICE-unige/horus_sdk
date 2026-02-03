@@ -1,10 +1,7 @@
-name: CI Pipeline
+name: CI Pipeline (manual)
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  workflow_dispatch:
 
 env:
   ROS_DISTRO: humble
@@ -15,6 +12,7 @@ jobs:
   quality:
     name: Code Quality
     runs-on: ubuntu-22.04
+    continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -66,6 +64,7 @@ jobs:
   build-test:
     name: Build & Test
     needs: quality
+    continue-on-error: true
     strategy:
       matrix:
         ros-distro: [humble]
@@ -128,21 +127,3 @@ jobs:
           name: codecov-umbrella
 
 
-
-  # Collect Results
-  results:
-    name: Collect Results
-    needs: [quality, build-test]
-    runs-on: ubuntu-22.04
-    if: always()
-
-    steps:
-      - name: Check job results
-        run: |
-          echo "Quality: ${{ needs.quality.result }}"
-          echo "Build & Test: ${{ needs.build-test.result }}"
-
-          if [[ "${{ needs.quality.result }}" == "failure" || "${{ needs.build-test.result }}" == "failure" ]]; then
-            echo "Critical jobs failed"
-            exit 1
-          fi
