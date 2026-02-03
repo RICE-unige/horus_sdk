@@ -15,7 +15,7 @@ from .topic_status import get_topic_status_board
 
 class TopicSubscriptionMonitor:
     """
-    Monitor ROS2 graph to detect when backend (ROS-TCP-Endpoint) has a live
+    Monitor ROS2 graph to detect when the Unity bridge has a live
     subscriber for a topic AND that topic has >=1 publishers.
 
     SUBSCRIBED: backend subscriber present AND publishers > 0

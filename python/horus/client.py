@@ -108,7 +108,7 @@ class Client:
             )
 
             # Test Unity endpoint connection
-            unity_spinner = Spinner("Verifying Unity TCP endpoint")
+            unity_spinner = Spinner("Verifying Unity bridge TCP server")
             unity_spinner.start()
             time.sleep(1)  # Give it a moment to fully start
 
@@ -116,13 +116,13 @@ class Client:
                 unity_spinner.stop()
                 unity_port = self.backend_manager.get_unity_port()
                 print(
-                    f"  \033[92m✓\033[0m Unity TCP endpoint: "
+                    f"  \033[92m✓\033[0m Unity bridge: "
                     f"\033[90mRunning on port {unity_port}\033[0m"
                 )
             else:
                 unity_spinner.stop()
                 print(
-                    "  \033[93m⚠\033[0m Unity TCP endpoint: "
+                    "  \033[93m⚠\033[0m Unity bridge: "
                     "\033[93mNot yet ready (may still be starting)\033[0m"
                 )
 

@@ -1,4 +1,4 @@
-"""Unity MR Connection Monitor"""
+"""Unity MR Connection Monitor (Unity client -> horus_unity_bridge server)"""
 
 import subprocess
 import threading
@@ -7,7 +7,7 @@ from typing import Callable, Optional
 
 
 class UnityConnectionMonitor:
-    """Monitor Unity MR connections through ROS TCP Endpoint logs"""
+    """Monitor Unity MR connections to the horus_unity_bridge TCP server"""
 
     def __init__(self, unity_port: int = 10000):
         self.unity_port = unity_port

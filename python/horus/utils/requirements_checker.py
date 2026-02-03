@@ -11,7 +11,7 @@ class RequirementsChecker:
                 ("ROS2 Installation", self._check_ros2_installation),
                 ("HORUS Backend Package", self._check_horus_backend_package),
                 ("Network Port 8080", self._check_port_availability),
-                ("Unity TCP Endpoint (Port 10000)", self._check_unity_endpoint),
+                ("Unity Bridge (horus_unity_bridge)", self._check_unity_endpoint),
             ],
         }
 
@@ -91,7 +91,7 @@ class RequirementsChecker:
             return False, f"Unable to check port {port}"
 
     def _check_unity_endpoint(self, backend_type):
-        """Check if Unity TCP endpoint is running on port 10000"""
+        """Check if Unity bridge is running on port 10000"""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)  # 1 second timeout
@@ -99,10 +99,10 @@ class RequirementsChecker:
             sock.close()
 
             if result == 0:
-                return True, "Unity TCP endpoint is running on port 10000"
-            return (
-                True,
-                "Unity TCP endpoint not detected (will be started automatically)",
-            )
+            return True, "Unity bridge is running on port 10000"
+        return (
+            True,
+            "Unity bridge not detected (will be started automatically)",
+        )
         except Exception:
-            return False, "Unable to check Unity TCP endpoint"
+            return False, "Unable to check Unity bridge"
