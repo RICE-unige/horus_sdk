@@ -134,13 +134,19 @@ python3 python/examples/sdk_registration_demo.py
 > [!TIP]
 > When iterating on robot configs, use `python/tests/test_topic_status_*.py` as a fast signal that topic subscriptions are being announced correctly without a running ROS graph.
 
+### Smoke Test (Registration + Ack + Heartbeat)
+
+```bash
+python3 python/examples/e2e_registration_check.py
+```
+
 ---
 
 ## 📐 Architecture
 
 ```text
-Python / C++ SDKs  <-->  HORUS Backend (ROS 2)  <-->  ROS-TCP-Endpoint  <-->  HORUS MR App
-        (8080)                       (10000)                        (Unity TCP bridge)
+Python / C++ SDKs  <-->  HORUS Backend (ROS 2)  <-->  HORUS Unity Bridge  <-->  HORUS MR App
+        (8080)                       (10000)                        (Unity TCP client)
 ```
 
 - **SDK Client** – CLI orchestrator that brings up backend processes, monitors Unity presence, and registers robots.
@@ -148,6 +154,7 @@ Python / C++ SDKs  <-->  HORUS Backend (ROS 2)  <-->  ROS-TCP-Endpoint  <-->  HO
 - **DataViz** – Builds the JSON payload consumed by the MR app with color-coded overlays.
 - **Topic Monitor** – Watches ROS graph activity and renders TTY or non-TTY dashboards.
 - **Backend** – ROS 2 nodes manage TCP connections, robot registry, and relay telemetry to the headset.
+- **Unity Bridge** – `horus_unity_bridge` hosts the TCP server on port 10000; the HORUS MR app connects as a client.
 
 ---
 
