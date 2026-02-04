@@ -335,7 +335,7 @@ class RobotRegistryClient:
                     # --- Monitoring Phase (keep_alive=True) ---
                     else:
                         # Check Heartbeat with debounce to avoid false disconnects
-                        heartbeat_timeout_s = 8.0
+                        heartbeat_timeout_s = 3.0
                         time_since_hb = time.time() - self._last_heartbeat_time
                         is_connected = time_since_hb < heartbeat_timeout_s and self._last_heartbeat_time > 0
                         

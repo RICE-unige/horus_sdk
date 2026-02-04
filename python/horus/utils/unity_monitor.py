@@ -9,7 +9,7 @@ from typing import Callable, Optional
 class UnityConnectionMonitor:
     """Monitor Unity MR connections to the horus_unity_bridge TCP server"""
 
-    def __init__(self, unity_port: int = 10000, disconnect_grace_s: float = 6.0):
+    def __init__(self, unity_port: int = 10000, disconnect_grace_s: float = 3.0):
         self.unity_port = unity_port
         self.disconnect_grace_s = disconnect_grace_s
         self.is_monitoring = False
@@ -58,7 +58,7 @@ class UnityConnectionMonitor:
                     pass  # Silent failure to avoid spam
 
             if self.is_monitoring:
-                time.sleep(2)  # Check every 2 seconds
+                time.sleep(1)  # Check every 1 second
 
     def _monitor_network_connections(self):
         """Monitor network connections for Unity TCP Endpoint"""
