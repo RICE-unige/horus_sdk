@@ -20,6 +20,15 @@ class RobotType(Enum):
 
 
 @dataclass
+class RobotDimensions:
+    """Robot dimensions in meters (length, width, height)."""
+
+    length: float
+    width: float
+    height: float
+
+
+@dataclass
 class Robot:
     """
     Base robot object with type and identification
@@ -35,6 +44,7 @@ class Robot:
     robot_type: RobotType
     metadata: Optional[Dict[str, Any]] = None
     sensors: List["SensorInstance"] = field(default_factory=list)
+    dimensions: Optional[RobotDimensions] = None
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -47,6 +57,40 @@ class Robot:
         # Initialize metadata if not provided
         if self.metadata is None:
             self.metadata = {}
+
+        if self.dimensions is not None:
+            if isinstance(self.dimensions, RobotDimensions):
+                pass
+            elif isinstance(self.dimensions, (list, tuple)):
+                if len(self.dimensions) == 2:
+                    length, width = self.dimensions
+                    height = 0.0
+                elif len(self.dimensions) == 3:
+                    length, width, height = self.dimensions
+                else:
+                    raise TypeError(
+                        "dimensions must be length/width or length/width/height"
+                    )
+                self.dimensions = RobotDimensions(
+                    length=float(length),
+                    width=float(width),
+                    height=float(height),
+                )
+            elif isinstance(self.dimensions, dict):
+                self.dimensions = RobotDimensions(
+                    length=float(self.dimensions.get("length", 0.0)),
+                    width=float(self.dimensions.get("width", 0.0)),
+                    height=float(self.dimensions.get("height", 0.0)),
+                )
+            else:
+                raise TypeError(
+                    "dimensions must be RobotDimensions, tuple/list, or dict"
+                )
+
+            if (self.dimensions.length < 0 or
+                    self.dimensions.width < 0 or
+                    self.dimensions.height < 0):
+                raise ValueError("dimensions must be non-negative")
 
     def __str__(self) -> str:
         """String representation of the robot"""

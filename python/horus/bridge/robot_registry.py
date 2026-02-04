@@ -389,8 +389,15 @@ class RobotRegistryClient:
 
     def _build_robot_config_dict(self, robot, dataviz) -> Dict:
         """Build simple JSON dictionary for robot config"""
-        
-        return {
+        dimensions = None
+        if getattr(robot, "dimensions", None):
+            dimensions = {
+                "length": float(robot.dimensions.length),
+                "width": float(robot.dimensions.width),
+                "height": float(robot.dimensions.height),
+            }
+
+        config = {
             "action": "register",
             "robot_name": robot.name,
             "robot_type": robot.get_type_str(),
@@ -419,6 +426,11 @@ class RobotRegistryClient:
             },
             "timestamp": time.time()
         }
+
+        if dimensions is not None:
+            config["dimensions"] = dimensions
+
+        return config
 
 
 
