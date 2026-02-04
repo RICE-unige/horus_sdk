@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Example of registering a custom robot with Horus using the Python SDK.
+This demo sends only the robot transform (TF) using the robot name as the TF prefix
+and includes robot dimensions for sizing the interactor surface.
 Usage: python3 sdk_registration_demo.py
 """
 
-import time
 import sys
 import os
 
@@ -15,8 +16,7 @@ if package_root not in sys.path:
     sys.path.insert(0, package_root)
 
 try:
-    from horus.robot.robot import Robot, RobotType
-    from horus.sensors import LaserScan, Camera, SensorType
+    from horus.robot.robot import Robot, RobotDimensions, RobotType
     from horus.utils import cli
 except ImportError:
     # Fallback/Debug
@@ -33,28 +33,13 @@ def main():
     
     # 1. Define your robot
     my_robot = Robot(
-        name="SdkBot_Professional",
-        robot_type=RobotType.WHEELED
+        # This name should match the TF prefix (e.g. test_bot/base_link)
+        name="test_bot",
+        robot_type=RobotType.WHEELED,
+        dimensions=RobotDimensions(length=0.8, width=0.6, height=0.4),
     )
 
-    # 2. Add Sensors
-    my_robot.add_sensor(LaserScan(
-        name="Front Lidar",
-        topic="/scan",
-        frame_id="laser_frame",
-        min_range=0.1,
-        max_range=12.0,
-        color="#00FFFF",
-        point_size=0.1
-    ))
-    
-    my_robot.add_sensor(Camera(
-        name="Realsense RGB",
-        topic="/camera/color/image_raw",
-        frame_id="camera_link"
-    ))
-
-    # 3. Register with Horus
+    # 2. Register with Horus (TF-only for now)
     # The SDK now handles Auto-Start of Bridge and UI Feedback internally
     # register_with_horus() now blocks and maintains the connection dashboard
     my_robot.register_with_horus()
