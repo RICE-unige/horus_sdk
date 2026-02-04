@@ -99,10 +99,10 @@ class RequirementsChecker:
             sock.close()
 
             if result == 0:
-            return True, "Unity bridge is running on port 10000"
-        return (
-            True,
-            "Unity bridge not detected (will be started automatically)",
-        )
+                return True, "Unity bridge is running on port 10000"
+            return (
+                True,
+                "Unity bridge not detected (will be started automatically)",
+            )
         except Exception:
             return False, "Unable to check Unity bridge"
