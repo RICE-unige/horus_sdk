@@ -22,7 +22,7 @@ custom_theme = Theme({
 
 console = Console(theme=custom_theme)
 
-def create_dashboard_table(ip: str, port: int, bridge_status: str, connection_state: str, spinner_frame, topic_stats: dict = None):
+def create_dashboard_table(ip: str, port: int, bridge_status: str, connection_state: str, spinner_frame, topic_stats: dict = None, topic_states: dict = None):
     """Create the layout for the connection dashboard"""
     table = Table(show_edge=False, show_header=False, expand=True)
     table.add_column("Key", style="dim white", width=20)
@@ -66,13 +66,26 @@ def create_dashboard_table(ip: str, port: int, bridge_status: str, connection_st
         topic_table.add_column("Topic", style="dim yellow")
         topic_table.add_column("Pubs", justify="right", style="cyan")
         topic_table.add_column("Subs", justify="right", style="magenta")
+        if topic_states is not None:
+            topic_table.add_column("State", justify="right", style="green")
         
         for topic, counts in topic_stats.items():
-            topic_table.add_row(
-                topic, 
-                str(counts.get('pubs', 0)), 
-                str(counts.get('subs', 0))
-            )
+            state = ""
+            if topic_states is not None:
+                state = topic_states.get(topic, "")
+            if topic_states is not None:
+                topic_table.add_row(
+                    topic,
+                    str(counts.get('pubs', 0)),
+                    str(counts.get('subs', 0)),
+                    state
+                )
+            else:
+                topic_table.add_row(
+                    topic,
+                    str(counts.get('pubs', 0)),
+                    str(counts.get('subs', 0))
+                )
         
         table.add_row("Topic Activity", topic_table)
 
@@ -93,6 +106,7 @@ class ConnectionDashboard:
         self.bridge_status = bridge_status
         self.connection_state = "Waiting for App..."
         self.topic_stats = {}
+        self.topic_states = {}
         self.spinner = Spinner("dots", style="bold white")
         # Disable auto-refresh to avoid fighting with manual updates
         self.live = Live("", auto_refresh=False, console=console)
@@ -111,12 +125,12 @@ class ConnectionDashboard:
              status_line.append(f" {self.connection_state}", style="bold white")
              return create_dashboard_table(
                 self.ip, self.port, self.bridge_status, 
-                self.connection_state, status_line, self.topic_stats
+                self.connection_state, status_line, self.topic_stats, self.topic_states
             )
         else:
             return create_dashboard_table(
                 self.ip, self.port, self.bridge_status, 
-                self.connection_state, None, self.topic_stats
+                self.connection_state, None, self.topic_stats, self.topic_states
             )
 
     def update_status(self, status):
@@ -127,9 +141,11 @@ class ConnectionDashboard:
         self.bridge_status = status
         self.live.update(self.render(), refresh=True)
 
-    def update_topics(self, stats: dict):
+    def update_topics(self, stats: dict, states: dict = None):
         """Update the topic statistics dictionary"""
         self.topic_stats = stats
+        if states is not None:
+            self.topic_states = states
         self.live.update(self.render(), refresh=True)
         
     def tick(self):

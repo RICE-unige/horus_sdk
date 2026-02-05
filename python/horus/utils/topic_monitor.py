@@ -108,11 +108,21 @@ class TopicSubscriptionMonitor:
         assert self._node is not None
         # Check backend subscriber presence and publisher count
         sub_infos = self._node.get_subscriptions_info_by_topic(topic)
-        has_backend_sub = any(
-            (info.node_name == "horus_backend_node")
-            or info.node_name.endswith("_RosSubscriber")
-            for info in sub_infos
-        )
+
+        def _is_backend_node(node_name: Optional[str]) -> bool:
+            if not node_name:
+                return False
+            if node_name in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
+                return True
+            if node_name.startswith("horus_unity_bridge"):
+                return True
+            if "horus_backend" in node_name:
+                return True
+            if node_name.endswith("_RosSubscriber"):
+                return True
+            return False
+
+        has_backend_sub = any(_is_backend_node(info.node_name) for info in sub_infos)
         pub_infos = self._node.get_publishers_info_by_topic(topic)
         pub_count = len(pub_infos)
 
