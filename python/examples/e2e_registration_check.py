@@ -20,7 +20,7 @@ if package_root not in sys.path:
 
 from horus.robot import Robot, RobotType
 from horus.sensors import LaserScan
-from horus.bridge.robot_registry import RobotRegistryClient
+from horus.bridge.robot_registry import get_robot_registry_client
 
 
 def main() -> int:
@@ -39,7 +39,7 @@ def main() -> int:
 
     dataviz = robot.create_dataviz()
 
-    registry = RobotRegistryClient()
+    registry = get_robot_registry_client()
     ok, result = registry.register_robot(robot, dataviz, keep_alive=False)
     if not ok:
         print(f"Registration failed: {result}")
