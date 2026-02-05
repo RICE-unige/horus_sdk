@@ -11,7 +11,7 @@ from .core import (
     TopicMap, TopicInfo, TopicType, TopicDirection, get_topic_map
 )
 from .dataviz import DataSourceType, DataViz, VisualizationType
-from .robot import Robot, RobotDimensions, RobotType
+from .robot import Robot, RobotDimensions, RobotType, register_robots
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
 from .utils.branding import __version__
 
