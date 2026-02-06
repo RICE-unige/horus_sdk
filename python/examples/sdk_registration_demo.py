@@ -8,6 +8,7 @@ Usage:
   python3 sdk_registration_demo.py
   python3 sdk_registration_demo.py --robot-count 4
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
+  python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
   python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
 """
 
@@ -113,6 +114,54 @@ def build_parser():
         help="Camera transport type to register (default: compressed).",
     )
     parser.add_argument(
+        "--camera-streaming-type",
+        choices=["ros", "webrtc"],
+        default="ros",
+        help="Camera streaming backend for MR visualization (default: ros).",
+    )
+    parser.add_argument(
+        "--webrtc-client-signal-topic",
+        default="/horus/webrtc/client_signal",
+        help="ROS topic used by Unity client to send WebRTC signaling (default: /horus/webrtc/client_signal).",
+    )
+    parser.add_argument(
+        "--webrtc-server-signal-topic",
+        default="/horus/webrtc/server_signal",
+        help="ROS topic used by bridge to send WebRTC signaling back to Unity (default: /horus/webrtc/server_signal).",
+    )
+    parser.add_argument(
+        "--webrtc-bitrate-kbps",
+        type=int,
+        default=2000,
+        help="Requested WebRTC video bitrate in kbps (default: 2000).",
+    )
+    parser.add_argument(
+        "--webrtc-framerate",
+        type=int,
+        default=20,
+        help="Requested WebRTC stream framerate in fps (default: 20).",
+    )
+    parser.add_argument(
+        "--webrtc-stun-server-url",
+        default="stun:stun.l.google.com:19302",
+        help="STUN server URL for Unity WebRTC client (default: stun:stun.l.google.com:19302).",
+    )
+    parser.add_argument(
+        "--webrtc-turn-server-url",
+        default="",
+        help="Optional TURN server URL for Unity WebRTC client, e.g. turn:127.0.0.1:3478?transport=tcp.",
+    )
+    parser.add_argument(
+        "--webrtc-turn-username",
+        default="",
+        help="TURN username (optional).",
+    )
+    parser.add_argument(
+        "--webrtc-turn-credential",
+        default="",
+        help="TURN credential/password (optional).",
+    )
+    parser.add_argument(
         "--vary-camera-resolution",
         action="store_true",
         default=True,
@@ -189,10 +238,20 @@ def main():
                 resolution=(width_px, height_px),
                 fps=6,
                 encoding=encoding,
+                streaming_type=args.camera_streaming_type,
             )
             camera.add_metadata("image_type", image_type)
+            camera.add_metadata("streaming_type", args.camera_streaming_type)
             camera.add_metadata("display_mode", "projected")
             camera.add_metadata("use_tf", True)
+            camera.add_metadata("webrtc_client_signal_topic", args.webrtc_client_signal_topic)
+            camera.add_metadata("webrtc_server_signal_topic", args.webrtc_server_signal_topic)
+            camera.add_metadata("webrtc_bitrate_kbps", max(100, args.webrtc_bitrate_kbps))
+            camera.add_metadata("webrtc_framerate", max(1, args.webrtc_framerate))
+            camera.add_metadata("webrtc_stun_server_url", args.webrtc_stun_server_url)
+            camera.add_metadata("webrtc_turn_server_url", args.webrtc_turn_server_url)
+            camera.add_metadata("webrtc_turn_username", args.webrtc_turn_username)
+            camera.add_metadata("webrtc_turn_credential", args.webrtc_turn_credential)
             camera.add_metadata("image_scale", max(0.05, args.camera_image_scale))
             camera.add_metadata("focal_length_scale", max(0.05, args.camera_distance_scale))
             camera.add_metadata("view_position_offset", [0.0, 0.0, 0.0])
