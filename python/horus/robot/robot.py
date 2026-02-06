@@ -20,6 +20,15 @@ class RobotType(Enum):
 
 
 @dataclass
+class RobotDimensions:
+    """Robot dimensions in meters (length, width, height)."""
+
+    length: float
+    width: float
+    height: float
+
+
+@dataclass
 class Robot:
     """
     Base robot object with type and identification
@@ -35,6 +44,7 @@ class Robot:
     robot_type: RobotType
     metadata: Optional[Dict[str, Any]] = None
     sensors: List["SensorInstance"] = field(default_factory=list)
+    dimensions: Optional[RobotDimensions] = None
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -47,6 +57,40 @@ class Robot:
         # Initialize metadata if not provided
         if self.metadata is None:
             self.metadata = {}
+
+        if self.dimensions is not None:
+            if isinstance(self.dimensions, RobotDimensions):
+                pass
+            elif isinstance(self.dimensions, (list, tuple)):
+                if len(self.dimensions) == 2:
+                    length, width = self.dimensions
+                    height = 0.0
+                elif len(self.dimensions) == 3:
+                    length, width, height = self.dimensions
+                else:
+                    raise TypeError(
+                        "dimensions must be length/width or length/width/height"
+                    )
+                self.dimensions = RobotDimensions(
+                    length=float(length),
+                    width=float(width),
+                    height=float(height),
+                )
+            elif isinstance(self.dimensions, dict):
+                self.dimensions = RobotDimensions(
+                    length=float(self.dimensions.get("length", 0.0)),
+                    width=float(self.dimensions.get("width", 0.0)),
+                    height=float(self.dimensions.get("height", 0.0)),
+                )
+            else:
+                raise TypeError(
+                    "dimensions must be RobotDimensions, tuple/list, or dict"
+                )
+
+            if (self.dimensions.length < 0 or
+                    self.dimensions.width < 0 or
+                    self.dimensions.height < 0):
+                raise ValueError("dimensions must be non-negative")
 
     def __str__(self) -> str:
         """String representation of the robot"""
@@ -134,7 +178,7 @@ class Robot:
         # Add robot transform visualization
         dataviz.add_robot_transform(
             robot_name=self.name,
-            topic=f"/{self.name}/tf",
+            topic="/tf",
             frame_id=f"{self.name}_base_link",
         )
 
@@ -204,31 +248,41 @@ class Robot:
         return dataviz
 
     def register_with_horus(
-        self, dataviz: Optional["DataViz"] = None
+        self,
+        dataviz: Optional["DataViz"] = None,
+        keep_alive: bool = True,
+        show_dashboard: bool = True,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Register this robot with the HORUS backend system
 
         Args:
             dataviz: DataViz instance (creates one if not provided)
+            keep_alive: If True, keep the connection dashboard running
+            show_dashboard: If False, skip the dashboard UI during registration
 
         Returns:
             Tuple of (success, registration_data)
         """
-        from ..bridge.robot_registry import RobotRegistryClient
+        from ..bridge.robot_registry import get_robot_registry_client
 
         # Create DataViz if not provided
         if dataviz is None:
             dataviz = self.create_dataviz()
 
         # Create registry client and register
-        registry = RobotRegistryClient()
-        success, result = registry.register_robot(self, dataviz)
+        registry = get_robot_registry_client()
+        success, result = registry.register_robot(
+            self,
+            dataviz,
+            keep_alive=keep_alive,
+            show_dashboard=show_dashboard,
+        )
 
         if success:
             # Store registration data
             self.add_metadata("horus_robot_id", result.get("robot_id"))
-            self.add_metadata("horus_color", result.get("assigned_color"))
+            self.add_metadata("horus_color", result.get("assigned_color") or result.get("color"))
             self.add_metadata("horus_registered", True)
 
             # Store topics for reference (rosout monitor will track actual subscriptions)
@@ -240,20 +294,9 @@ class Robot:
             self.add_metadata("horus_topics", topics)
 
             if topics:
-                # Optimistically reflect subscription state for CLI users
-                try:
-                    from ..utils.topic_status import get_topic_status_board
-
-                    board = get_topic_status_board()
-                    for topic in topics:
-                        board.on_subscribe(topic)
-                except Exception:
-                    pass
-
                 # Hand topics to the ROS graph monitor so it can reconcile real state
                 try:
                     from ..utils.topic_monitor import get_topic_monitor
-
                     monitor = get_topic_monitor()
                     monitor.watch_topics(topics)
                     monitor.start()
@@ -269,7 +312,7 @@ class Robot:
         Returns:
             Tuple of (success, result_data)
         """
-        from ..bridge.robot_registry import RobotRegistryClient
+        from ..bridge.robot_registry import get_robot_registry_client
 
         robot_id = self.get_metadata("horus_robot_id")
         if not robot_id:
@@ -278,7 +321,7 @@ class Robot:
         topics = self.get_metadata("horus_topics") or []
 
         # Create registry client and unregister
-        registry = RobotRegistryClient()
+        registry = get_robot_registry_client()
         success, result = registry.unregister_robot(robot_id)
 
         if success:
@@ -321,3 +364,16 @@ class Robot:
         """Get HORUS-assigned color"""
         result = self.get_metadata("horus_color")
         return result if isinstance(result, str) else None
+
+
+def register_robots(robots, keep_alive: bool = True, show_dashboard: bool = True, timeout_sec: float = 10.0):
+    """Register multiple robots using a shared registry session."""
+    from ..bridge.robot_registry import get_robot_registry_client
+
+    registry = get_robot_registry_client()
+    return registry.register_robots(
+        robots,
+        timeout_sec=timeout_sec,
+        keep_alive=keep_alive,
+        show_dashboard=show_dashboard,
+    )

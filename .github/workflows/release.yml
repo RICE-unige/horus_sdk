@@ -60,7 +60,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Set up ROS2 environment
         uses: ros-tooling/setup-ros@v0.7
@@ -84,11 +84,7 @@ jobs:
           VERSION="${{ needs.validate.outputs.version }}"
           sed -i "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" python/horus/utils/branding.py
 
-      - name: Build ROS2 workspace
-        run: |
-          cd horus_ros2_ws
-          source /opt/ros/${{ env.ROS_DISTRO }}/setup.bash
-          colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release
+
 
       - name: Build Python package
         run: |
@@ -99,8 +95,7 @@ jobs:
         run: |
           tar -czf horus-sdk-${{ needs.validate.outputs.version }}.tar.gz \
             --exclude='.git*' \
-            --exclude='horus_ros2_ws/build' \
-            --exclude='horus_ros2_ws/log' \
+
             --exclude='python/dist' \
             --exclude='python/horus.egg-info' \
             --exclude='__pycache__' \
@@ -128,7 +123,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -159,9 +154,7 @@ jobs:
           # Install Python dependencies
           RUN pip3 install -e python/
 
-          # Build ROS2 workspace
-          RUN cd horus_ros2_ws && \
-              /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build"
+
 
           # Set up entrypoint
           COPY docker-entrypoint.sh /
@@ -179,7 +172,6 @@ jobs:
 
           # Source ROS2 environment
           source /opt/ros/humble/setup.bash
-          source /opt/horus_sdk/horus_ros2_ws/install/setup.bash
 
           # Execute the command
           exec "$@"
@@ -243,10 +235,6 @@ jobs:
           cd horus_sdk
 
           # Build and install
-          cd horus_ros2_ws
-          colcon build
-          source install/setup.bash
-          cd ..
           pip install -e python/
           \`\`\`
           EOF

@@ -137,6 +137,10 @@ class LaserScan(BaseSensor):
     max_range: float = 30.0
     range_resolution: float = 0.01
 
+    # Visualization settings
+    color: Union[str, tuple] = "red"
+    point_size: float = 0.05
+
     def __init__(
         self,
         name: str,
@@ -148,6 +152,8 @@ class LaserScan(BaseSensor):
         min_range: float = 0.1,
         max_range: float = 30.0,
         range_resolution: float = 0.01,
+        color: Union[str, tuple] = "red",
+        point_size: float = 0.05,
         **kwargs,
     ):
         super().__init__(name, SensorType.LASER_SCAN, frame_id, topic, **kwargs)
@@ -157,6 +163,8 @@ class LaserScan(BaseSensor):
         self.min_range = min_range
         self.max_range = max_range
         self.range_resolution = range_resolution
+        self.color = color
+        self.point_size = point_size
 
     def get_scan_range_degrees(self) -> float:
         """Get scan range in degrees"""

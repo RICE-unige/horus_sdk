@@ -20,13 +20,6 @@ class BackendManager:
                 "tcp_port": 8080,
                 "unity_port": 10000,
             },
-            "ros1": {
-                "package": "horus_backend_ros1",
-                "launch_file": "horus_backend.launch",
-                "check_command": "rospack find horus_backend_ros1",
-                "launch_command": "roslaunch horus_backend_ros1 horus_backend.launch",
-                "tcp_port": 8081,
-            },
         }
 
     def launch_backend(self):
@@ -61,7 +54,7 @@ class BackendManager:
             return False
 
     def _is_unity_endpoint_running(self):
-        """Check if Unity TCP endpoint is running"""
+        """Check if Unity bridge is running"""
         config = self.backend_configs[self.backend_type]
         unity_port = config.get("unity_port", 10000)
         try:
@@ -119,11 +112,11 @@ class BackendManager:
         return self._is_backend_running()
 
     def test_unity_endpoint(self):
-        """Test Unity TCP endpoint connection"""
+        """Test Unity bridge connection"""
         return self._is_unity_endpoint_running()
 
     def get_unity_port(self):
-        """Get Unity TCP endpoint port"""
+        """Get Unity bridge TCP port"""
         return self.backend_configs[self.backend_type].get("unity_port", 10000)
 
     def get_port(self):
@@ -166,8 +159,8 @@ class BackendManager:
         """Cleanup any remaining HORUS-related ROS2 processes"""
         processes_to_kill = [
             "horus_backend_node",
-            "default_server_endpoint",
-            "ros_tcp_endpoint",
+            "horus_unity_bridge_node",
+            "horus_unity_bridge",
         ]
 
         for process_name in processes_to_kill:

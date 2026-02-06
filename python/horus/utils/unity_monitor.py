@@ -1,4 +1,4 @@
-"""Unity MR Connection Monitor"""
+"""Unity MR Connection Monitor (Unity client -> horus_unity_bridge server)"""
 
 import subprocess
 import threading
@@ -7,14 +7,16 @@ from typing import Callable, Optional
 
 
 class UnityConnectionMonitor:
-    """Monitor Unity MR connections through ROS TCP Endpoint logs"""
+    """Monitor Unity MR connections to the horus_unity_bridge TCP server"""
 
-    def __init__(self, unity_port: int = 10000):
+    def __init__(self, unity_port: int = 10000, disconnect_grace_s: float = 3.0):
         self.unity_port = unity_port
+        self.disconnect_grace_s = disconnect_grace_s
         self.is_monitoring = False
         self.monitor_thread: Optional[threading.Thread] = None
         self.connection_callback: Optional[Callable[[str, bool], None]] = None
         self.connected_clients: set[str] = set()
+        self._last_seen: dict[str, float] = {}
         self.log_process: Optional[subprocess.Popen] = None
 
     def set_connection_callback(self, callback: Callable[[str, bool], None]):
@@ -56,7 +58,7 @@ class UnityConnectionMonitor:
                     pass  # Silent failure to avoid spam
 
             if self.is_monitoring:
-                time.sleep(2)  # Check every 2 seconds
+                time.sleep(1)  # Check every 1 second
 
     def _monitor_network_connections(self):
         """Monitor network connections for Unity TCP Endpoint"""
@@ -67,6 +69,7 @@ class UnityConnectionMonitor:
             )
 
             if result.returncode == 0:
+                now = time.time()
                 current_connections = set()
                 for line in result.stdout.split("\n"):
                     if "ESTAB" in line and f":{self.unity_port}" in line:
@@ -83,6 +86,7 @@ class UnityConnectionMonitor:
                                 # Filter out localhost connections (likely from backend)
                                 if ip not in ["127.0.0.1", "::1", "[::1]"]:
                                     current_connections.add(ip)
+                                    self._last_seen[ip] = now
 
                 # Check for new connections
                 new_connections = current_connections - self.connected_clients
@@ -91,12 +95,14 @@ class UnityConnectionMonitor:
                     if self.connection_callback:
                         self.connection_callback(ip, True)
 
-                # Check for disconnections
-                disconnections = self.connected_clients - current_connections
-                for ip in disconnections:
-                    self.connected_clients.discard(ip)
-                    if self.connection_callback:
-                        self.connection_callback(ip, False)
+                # Check for disconnections with debounce
+                for ip in list(self.connected_clients):
+                    last_seen = self._last_seen.get(ip, 0)
+                    if now - last_seen > self.disconnect_grace_s:
+                        self.connected_clients.discard(ip)
+                        self._last_seen.pop(ip, None)
+                        if self.connection_callback:
+                            self.connection_callback(ip, False)
 
         except Exception:
             # Fallback to netstat if ss fails
@@ -111,6 +117,7 @@ class UnityConnectionMonitor:
             )
 
             if result.returncode == 0:
+                now = time.time()
                 current_connections = set()
                 for line in result.stdout.split("\n"):
                     if f":{self.unity_port}" in line and "ESTABLISHED" in line:
@@ -122,6 +129,7 @@ class UnityConnectionMonitor:
                                 # Filter out localhost connections
                                 if ip not in ["127.0.0.1", "::1"]:
                                     current_connections.add(ip)
+                                    self._last_seen[ip] = now
 
                 # Update connections
                 new_connections = current_connections - self.connected_clients
@@ -130,11 +138,13 @@ class UnityConnectionMonitor:
                     if self.connection_callback:
                         self.connection_callback(ip, True)
 
-                disconnections = self.connected_clients - current_connections
-                for ip in disconnections:
-                    self.connected_clients.discard(ip)
-                    if self.connection_callback:
-                        self.connection_callback(ip, False)
+                for ip in list(self.connected_clients):
+                    last_seen = self._last_seen.get(ip, 0)
+                    if now - last_seen > self.disconnect_grace_s:
+                        self.connected_clients.discard(ip)
+                        self._last_seen.pop(ip, None)
+                        if self.connection_callback:
+                            self.connection_callback(ip, False)
 
         except Exception:
             pass

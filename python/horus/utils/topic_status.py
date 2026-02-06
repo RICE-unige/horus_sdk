@@ -35,9 +35,10 @@ class TopicStatusBoard:
         self._pending_render = False
         self._rendered_lines = 0
         self._stopped = False
+        self._silent = False
 
     def start(self):
-        if self._running or self._stopped:
+        if self._running or self._stopped or self._silent:
             return
         self._running = True
         if self._isatty:
@@ -69,9 +70,19 @@ class TopicStatusBoard:
     def on_unsubscribe(self, topic: str):
         self._update(topic, "UNSUBSCRIBED")
 
+    def set_silent(self, silent: bool):
+        with self._lock:
+            self._silent = silent
+
+    def snapshot(self):
+        with self._lock:
+            return OrderedDict(
+                (topic, state.state) for topic, state in self._topics.items()
+            )
+
     def _update(self, topic: str, state: str):
         # Auto-start on first use (safe no-op if non-TTY)
-        if not self._running and not self._stopped:
+        if not self._running and not self._stopped and not self._silent:
             self.start()
         ts = time.time()
         with self._lock:
@@ -83,6 +94,8 @@ class TopicStatusBoard:
                 self._topics[topic] = _TopicState(state=state, last_changed=ts)
                 # Maintain stable ordering by reinserting
                 self._topics.move_to_end(topic)
+                if self._silent:
+                    return
                 if self._isatty:
                     self._pending_render = True
                 else:
