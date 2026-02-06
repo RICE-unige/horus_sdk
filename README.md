@@ -86,7 +86,7 @@ python3 -m build
 # Output in dist/ (e.g., horus_sdk-0.1.0-py3-none-any.whl)
 ```
 
-### ROS 2 Bridge Infrastructure
+### ROS 2 Bridge Infrastructure
 
 The infrastructure (Bridge + Request Handlers) lives in `horus_ros2`.
 
@@ -97,13 +97,26 @@ cd horus_ros2
 # Install dependencies
 rosdep install --from-paths . -y --ignore-src
 
+# Optional WebRTC camera streaming prerequisites (bridge host)
+sudo apt-get update
+sudo apt-get install -y \
+  pkg-config \
+  libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev \
+  libopencv-dev
+
 # Build
-colcon build --symlink-install
+colcon build --symlink-install --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
 source install/setup.bash
 
 # Run
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
+
+> [!NOTE]
+> WebRTC support in `horus_unity_bridge` is enabled only when CMake finds GStreamer + OpenCV.
+> The bridge fetches `libdatachannel` during configure, so internet access is required on first build.
+> In the Unity MR project, keep `com.unity.webrtc` in `Packages/manifest.json` (current tested entry: `"com.unity.webrtc": "3.0.0-pre.8"`).
 
 ### C++ SDK
 
