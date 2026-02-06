@@ -10,6 +10,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <chrono>
 
 #include <rtc/rtc.hpp>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,7 @@ public:
     int bitrate_kbps = 2000;
     int framerate = 30;
     std::string pipeline;
+    bool wait_for_complete_gathering = true;
   };
 
   WebRTCManager();
@@ -55,6 +57,8 @@ public:
 private:
   Settings settings_;
   bool initialized_ = false;
+  uint32_t video_ssrc_ = 0;
+  int video_payload_type_ = 96;
   // WebRTC components
   std::shared_ptr<rtc::PeerConnection> peer_connection_;
   std::shared_ptr<rtc::Track> video_track_;
@@ -64,8 +68,11 @@ private:
   GstElement* pipeline_ = nullptr;
   GstElement* appsrc_ = nullptr;
   GstElement* appsink_ = nullptr;
-  bool pipeline_started_ = false;
+  std::atomic<bool> pipeline_started_{false};
   std::mutex frame_mutex_;
+  std::atomic<bool> peer_connected_{false};
+  std::atomic<bool> video_track_open_{false};
+  std::chrono::steady_clock::time_point last_track_closed_log_time_{};
 
   // Caps caching to avoid redundant GStreamer calls
   int last_width_ = 0;
@@ -74,6 +81,10 @@ private:
   
   SignalingCallback signaling_callback_;
   std::mutex signaling_mutex_;
+  std::mutex pending_description_mutex_;
+  bool has_pending_local_description_ = false;
+  std::string pending_local_description_type_;
+  nlohmann::json pending_local_description_data_;
   std::mutex pipeline_mutex_;
   
   // Configuration
