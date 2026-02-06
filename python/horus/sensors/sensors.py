@@ -87,6 +87,7 @@ class Camera(BaseSensor):
     fps: int = 30
     fov: float = 60.0
     encoding: str = "bgr8"
+    streaming_type: str = "ros"
 
     def __init__(
         self,
@@ -98,6 +99,7 @@ class Camera(BaseSensor):
         fps: int = 30,
         fov: float = 60.0,
         encoding: str = "bgr8",
+        streaming_type: str = "ros",
         **kwargs,
     ):
         super().__init__(name, SensorType.CAMERA, frame_id, topic, **kwargs)
@@ -106,6 +108,10 @@ class Camera(BaseSensor):
         self.fps = fps
         self.fov = fov
         self.encoding = encoding
+        normalized_streaming = str(streaming_type).strip().lower()
+        if normalized_streaming not in ("ros", "webrtc"):
+            raise ValueError("Camera streaming_type must be 'ros' or 'webrtc'")
+        self.streaming_type = normalized_streaming
 
     def get_camera_type(self) -> str:
         """Get camera type as string"""
