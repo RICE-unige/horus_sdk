@@ -444,6 +444,9 @@ class RobotRegistryClient:
                 try:
                     check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
                     if check_pkg.returncode == 0:
+                        bridge_prefix = check_pkg.stdout.decode().strip()
+                        if bridge_prefix:
+                            cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
                         self.bridge_process = subprocess.Popen(
                             ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -788,6 +791,9 @@ class RobotRegistryClient:
                 try:
                     check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
                     if check_pkg.returncode == 0:
+                        bridge_prefix = check_pkg.stdout.decode().strip()
+                        if bridge_prefix:
+                            cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
                         self.bridge_process = subprocess.Popen(
                             ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -892,7 +898,7 @@ class RobotRegistryClient:
             def register_all(dashboard=None, force: bool = False):
                 for robot, dataviz, msg in entries:
                     state = robot_states.get(robot.name, "pending")
-                    if not force and state in ("registered", "queued"):
+                    if not force and state == "registered":
                         continue
                     if dashboard is not None:
                         dashboard.update_status(f"Registering {robot.name}...")
@@ -1072,18 +1078,21 @@ class RobotRegistryClient:
                                 dashboard.update_status("")
                             dashboard.tick()
                             continue
-                        if any_queued and not any_pending:
+                        if any_queued:
                             dashboard.update_registration("Queued")
-                            dashboard.update_status(queued_status)
-                            dashboard.tick()
-                            continue
-                        if time.time() - last_register_attempt < 1.0:
+                            dashboard.update_status(queued_status or "Waiting for Workspace")
+                            retry_interval = 2.0
+                        else:
+                            retry_interval = 1.0
+
+                        if time.time() - last_register_attempt < retry_interval:
                             dashboard.tick()
                             continue
                         last_register_attempt = time.time()
 
-                        dashboard.update_registration("Registering")
-                        dashboard.update_status("Registering robots...")
+                        if not any_queued:
+                            dashboard.update_registration("Registering")
+                            dashboard.update_status("Registering robots...")
                         ok, result = register_all(dashboard)
                         if not ok:
                             if keep_alive:
@@ -1215,6 +1224,14 @@ class RobotRegistryClient:
             except (TypeError, ValueError):
                 return float(default)
 
+        def _coerce_int(value, default):
+            if value is None:
+                return int(default)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return int(default)
+
         def _coerce_vec3(value, default_xyz):
             x_default, y_default, z_default = default_xyz
             if isinstance(value, dict):
@@ -1235,11 +1252,43 @@ class RobotRegistryClient:
 
         def _build_camera_config(sensor):
             metadata = sensor.metadata or {}
+            metadata_streaming_type = str(metadata.get("streaming_type", "")).strip().lower()
+            sensor_streaming_type = str(getattr(sensor, "streaming_type", "ros")).strip().lower()
+            streaming_type = metadata_streaming_type or sensor_streaming_type
+            if streaming_type not in ("ros", "webrtc"):
+                streaming_type = "ros"
             return {
+                "streaming_type": streaming_type,
                 "image_type": str(metadata.get("image_type", "raw")).lower(),
                 "display_mode": str(metadata.get("display_mode", "projected")).lower(),
                 "use_tf": _coerce_bool(metadata.get("use_tf"), True),
                 "projection_target_frame": str(metadata.get("projection_target_frame", "")),
+                "webrtc_client_signal_topic": str(
+                    metadata.get("webrtc_client_signal_topic", "/horus/webrtc/client_signal")
+                ),
+                "webrtc_server_signal_topic": str(
+                    metadata.get("webrtc_server_signal_topic", "/horus/webrtc/server_signal")
+                ),
+                "webrtc_bitrate_kbps": _coerce_int(
+                    metadata.get("webrtc_bitrate_kbps"),
+                    2000,
+                ),
+                "webrtc_framerate": _coerce_int(
+                    metadata.get("webrtc_framerate"),
+                    getattr(sensor, "fps", 20),
+                ),
+                "webrtc_stun_server_url": str(
+                    metadata.get("webrtc_stun_server_url", "stun:stun.l.google.com:19302")
+                ),
+                "webrtc_turn_server_url": str(
+                    metadata.get("webrtc_turn_server_url", "")
+                ),
+                "webrtc_turn_username": str(
+                    metadata.get("webrtc_turn_username", "")
+                ),
+                "webrtc_turn_credential": str(
+                    metadata.get("webrtc_turn_credential", "")
+                ),
                 "image_scale": _coerce_float(metadata.get("image_scale"), 1.0),
                 "focal_length_scale": _coerce_float(metadata.get("focal_length_scale"), 0.5),
                 "view_position_offset": _coerce_vec3(
