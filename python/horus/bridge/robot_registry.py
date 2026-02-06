@@ -56,6 +56,9 @@ class RobotRegistryClient:
         self._bridge_log_file = None
         self._last_heartbeat_time = 0
         self._app_heartbeats = {}
+        self._app_uptime_by_id = {}
+        self._app_restart_seq = 0
+        self._last_consumed_restart_seq = 0
         self._remote_ip = None
         
         if ROS2_AVAILABLE:
@@ -189,6 +192,17 @@ class RobotRegistryClient:
         """Handle heartbeat from Unity"""
         now = time.time()
         self._last_heartbeat_time = now
+        app_id = "unknown"
+        heartbeat_uptime = None
+
+        if "Heartbeat:" in msg.data:
+            try:
+                heartbeat_part = msg.data.split("Heartbeat:", 1)[1]
+                heartbeat_value = heartbeat_part.split("|", 1)[0].strip()
+                heartbeat_uptime = float(heartbeat_value)
+            except Exception:
+                heartbeat_uptime = None
+
         # Parse IP if present "Heartbeat: <time> | IP: <ip>"
         if "IP:" in msg.data:
             try:
@@ -197,18 +211,33 @@ class RobotRegistryClient:
                     ip = parts[1].strip()
                     self._remote_ip = ip
                     if ip:
+                        app_id = ip
                         self._app_heartbeats[ip] = now
             except:
                 pass
         else:
             self._app_heartbeats["unknown"] = now
 
+        if heartbeat_uptime is not None:
+            previous_uptime = self._app_uptime_by_id.get(app_id)
+            # Unity Time.time resets on app restart; detect this to force re-registration.
+            if previous_uptime is not None and heartbeat_uptime < (previous_uptime - 0.75):
+                self._app_restart_seq += 1
+            self._app_uptime_by_id[app_id] = heartbeat_uptime
+
     def _get_active_app_count(self, timeout_s: float) -> int:
         now = time.time()
         stale = [ip for ip, ts in self._app_heartbeats.items() if (now - ts) > timeout_s]
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
+            self._app_uptime_by_id.pop(ip, None)
         return len(self._app_heartbeats)
+
+    def _consume_app_restart_signal(self) -> bool:
+        if self._app_restart_seq != self._last_consumed_restart_seq:
+            self._last_consumed_restart_seq = self._app_restart_seq
+            return True
+        return False
 
     def _await_ack(self, robot_name: str, timeout_sec: float):
         start_time = time.time()
@@ -523,6 +552,9 @@ class RobotRegistryClient:
                         seen_heartbeat = True
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
+                    app_restarted = self._consume_app_restart_signal()
+                    if app_restarted:
+                        had_connection_drop = True
 
                     if is_connected:
                         dashboard.update_app_link("Connected")
@@ -642,6 +674,8 @@ class RobotRegistryClient:
                     
                     # --- Monitoring Phase (keep_alive=True) ---
                     else:
+                        if app_restarted:
+                            had_connection_drop = True
                         if self._ack_received.is_set():
                             ack = self._ack_by_robot.pop(robot_name, None) or self._last_ack_data
                             recv_name = ack.get("robot_name", "UNKNOWN")
@@ -664,7 +698,7 @@ class RobotRegistryClient:
                                     dashboard.update_status(f"Refused: {ack.get('error')}")
                         if is_connected:
                             ip_str = f" ({self._remote_ip})" if self._remote_ip else ""
-                            if not last_connection_state and had_connection_drop:
+                            if had_connection_drop and (not last_connection_state or app_restarted):
                                 # Start Re-registration
                                 dashboard.update_registration("Re-registering")
                                 dashboard.update_status(f"Re-registering{ip_str}...")
@@ -933,7 +967,8 @@ class RobotRegistryClient:
                         pass
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
-                    if is_connected and not last_connection_state:
+                    app_restarted = self._consume_app_restart_signal()
+                    if is_connected and (not last_connection_state or app_restarted):
                         for robot, dataviz, msg in entries:
                             publish_and_wait(robot, dataviz, msg)
                     last_connection_state = is_connected
@@ -965,6 +1000,9 @@ class RobotRegistryClient:
                         seen_heartbeat = True
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
+                    app_restarted = self._consume_app_restart_signal()
+                    if app_restarted:
+                        had_connection_drop = True
 
                     if is_connected:
                         dashboard.update_app_link("Connected")
@@ -1088,7 +1126,7 @@ class RobotRegistryClient:
 
                     if is_connected:
                         ip_str = f" ({self._remote_ip})" if self._remote_ip else ""
-                        if not last_connection_state and had_connection_drop:
+                        if had_connection_drop and (not last_connection_state or app_restarted):
                             dashboard.update_registration("Re-registering")
                             dashboard.update_status(f"Re-registering{ip_str}...")
                             ok, result = register_all(dashboard, force=True)
@@ -1156,23 +1194,103 @@ class RobotRegistryClient:
                 "height": float(robot.dimensions.height),
             }
 
+        def _coerce_bool(value, default):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in ("1", "true", "yes", "on"):
+                    return True
+                if normalized in ("0", "false", "no", "off"):
+                    return False
+            if isinstance(value, (int, float)):
+                return bool(value)
+            return default
+
+        def _coerce_float(value, default):
+            if value is None:
+                return float(default)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float(default)
+
+        def _coerce_vec3(value, default_xyz):
+            x_default, y_default, z_default = default_xyz
+            if isinstance(value, dict):
+                x = _coerce_float(value.get("x"), x_default)
+                y = _coerce_float(value.get("y"), y_default)
+                z = _coerce_float(value.get("z"), z_default)
+                return {"x": x, "y": y, "z": z}
+            if isinstance(value, (list, tuple)) and len(value) == 3:
+                x = _coerce_float(value[0], x_default)
+                y = _coerce_float(value[1], y_default)
+                z = _coerce_float(value[2], z_default)
+                return {"x": x, "y": y, "z": z}
+            return {
+                "x": float(x_default),
+                "y": float(y_default),
+                "z": float(z_default),
+            }
+
+        def _build_camera_config(sensor):
+            metadata = sensor.metadata or {}
+            return {
+                "image_type": str(metadata.get("image_type", "raw")).lower(),
+                "display_mode": str(metadata.get("display_mode", "projected")).lower(),
+                "use_tf": _coerce_bool(metadata.get("use_tf"), True),
+                "projection_target_frame": str(metadata.get("projection_target_frame", "")),
+                "image_scale": _coerce_float(metadata.get("image_scale"), 1.0),
+                "focal_length_scale": _coerce_float(metadata.get("focal_length_scale"), 0.5),
+                "view_position_offset": _coerce_vec3(
+                    metadata.get("view_position_offset"), (0.0, 0.0, 0.0)
+                ),
+                "view_rotation_offset": _coerce_vec3(
+                    metadata.get("view_rotation_offset"), (0.0, 0.0, 0.0)
+                ),
+                "show_frustum": _coerce_bool(metadata.get("show_frustum"), True),
+                "frustum_color": str(metadata.get("frustum_color", "#FFFF00")),
+                "overhead_size": _coerce_float(metadata.get("overhead_size"), 1.0),
+                "overhead_position_offset": _coerce_vec3(
+                    metadata.get("overhead_position_offset"), (0.0, 2.0, 0.0)
+                ),
+                "overhead_face_camera": _coerce_bool(
+                    metadata.get("overhead_face_camera"), True
+                ),
+                "overhead_rotation_offset": _coerce_vec3(
+                    metadata.get("overhead_rotation_offset"), (90.0, 0.0, 0.0)
+                ),
+                "resolution": {
+                    "width": int(getattr(sensor, "resolution", (640, 480))[0]),
+                    "height": int(getattr(sensor, "resolution", (640, 480))[1]),
+                },
+                "fps": int(getattr(sensor, "fps", 30)),
+                "fov": _coerce_float(getattr(sensor, "fov", 60.0), 60.0),
+                "encoding": str(getattr(sensor, "encoding", "bgr8")),
+            }
+
+        sensor_payloads = []
+        for sensor in robot.sensors:
+            payload = {
+                "name": sensor.name,
+                "type": sensor.sensor_type.value,
+                "topic": sensor.topic,
+                "frame": sensor.frame_id,
+                "metadata": sensor.metadata or {},
+                "viz_config": {
+                    "color": getattr(sensor, "color", "white"),
+                    "point_size": getattr(sensor, "point_size", 0.05),
+                },
+            }
+            if sensor.sensor_type.value == "camera":
+                payload["camera_config"] = _build_camera_config(sensor)
+            sensor_payloads.append(payload)
+
         config = {
             "action": "register",
             "robot_name": robot.name,
             "robot_type": robot.get_type_str(),
-            "sensors": [
-                {
-                    "name": s.name, 
-                    "type": s.sensor_type.value,
-                    "topic": s.topic,
-                    "frame": s.frame_id,
-                    "metadata": s.metadata or {},
-                    "viz_config": {
-                        "color": getattr(s, "color", "white"),
-                        "point_size": getattr(s, "point_size", 0.05)
-                    }
-                } for s in robot.sensors
-            ],
+            "sensors": sensor_payloads,
             "visualizations": [
                 {
                     "type": v.viz_type.value,
