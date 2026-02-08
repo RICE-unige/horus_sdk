@@ -76,6 +76,11 @@ class TopicSubscriptionMonitor:
                     self._topics.add(t)
                     self._is_subscribed.setdefault(t, False)
                     self._zero_since.setdefault(t, None)
+                    # Seed dashboard state so newly watched topics are never "unknown".
+                    try:
+                        get_topic_status_board().on_unsubscribe(t)
+                    except Exception:
+                        pass
                 if modes and t in modes:
                     mode = modes[t]
                     if mode == "sdk_sub":
@@ -121,13 +126,16 @@ class TopicSubscriptionMonitor:
         def _is_backend_node(node_name: Optional[str]) -> bool:
             if not node_name:
                 return False
-            if node_name in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
+            normalized = str(node_name).strip().lstrip("/")
+            if not normalized:
+                return False
+            if normalized in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
                 return True
-            if node_name.startswith("horus_unity_bridge"):
+            if normalized.startswith("horus_unity_bridge"):
                 return True
-            if "horus_backend" in node_name:
+            if "horus_backend" in normalized:
                 return True
-            if node_name.endswith("_RosSubscriber"):
+            if normalized.endswith("_RosSubscriber"):
                 return True
             return False
 
