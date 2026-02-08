@@ -87,6 +87,10 @@ class Camera(BaseSensor):
     fps: int = 30
     fov: float = 60.0
     encoding: str = "bgr8"
+    streaming_type: str = "ros"
+    minimap_streaming_type: str = "ros"
+    teleop_streaming_type: str = "webrtc"
+    startup_mode: str = "minimap"
 
     def __init__(
         self,
@@ -98,6 +102,10 @@ class Camera(BaseSensor):
         fps: int = 30,
         fov: float = 60.0,
         encoding: str = "bgr8",
+        streaming_type: str = "ros",
+        minimap_streaming_type: str = "ros",
+        teleop_streaming_type: str = "webrtc",
+        startup_mode: str = "minimap",
         **kwargs,
     ):
         super().__init__(name, SensorType.CAMERA, frame_id, topic, **kwargs)
@@ -106,6 +114,25 @@ class Camera(BaseSensor):
         self.fps = fps
         self.fov = fov
         self.encoding = encoding
+
+        def _normalize_transport(value: str, field_name: str) -> str:
+            normalized = str(value).strip().lower()
+            if normalized not in ("ros", "webrtc"):
+                raise ValueError(f"Camera {field_name} must be 'ros' or 'webrtc'")
+            return normalized
+
+        self.streaming_type = _normalize_transport(streaming_type, "streaming_type")
+        self.minimap_streaming_type = _normalize_transport(
+            minimap_streaming_type, "minimap_streaming_type"
+        )
+        self.teleop_streaming_type = _normalize_transport(
+            teleop_streaming_type, "teleop_streaming_type"
+        )
+
+        normalized_startup_mode = str(startup_mode).strip().lower()
+        if normalized_startup_mode not in ("minimap", "teleop"):
+            raise ValueError("Camera startup_mode must be 'minimap' or 'teleop'")
+        self.startup_mode = normalized_startup_mode
 
     def get_camera_type(self) -> str:
         """Get camera type as string"""

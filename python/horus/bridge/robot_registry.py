@@ -319,18 +319,21 @@ class RobotRegistryClient:
     def _is_backend_node_name(self, node_name: Optional[str]) -> bool:
         if not node_name:
             return False
+        normalized_name = str(node_name).strip().lstrip("/")
+        if not normalized_name:
+            return False
         try:
-            if self.node and node_name == self.node.get_name():
+            if self.node and normalized_name == str(self.node.get_name()).strip().lstrip("/"):
                 return False
         except Exception:
             pass
-        if node_name in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
+        if normalized_name in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
             return True
-        if node_name.startswith("horus_unity_bridge"):
+        if normalized_name.startswith("horus_unity_bridge"):
             return True
-        if "horus_backend" in node_name:
+        if "horus_backend" in normalized_name:
             return True
-        if node_name.endswith("_RosSubscriber") or node_name.endswith("_RosPublisher"):
+        if normalized_name.endswith("_RosSubscriber") or normalized_name.endswith("_RosPublisher"):
             return True
         return False
 
@@ -338,9 +341,33 @@ class RobotRegistryClient:
         if not node_name:
             return False
         try:
-            return self.node is not None and node_name == self.node.get_name()
+            return (
+                self.node is not None
+                and str(node_name).strip().lstrip("/")
+                == str(self.node.get_name()).strip().lstrip("/")
+            )
         except Exception:
             return False
+
+    def _get_monitored_subscription_state(self, topic: str) -> Optional[bool]:
+        try:
+            from horus.utils.topic_status import get_topic_status_board
+
+            snapshot = get_topic_status_board().snapshot()
+            state = snapshot.get(topic)
+            if state == "SUBSCRIBED":
+                return True
+            if state == "UNSUBSCRIBED":
+                return False
+        except Exception:
+            pass
+        return None
+
+    def _resolve_data_topic_link(self, topic: str) -> bool:
+        monitored_state = self._get_monitored_subscription_state(topic)
+        if monitored_state is not None:
+            return monitored_state
+        return self._has_backend_subscriber(topic)
 
     def _has_backend_subscriber(self, topic: str) -> bool:
         try:
@@ -391,6 +418,124 @@ class RobotRegistryClient:
             if topic.startswith(prefix):
                 return name
         return "shared"
+
+    def _extract_camera_topic_profiles(self, config: Dict) -> Dict[str, Dict[str, str]]:
+        profiles: Dict[str, Dict[str, str]] = {}
+        for sensor_cfg in config.get("sensors", []):
+            if str(sensor_cfg.get("type", "")).strip().lower() != "camera":
+                continue
+            topic_name = str(sensor_cfg.get("topic", "")).strip()
+            if not topic_name:
+                continue
+
+            cam_cfg = sensor_cfg.get("camera_config") or {}
+            minimap_streaming = str(
+                cam_cfg.get("minimap_streaming_type")
+                or cam_cfg.get("streaming_type")
+                or "ros"
+            ).strip().lower()
+            teleop_streaming = str(
+                cam_cfg.get("teleop_streaming_type")
+                or cam_cfg.get("streaming_type")
+                or "webrtc"
+            ).strip().lower()
+            startup_mode = str(cam_cfg.get("startup_mode") or "minimap").strip().lower()
+
+            if minimap_streaming not in ("ros", "webrtc"):
+                minimap_streaming = "ros"
+            if teleop_streaming not in ("ros", "webrtc"):
+                teleop_streaming = "webrtc"
+            if startup_mode not in ("minimap", "teleop"):
+                startup_mode = "minimap"
+
+            profiles[topic_name] = {
+                "minimap": minimap_streaming,
+                "teleop": teleop_streaming,
+                "startup": startup_mode,
+            }
+        return profiles
+
+    def _build_dashboard_topic_rows(
+        self,
+        monitored_topics,
+        topic_roles,
+        robot_names,
+        is_connected: bool,
+        registration_done: bool,
+        camera_topic_profiles: Optional[Dict[str, Dict[str, str]]] = None,
+    ) -> list:
+        camera_topic_profiles = camera_topic_profiles or {}
+        core_topic_set = {"/horus/registration", "/horus/registration_ack", "/horus/heartbeat"}
+        rows = []
+
+        for topic in monitored_topics:
+            role = topic_roles.get(topic, "backend_sub")
+            topic_kind = "core" if topic in core_topic_set else "data"
+
+            if role == "sdk_pub":
+                role_label = "sdk->bridge"
+                backend_sub = self._has_backend_subscriber(topic)
+                local_pub = self._has_local_publisher(topic)
+                pubs = 1 if local_pub else 0
+                subs = 1 if backend_sub else 0
+                if not is_connected:
+                    link = "NO"
+                    data = "IDLE"
+                else:
+                    link = "OK" if backend_sub else "NO"
+                    data = "ACTIVE" if local_pub and backend_sub else "IDLE"
+            elif role == "sdk_sub":
+                role_label = "bridge->sdk"
+                backend_pub = self._has_backend_publisher(topic)
+                local_sub = self._has_local_subscriber(topic)
+                pubs = 1 if backend_pub else 0
+                subs = 1 if local_sub else 0
+                if not is_connected:
+                    link = "NO"
+                    data = "IDLE"
+                else:
+                    link = "OK" if backend_pub else "NO"
+                    data = "ACTIVE" if backend_pub else "IDLE"
+            else:
+                role_label = "data->bridge"
+                pubs, _ = self._get_topic_counts(topic)
+                if not is_connected or not registration_done:
+                    link = "NO"
+                    subs = 0
+                    data = "IDLE"
+                else:
+                    link_ok = self._resolve_data_topic_link(topic)
+                    link = "OK" if link_ok else "NO"
+                    subs = 1 if link_ok else 0
+                    if not link_ok:
+                        data = "IDLE"
+                    elif pubs > 0:
+                        data = "ACTIVE"
+                    else:
+                        data = "STALE"
+
+            rows.append(
+                {
+                    "robot": self._topic_group(topic, robot_names),
+                    "topic": topic,
+                    "role": role_label,
+                    "topic_kind": topic_kind,
+                    "link": link,
+                    "data": data,
+                    "camera_profile": camera_topic_profiles.get(topic, {}),
+                    "pubs": pubs,
+                    "subs": subs,
+                }
+            )
+
+        rows.sort(
+            key=lambda row: (
+                0 if row.get("topic_kind") == "core" else 1,
+                row.get("robot") or "",
+                row.get("topic") or "",
+            )
+        )
+        return rows
 
     def register_robot(
         self,
@@ -444,6 +589,9 @@ class RobotRegistryClient:
                 try:
                     check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
                     if check_pkg.returncode == 0:
+                        bridge_prefix = check_pkg.stdout.decode().strip()
+                        if bridge_prefix:
+                            cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
                         self.bridge_process = subprocess.Popen(
                             ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -471,6 +619,7 @@ class RobotRegistryClient:
             # 2. Build configuration dict
             config = self._build_robot_config_dict(robot, dataviz)
             config_json = json.dumps(config)
+            camera_topic_profiles = self._extract_camera_topic_profiles(config)
             
             robot_topics = self._collect_topics(dataviz)
             topic_roles = self._build_topic_roles(robot_topics)
@@ -565,51 +714,14 @@ class RobotRegistryClient:
                     
                     # Update Topic Stats (every ~1s)
                     if (time.time() - last_stats_update) >= 1.0:
-                        rows = []
-                        for topic in monitored_topics:
-                            role = topic_roles.get(topic, "backend_sub")
-                            if role == "sdk_pub":
-                                role_label = "sdk->bridge"
-                                link_ok = self._has_backend_subscriber(topic)
-                                pubs = 1 if self._has_local_publisher(topic) else 0
-                                subs = 1 if link_ok else 0
-                                link = "OK" if link_ok else "NO"
-                                data = "ACTIVE" if pubs > 0 and link_ok else ("IDLE" if pubs > 0 else "")
-                            elif role == "sdk_sub":
-                                role_label = "bridge->sdk"
-                                link_ok = self._has_backend_publisher(topic)
-                                pubs = 1 if link_ok else 0
-                                subs = 1 if self._has_local_subscriber(topic) else 0
-                                link = "OK" if link_ok else "NO"
-                                data = "ACTIVE" if link_ok else ("IDLE" if subs > 0 else "")
-                            else:
-                                role_label = "data->bridge"
-                                link_ok = self._has_backend_subscriber(topic)
-                                pubs, _ = self._get_topic_counts(topic)
-                                subs = 1 if link_ok else 0
-                                link = "OK" if link_ok else "NO"
-                                if link_ok and pubs > 0:
-                                    data = "ACTIVE"
-                                elif link_ok and pubs == 0:
-                                    data = "STALE"
-                                else:
-                                    data = "IDLE"
-
-                            if not is_connected:
-                                link = "NO"
-                                data = "IDLE"
-
-                            rows.append({
-                                "robot": self._topic_group(topic, robot_names),
-                                "topic": topic,
-                                "role": role_label,
-                                "link": link,
-                                "data": data,
-                                "pubs": pubs,
-                                "subs": subs,
-                            })
-
-                        rows.sort(key=lambda r: (r.get("robot") or "", r.get("topic") or ""))
+                        rows = self._build_dashboard_topic_rows(
+                            monitored_topics=monitored_topics,
+                            topic_roles=topic_roles,
+                            robot_names=robot_names,
+                            is_connected=is_connected,
+                            registration_done=registration_success,
+                            camera_topic_profiles=camera_topic_profiles,
+                        )
                         dashboard.update_topics(rows)
                         last_stats_update = time.time()
 
@@ -788,6 +900,9 @@ class RobotRegistryClient:
                 try:
                     check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
                     if check_pkg.returncode == 0:
+                        bridge_prefix = check_pkg.stdout.decode().strip()
+                        if bridge_prefix:
+                            cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
                         self.bridge_process = subprocess.Popen(
                             ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -815,12 +930,14 @@ class RobotRegistryClient:
             entry_by_name = {}
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             robot_topics = []
+            camera_topic_profiles = {}
             for robot, dataviz in zip(robots, datavizs):
                 config = self._build_robot_config_dict(robot, dataviz)
                 msg = String()
                 msg.data = json.dumps(config)
                 entries.append((robot, dataviz, msg))
                 entry_by_name[robot.name] = (robot, dataviz, msg)
+                camera_topic_profiles.update(self._extract_camera_topic_profiles(config))
                 for topic in self._collect_topics(dataviz):
                     if topic and topic not in robot_topics:
                         robot_topics.append(topic)
@@ -892,7 +1009,7 @@ class RobotRegistryClient:
             def register_all(dashboard=None, force: bool = False):
                 for robot, dataviz, msg in entries:
                     state = robot_states.get(robot.name, "pending")
-                    if not force and state in ("registered", "queued"):
+                    if not force and state == "registered":
                         continue
                     if dashboard is not None:
                         dashboard.update_status(f"Registering {robot.name}...")
@@ -905,51 +1022,14 @@ class RobotRegistryClient:
             def update_dashboard_topics(dashboard, is_connected: bool, registration_done: bool):
                 if dashboard is None:
                     return
-                rows = []
-                for topic in monitored_topics:
-                    role = topic_roles.get(topic, "backend_sub")
-                    if role == "sdk_pub":
-                        role_label = "sdk->bridge"
-                        link_ok = self._has_backend_subscriber(topic)
-                        pubs = 1 if self._has_local_publisher(topic) else 0
-                        subs = 1 if link_ok else 0
-                        link = "OK" if link_ok else "NO"
-                        data = "ACTIVE" if pubs > 0 and link_ok else ("IDLE" if pubs > 0 else "")
-                    elif role == "sdk_sub":
-                        role_label = "bridge->sdk"
-                        link_ok = self._has_backend_publisher(topic)
-                        pubs = 1 if link_ok else 0
-                        subs = 1 if self._has_local_subscriber(topic) else 0
-                        link = "OK" if link_ok else "NO"
-                        data = "ACTIVE" if link_ok else ("IDLE" if subs > 0 else "")
-                    else:
-                        role_label = "data->bridge"
-                        link_ok = self._has_backend_subscriber(topic)
-                        pubs, _ = self._get_topic_counts(topic)
-                        subs = 1 if link_ok else 0
-                        link = "OK" if link_ok else "NO"
-                        if link_ok and pubs > 0:
-                            data = "ACTIVE"
-                        elif link_ok and pubs == 0:
-                            data = "STALE"
-                        else:
-                            data = "IDLE"
-
-                    if not is_connected:
-                        link = "NO"
-                        data = "IDLE"
-
-                    rows.append({
-                        "robot": self._topic_group(topic, robot_names),
-                        "topic": topic,
-                        "role": role_label,
-                        "link": link,
-                        "data": data,
-                        "pubs": pubs,
-                        "subs": subs,
-                    })
-
-                rows.sort(key=lambda r: (r.get("robot") or "", r.get("topic") or ""))
+                rows = self._build_dashboard_topic_rows(
+                    monitored_topics=monitored_topics,
+                    topic_roles=topic_roles,
+                    robot_names=robot_names,
+                    is_connected=is_connected,
+                    registration_done=registration_done,
+                    camera_topic_profiles=camera_topic_profiles,
+                )
                 dashboard.update_topics(rows)
 
             if not show_dashboard:
@@ -1072,18 +1152,21 @@ class RobotRegistryClient:
                                 dashboard.update_status("")
                             dashboard.tick()
                             continue
-                        if any_queued and not any_pending:
+                        if any_queued:
                             dashboard.update_registration("Queued")
-                            dashboard.update_status(queued_status)
-                            dashboard.tick()
-                            continue
-                        if time.time() - last_register_attempt < 1.0:
+                            dashboard.update_status(queued_status or "Waiting for Workspace")
+                            retry_interval = 2.0
+                        else:
+                            retry_interval = 1.0
+
+                        if time.time() - last_register_attempt < retry_interval:
                             dashboard.tick()
                             continue
                         last_register_attempt = time.time()
 
-                        dashboard.update_registration("Registering")
-                        dashboard.update_status("Registering robots...")
+                        if not any_queued:
+                            dashboard.update_registration("Registering")
+                            dashboard.update_status("Registering robots...")
                         ok, result = register_all(dashboard)
                         if not ok:
                             if keep_alive:
@@ -1215,6 +1298,14 @@ class RobotRegistryClient:
             except (TypeError, ValueError):
                 return float(default)
 
+        def _coerce_int(value, default):
+            if value is None:
+                return int(default)
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return int(default)
+
         def _coerce_vec3(value, default_xyz):
             x_default, y_default, z_default = default_xyz
             if isinstance(value, dict):
@@ -1235,11 +1326,88 @@ class RobotRegistryClient:
 
         def _build_camera_config(sensor):
             metadata = sensor.metadata or {}
+            def _normalize_transport(value, fallback):
+                normalized = str(value).strip().lower() if value is not None else ""
+                if normalized in ("ros", "webrtc"):
+                    return normalized
+                return fallback
+
+            legacy_streaming_type = _normalize_transport(
+                metadata.get("streaming_type"),
+                "",
+            )
+            if not legacy_streaming_type:
+                legacy_streaming_type = _normalize_transport(
+                    getattr(sensor, "streaming_type", ""),
+                    "ros",
+                )
+            if not legacy_streaming_type:
+                legacy_streaming_type = "ros"
+
+            minimap_streaming_type = _normalize_transport(
+                metadata.get("minimap_streaming_type"),
+                "",
+            )
+            if not minimap_streaming_type:
+                minimap_streaming_type = _normalize_transport(
+                    getattr(sensor, "minimap_streaming_type", ""),
+                    "",
+                )
+            if not minimap_streaming_type:
+                minimap_streaming_type = _normalize_transport(legacy_streaming_type, "ros")
+
+            teleop_streaming_type = _normalize_transport(
+                metadata.get("teleop_streaming_type"),
+                "",
+            )
+            if not teleop_streaming_type:
+                teleop_streaming_type = _normalize_transport(
+                    getattr(sensor, "teleop_streaming_type", ""),
+                    "",
+                )
+            if not teleop_streaming_type:
+                teleop_streaming_type = _normalize_transport(legacy_streaming_type, "webrtc")
+
+            startup_mode = str(
+                metadata.get("startup_mode", getattr(sensor, "startup_mode", "minimap"))
+            ).strip().lower()
+            if startup_mode not in ("minimap", "teleop"):
+                startup_mode = "minimap"
             return {
+                "streaming_type": legacy_streaming_type,
+                "minimap_streaming_type": minimap_streaming_type,
+                "teleop_streaming_type": teleop_streaming_type,
+                "startup_mode": startup_mode,
                 "image_type": str(metadata.get("image_type", "raw")).lower(),
                 "display_mode": str(metadata.get("display_mode", "projected")).lower(),
                 "use_tf": _coerce_bool(metadata.get("use_tf"), True),
                 "projection_target_frame": str(metadata.get("projection_target_frame", "")),
+                "webrtc_client_signal_topic": str(
+                    metadata.get("webrtc_client_signal_topic", "/horus/webrtc/client_signal")
+                ),
+                "webrtc_server_signal_topic": str(
+                    metadata.get("webrtc_server_signal_topic", "/horus/webrtc/server_signal")
+                ),
+                "webrtc_bitrate_kbps": _coerce_int(
+                    metadata.get("webrtc_bitrate_kbps"),
+                    2000,
+                ),
+                "webrtc_framerate": _coerce_int(
+                    metadata.get("webrtc_framerate"),
+                    getattr(sensor, "fps", 20),
+                ),
+                "webrtc_stun_server_url": str(
+                    metadata.get("webrtc_stun_server_url", "stun:stun.l.google.com:19302")
+                ),
+                "webrtc_turn_server_url": str(
+                    metadata.get("webrtc_turn_server_url", "")
+                ),
+                "webrtc_turn_username": str(
+                    metadata.get("webrtc_turn_username", "")
+                ),
+                "webrtc_turn_credential": str(
+                    metadata.get("webrtc_turn_credential", "")
+                ),
                 "image_scale": _coerce_float(metadata.get("image_scale"), 1.0),
                 "focal_length_scale": _coerce_float(metadata.get("focal_length_scale"), 0.5),
                 "view_position_offset": _coerce_vec3(

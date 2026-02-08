@@ -8,6 +8,8 @@ Usage:
   python3 sdk_registration_demo.py
   python3 sdk_registration_demo.py --robot-count 4
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
+  python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
+  python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
   python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
 """
 
@@ -113,6 +115,72 @@ def build_parser():
         help="Camera transport type to register (default: compressed).",
     )
     parser.add_argument(
+        "--camera-streaming-type",
+        choices=["ros", "webrtc"],
+        default=None,
+        help="Legacy single camera transport profile alias (used as fallback).",
+    )
+    parser.add_argument(
+        "--camera-minimap-streaming-type",
+        choices=["ros", "webrtc"],
+        default=None,
+        help="Camera transport profile for MiniMap mode (default: ros).",
+    )
+    parser.add_argument(
+        "--camera-teleop-streaming-type",
+        choices=["ros", "webrtc"],
+        default=None,
+        help="Camera transport profile for Teleop mode (default: webrtc).",
+    )
+    parser.add_argument(
+        "--camera-startup-mode",
+        choices=["minimap", "teleop"],
+        default="minimap",
+        help="Preferred startup mode metadata (MR currently forces minimap).",
+    )
+    parser.add_argument(
+        "--webrtc-client-signal-topic",
+        default="/horus/webrtc/client_signal",
+        help="ROS topic used by Unity client to send WebRTC signaling (default: /horus/webrtc/client_signal).",
+    )
+    parser.add_argument(
+        "--webrtc-server-signal-topic",
+        default="/horus/webrtc/server_signal",
+        help="ROS topic used by bridge to send WebRTC signaling back to Unity (default: /horus/webrtc/server_signal).",
+    )
+    parser.add_argument(
+        "--webrtc-bitrate-kbps",
+        type=int,
+        default=2000,
+        help="Requested WebRTC video bitrate in kbps (default: 2000).",
+    )
+    parser.add_argument(
+        "--webrtc-framerate",
+        type=int,
+        default=20,
+        help="Requested WebRTC stream framerate in fps (default: 20).",
+    )
+    parser.add_argument(
+        "--webrtc-stun-server-url",
+        default="stun:stun.l.google.com:19302",
+        help="STUN server URL for Unity WebRTC client (default: stun:stun.l.google.com:19302).",
+    )
+    parser.add_argument(
+        "--webrtc-turn-server-url",
+        default="",
+        help="Optional TURN server URL for Unity WebRTC client, e.g. turn:127.0.0.1:3478?transport=tcp.",
+    )
+    parser.add_argument(
+        "--webrtc-turn-username",
+        default="",
+        help="TURN username (optional).",
+    )
+    parser.add_argument(
+        "--webrtc-turn-credential",
+        default="",
+        help="TURN credential/password (optional).",
+    )
+    parser.add_argument(
         "--vary-camera-resolution",
         action="store_true",
         default=True,
@@ -149,6 +217,21 @@ def main():
     camera_resolution_list = parse_resolution_list(args.camera_resolutions)
     if not camera_resolution_list:
         camera_resolution_list = [(160, 90)]
+    legacy_streaming_choice = (args.camera_streaming_type or "").strip().lower()
+    minimap_streaming_choice = (
+        args.camera_minimap_streaming_type
+        or legacy_streaming_choice
+        or "ros"
+    )
+    teleop_streaming_choice = (
+        args.camera_teleop_streaming_type
+        or legacy_streaming_choice
+        or "webrtc"
+    )
+    startup_mode_choice = args.camera_startup_mode.strip().lower()
+    if startup_mode_choice not in ("minimap", "teleop"):
+        startup_mode_choice = "minimap"
+    legacy_payload_streaming_type = legacy_streaming_choice or minimap_streaming_choice
 
     cli.print_step("Defining Robot Configuration...")
     robots = []
@@ -189,10 +272,26 @@ def main():
                 resolution=(width_px, height_px),
                 fps=6,
                 encoding=encoding,
+                streaming_type=legacy_payload_streaming_type,
+                minimap_streaming_type=minimap_streaming_choice,
+                teleop_streaming_type=teleop_streaming_choice,
+                startup_mode=startup_mode_choice,
             )
             camera.add_metadata("image_type", image_type)
+            camera.add_metadata("streaming_type", legacy_payload_streaming_type)
+            camera.add_metadata("minimap_streaming_type", minimap_streaming_choice)
+            camera.add_metadata("teleop_streaming_type", teleop_streaming_choice)
+            camera.add_metadata("startup_mode", startup_mode_choice)
             camera.add_metadata("display_mode", "projected")
             camera.add_metadata("use_tf", True)
+            camera.add_metadata("webrtc_client_signal_topic", args.webrtc_client_signal_topic)
+            camera.add_metadata("webrtc_server_signal_topic", args.webrtc_server_signal_topic)
+            camera.add_metadata("webrtc_bitrate_kbps", max(100, args.webrtc_bitrate_kbps))
+            camera.add_metadata("webrtc_framerate", max(1, args.webrtc_framerate))
+            camera.add_metadata("webrtc_stun_server_url", args.webrtc_stun_server_url)
+            camera.add_metadata("webrtc_turn_server_url", args.webrtc_turn_server_url)
+            camera.add_metadata("webrtc_turn_username", args.webrtc_turn_username)
+            camera.add_metadata("webrtc_turn_credential", args.webrtc_turn_credential)
             camera.add_metadata("image_scale", max(0.05, args.camera_image_scale))
             camera.add_metadata("focal_length_scale", max(0.05, args.camera_distance_scale))
             camera.add_metadata("view_position_offset", [0.0, 0.0, 0.0])
