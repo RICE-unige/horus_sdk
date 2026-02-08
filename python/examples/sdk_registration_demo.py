@@ -9,6 +9,7 @@ Usage:
   python3 sdk_registration_demo.py --robot-count 4
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
   python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
+  python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
   python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
 """
 
@@ -116,8 +117,26 @@ def build_parser():
     parser.add_argument(
         "--camera-streaming-type",
         choices=["ros", "webrtc"],
-        default="ros",
-        help="Camera streaming backend for MR visualization (default: ros).",
+        default=None,
+        help="Legacy single camera transport profile alias (used as fallback).",
+    )
+    parser.add_argument(
+        "--camera-minimap-streaming-type",
+        choices=["ros", "webrtc"],
+        default=None,
+        help="Camera transport profile for MiniMap mode (default: ros).",
+    )
+    parser.add_argument(
+        "--camera-teleop-streaming-type",
+        choices=["ros", "webrtc"],
+        default=None,
+        help="Camera transport profile for Teleop mode (default: webrtc).",
+    )
+    parser.add_argument(
+        "--camera-startup-mode",
+        choices=["minimap", "teleop"],
+        default="minimap",
+        help="Preferred startup mode metadata (MR currently forces minimap).",
     )
     parser.add_argument(
         "--webrtc-client-signal-topic",
@@ -175,7 +194,7 @@ def build_parser():
     )
     parser.add_argument(
         "--camera-resolutions",
-        default="320x180,426x240,640x360,848x480",
+        default="160x90,192x108,224x126,256x144,320x180,426x240",
         help="Comma-separated WxH list used when varying camera resolution.",
     )
     return parser
@@ -197,7 +216,22 @@ def main():
     robot_names = resolve_robot_names(args)
     camera_resolution_list = parse_resolution_list(args.camera_resolutions)
     if not camera_resolution_list:
-        camera_resolution_list = [(320, 180)]
+        camera_resolution_list = [(160, 90)]
+    legacy_streaming_choice = (args.camera_streaming_type or "").strip().lower()
+    minimap_streaming_choice = (
+        args.camera_minimap_streaming_type
+        or legacy_streaming_choice
+        or "ros"
+    )
+    teleop_streaming_choice = (
+        args.camera_teleop_streaming_type
+        or legacy_streaming_choice
+        or "webrtc"
+    )
+    startup_mode_choice = args.camera_startup_mode.strip().lower()
+    if startup_mode_choice not in ("minimap", "teleop"):
+        startup_mode_choice = "minimap"
+    legacy_payload_streaming_type = legacy_streaming_choice or minimap_streaming_choice
 
     cli.print_step("Defining Robot Configuration...")
     robots = []
@@ -238,10 +272,16 @@ def main():
                 resolution=(width_px, height_px),
                 fps=6,
                 encoding=encoding,
-                streaming_type=args.camera_streaming_type,
+                streaming_type=legacy_payload_streaming_type,
+                minimap_streaming_type=minimap_streaming_choice,
+                teleop_streaming_type=teleop_streaming_choice,
+                startup_mode=startup_mode_choice,
             )
             camera.add_metadata("image_type", image_type)
-            camera.add_metadata("streaming_type", args.camera_streaming_type)
+            camera.add_metadata("streaming_type", legacy_payload_streaming_type)
+            camera.add_metadata("minimap_streaming_type", minimap_streaming_choice)
+            camera.add_metadata("teleop_streaming_type", teleop_streaming_choice)
+            camera.add_metadata("startup_mode", startup_mode_choice)
             camera.add_metadata("display_mode", "projected")
             camera.add_metadata("use_tf", True)
             camera.add_metadata("webrtc_client_signal_topic", args.webrtc_client_signal_topic)
