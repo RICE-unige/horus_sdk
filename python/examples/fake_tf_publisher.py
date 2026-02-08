@@ -792,13 +792,13 @@ def build_parser():
     parser.add_argument(
         "--image-width",
         type=int,
-        default=160,
+        default=320,
         help="Fake image width in pixels.",
     )
     parser.add_argument(
         "--image-height",
         type=int,
-        default=90,
+        default=180,
         help="Fake image height in pixels.",
     )
     parser.add_argument(
@@ -815,7 +815,7 @@ def build_parser():
     )
     parser.add_argument(
         "--image-resolutions",
-        default="160x90,192x108,224x126,256x144,320x180,426x240",
+        default="320x180,426x240,640x360,848x480",
         help="Comma-separated WxH list used when varying resolution.",
     )
     parser.add_argument(

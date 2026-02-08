@@ -175,7 +175,7 @@ def build_parser():
     )
     parser.add_argument(
         "--camera-resolutions",
-        default="160x90,192x108,224x126,256x144,320x180,426x240",
+        default="320x180,426x240,640x360,848x480",
         help="Comma-separated WxH list used when varying camera resolution.",
     )
     return parser
@@ -197,7 +197,7 @@ def main():
     robot_names = resolve_robot_names(args)
     camera_resolution_list = parse_resolution_list(args.camera_resolutions)
     if not camera_resolution_list:
-        camera_resolution_list = [(160, 90)]
+        camera_resolution_list = [(320, 180)]
 
     cli.print_step("Defining Robot Configuration...")
     robots = []
