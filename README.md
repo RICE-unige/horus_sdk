@@ -1,4 +1,4 @@
-| **HORUS SDK** | **Holistic Operational Reality for Unified Systems** |
+| **HORUS SDK** | <h1> Holistic Operational Reality for Unified Systems </h1> |
 |---|---|
 | SDK Layer | Registration, orchestration, and observability |
 
