@@ -2,6 +2,19 @@
 |---|---|
 | SDK Layer | Registration, orchestration, and observability |
 
+<div align="center">
+
+```text
+██╗  ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗
+██║  ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝
+███████║██║   ██║██████╔╝██║   ██║███████╗
+██╔══██║██║   ██║██╔══██╗██║   ██║╚════██║
+██║  ██║╚██████╔╝██║  ██║╚██████╔╝███████║
+╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+```
+
+</div>
+
 [![CI](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
 [![Release](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
