@@ -249,6 +249,20 @@ def main():
                 height=height,
             ),
         )
+        robot.add_metadata(
+            "robot_manager_config",
+            {
+                "enabled": True,
+                "prefab_asset_path": "Assets/Prefabs/UI/RobotManager.prefab",
+                "prefab_resource_path": "",
+                "sections": {
+                    "status": True,
+                    "data_viz": True,
+                    "teleop": True,
+                    "tasks": True,
+                },
+            },
+        )
         if args.with_camera:
             image_type = args.camera_image_type.strip().lower()
             if image_type == "compressed":
