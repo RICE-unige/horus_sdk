@@ -1454,6 +1454,32 @@ class RobotRegistryClient:
                 payload["camera_config"] = _build_camera_config(sensor)
             sensor_payloads.append(payload)
 
+        def _build_robot_manager_config():
+            robot_metadata = getattr(robot, "metadata", {}) or {}
+            manager_metadata = robot_metadata.get("robot_manager_config")
+            if not isinstance(manager_metadata, dict):
+                manager_metadata = {}
+
+            sections_metadata = manager_metadata.get("sections")
+            if not isinstance(sections_metadata, dict):
+                sections_metadata = {}
+
+            return {
+                "enabled": _coerce_bool(manager_metadata.get("enabled"), True),
+                # Editor fallback path keeps setup friction low while the runtime path
+                # can be provided explicitly when using Resources/Addressables.
+                "prefab_asset_path": str(
+                    manager_metadata.get("prefab_asset_path", "Assets/Prefabs/UI/RobotManager.prefab")
+                ),
+                "prefab_resource_path": str(manager_metadata.get("prefab_resource_path", "")),
+                "sections": {
+                    "status": _coerce_bool(sections_metadata.get("status"), True),
+                    "data_viz": _coerce_bool(sections_metadata.get("data_viz"), True),
+                    "teleop": _coerce_bool(sections_metadata.get("teleop"), True),
+                    "tasks": _coerce_bool(sections_metadata.get("tasks"), True),
+                },
+            }
+
         config = {
             "action": "register",
             "robot_name": robot.name,
@@ -1469,6 +1495,7 @@ class RobotRegistryClient:
             "control": {
                 "drive_topic": f"/{robot.name}/cmd_vel" # Default assumption
             },
+            "robot_manager_config": _build_robot_manager_config(),
             "timestamp": time.time()
         }
 
