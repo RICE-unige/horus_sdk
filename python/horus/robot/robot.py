@@ -4,6 +4,8 @@ Robot object system for HORUS SDK
 
 from dataclasses import dataclass, field
 from enum import Enum
+import importlib
+import inspect
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
@@ -252,6 +254,7 @@ class Robot:
         dataviz: Optional["DataViz"] = None,
         keep_alive: bool = True,
         show_dashboard: bool = True,
+        workspace_scale: Optional[float] = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Register this robot with the HORUS backend system
@@ -260,23 +263,24 @@ class Robot:
             dataviz: DataViz instance (creates one if not provided)
             keep_alive: If True, keep the connection dashboard running
             show_dashboard: If False, skip the dashboard UI during registration
+            workspace_scale: Optional global workspace position scale.
 
         Returns:
             Tuple of (success, registration_data)
         """
-        from ..bridge.robot_registry import get_robot_registry_client
-
         # Create DataViz if not provided
         if dataviz is None:
             dataviz = self.create_dataviz()
 
         # Create registry client and register
-        registry = get_robot_registry_client()
-        success, result = registry.register_robot(
+        registry = _get_registry_client()
+        success, result = _invoke_register_robot(
+            registry,
             self,
             dataviz,
             keep_alive=keep_alive,
             show_dashboard=show_dashboard,
+            workspace_scale=workspace_scale,
         )
 
         if success:
@@ -294,6 +298,15 @@ class Robot:
             self.add_metadata("horus_topics", topics)
 
             if topics:
+                try:
+                    from ..utils.topic_status import get_topic_status_board
+
+                    board = get_topic_status_board()
+                    for topic in topics:
+                        board.on_subscribe(topic)
+                except Exception:
+                    pass
+
                 # Hand topics to the ROS graph monitor so it can reconcile real state
                 try:
                     from ..utils.topic_monitor import get_topic_monitor
@@ -312,8 +325,6 @@ class Robot:
         Returns:
             Tuple of (success, result_data)
         """
-        from ..bridge.robot_registry import get_robot_registry_client
-
         robot_id = self.get_metadata("horus_robot_id")
         if not robot_id:
             return False, {"error": "Robot not registered with HORUS"}
@@ -321,7 +332,7 @@ class Robot:
         topics = self.get_metadata("horus_topics") or []
 
         # Create registry client and unregister
-        registry = get_robot_registry_client()
+        registry = _get_registry_client()
         success, result = registry.unregister_robot(robot_id)
 
         if success:
@@ -366,14 +377,93 @@ class Robot:
         return result if isinstance(result, str) else None
 
 
-def register_robots(robots, keep_alive: bool = True, show_dashboard: bool = True, timeout_sec: float = 10.0):
+def register_robots(
+    robots,
+    keep_alive: bool = True,
+    show_dashboard: bool = True,
+    timeout_sec: float = 10.0,
+    workspace_scale: Optional[float] = None,
+    datavizs=None,
+):
     """Register multiple robots using a shared registry session."""
-    from ..bridge.robot_registry import get_robot_registry_client
-
-    registry = get_robot_registry_client()
-    return registry.register_robots(
+    registry = _get_registry_client()
+    return _invoke_register_robots(
+        registry,
         robots,
+        datavizs=datavizs,
         timeout_sec=timeout_sec,
         keep_alive=keep_alive,
         show_dashboard=show_dashboard,
+        workspace_scale=workspace_scale,
     )
+
+
+def _get_registry_client():
+    robot_registry_module = importlib.import_module("horus.bridge.robot_registry")
+
+    get_client = getattr(robot_registry_module, "get_robot_registry_client", None)
+    if callable(get_client):
+        return get_client()
+
+    registry_cls = getattr(robot_registry_module, "RobotRegistryClient", None)
+    if registry_cls is None:
+        raise ImportError("No RobotRegistryClient available in horus.bridge.robot_registry")
+
+    return registry_cls()
+
+
+def _invoke_register_robot(
+    registry,
+    robot: "Robot",
+    dataviz: "DataViz",
+    keep_alive: bool,
+    show_dashboard: bool,
+    workspace_scale: Optional[float],
+):
+    method = registry.register_robot
+    kwargs: Dict[str, Any] = {}
+
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    if "keep_alive" in parameters:
+        kwargs["keep_alive"] = keep_alive
+    if "show_dashboard" in parameters:
+        kwargs["show_dashboard"] = show_dashboard
+    if workspace_scale is not None and "workspace_scale" in parameters:
+        kwargs["workspace_scale"] = workspace_scale
+
+    return method(robot, dataviz, **kwargs)
+
+
+def _invoke_register_robots(
+    registry,
+    robots,
+    datavizs,
+    timeout_sec: float,
+    keep_alive: bool,
+    show_dashboard: bool,
+    workspace_scale: Optional[float],
+):
+    method = registry.register_robots
+    kwargs: Dict[str, Any] = {}
+
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+
+    if datavizs is not None and "datavizs" in parameters:
+        kwargs["datavizs"] = datavizs
+    if "timeout_sec" in parameters:
+        kwargs["timeout_sec"] = timeout_sec
+    if "keep_alive" in parameters:
+        kwargs["keep_alive"] = keep_alive
+    if "show_dashboard" in parameters:
+        kwargs["show_dashboard"] = show_dashboard
+    if workspace_scale is not None and "workspace_scale" in parameters:
+        kwargs["workspace_scale"] = workspace_scale
+
+    return method(robots, **kwargs)

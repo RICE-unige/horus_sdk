@@ -26,6 +26,7 @@ import socket
 import atexit
 import signal
 import os
+import math
 from typing import Any, Dict, Tuple, Optional
 
 try:
@@ -455,6 +456,152 @@ class RobotRegistryClient:
             }
         return profiles
 
+    def _payload_coerce_bool(self, value: Any, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("1", "true", "yes", "on"):
+                return True
+            if normalized in ("0", "false", "no", "off"):
+                return False
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return default
+
+    def _payload_coerce_float(self, value: Any, default: float) -> float:
+        if value is None:
+            return float(default)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _payload_coerce_vec3(self, value: Any, default_xyz: Tuple[float, float, float]) -> Dict[str, float]:
+        x_default, y_default, z_default = default_xyz
+        if isinstance(value, dict):
+            x = self._payload_coerce_float(value.get("x"), x_default)
+            y = self._payload_coerce_float(value.get("y"), y_default)
+            z = self._payload_coerce_float(value.get("z"), z_default)
+            return {"x": x, "y": y, "z": z}
+        if isinstance(value, (list, tuple)) and len(value) == 3:
+            x = self._payload_coerce_float(value[0], x_default)
+            y = self._payload_coerce_float(value[1], y_default)
+            z = self._payload_coerce_float(value[2], z_default)
+            return {"x": x, "y": y, "z": z}
+        return {
+            "x": float(x_default),
+            "y": float(y_default),
+            "z": float(z_default),
+        }
+
+    def _serialize_visualization_payload(
+        self,
+        visualization: Any,
+        scope_override: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if visualization is None:
+            return None
+
+        data_source = getattr(visualization, "data_source", None)
+        if data_source is None:
+            return None
+
+        topic = str(getattr(data_source, "topic", "") or "").strip()
+        viz_type = getattr(visualization, "viz_type", None)
+        if not topic or viz_type is None:
+            return None
+
+        viz_type_value = str(getattr(viz_type, "value", viz_type)).strip()
+        if not viz_type_value:
+            return None
+
+        frame_id = str(getattr(data_source, "frame_id", "") or "").strip()
+        is_robot_specific = bool(getattr(visualization, "is_robot_specific", lambda: False)())
+        scope = scope_override or ("robot" if is_robot_specific else "global")
+
+        payload: Dict[str, Any] = {
+            "type": viz_type_value,
+            "topic": topic,
+            "scope": scope,
+            "enabled": bool(getattr(visualization, "enabled", True)),
+        }
+        if frame_id:
+            payload["frame"] = frame_id
+
+        render_options = getattr(visualization, "render_options", {}) or {}
+        color = render_options.get("color")
+        if color not in (None, ""):
+            payload["color"] = str(color)
+
+        if viz_type_value == "occupancy_grid":
+            occupancy_payload: Dict[str, Any] = {}
+            if "show_unknown_space" in render_options:
+                occupancy_payload["show_unknown_space"] = self._payload_coerce_bool(
+                    render_options.get("show_unknown_space"),
+                    True,
+                )
+            if "position_scale" in render_options:
+                occupancy_payload["position_scale"] = self._payload_coerce_float(
+                    render_options.get("position_scale"),
+                    1.0,
+                )
+            if "position_offset" in render_options:
+                occupancy_payload["position_offset"] = self._payload_coerce_vec3(
+                    render_options.get("position_offset"),
+                    (0.0, 0.0, 0.0),
+                )
+            if "rotation_offset_euler" in render_options:
+                occupancy_payload["rotation_offset_euler"] = self._payload_coerce_vec3(
+                    render_options.get("rotation_offset_euler"),
+                    (0.0, 0.0, 0.0),
+                )
+            if occupancy_payload:
+                payload["occupancy"] = occupancy_payload
+
+        return payload
+
+    def _build_global_visualizations_payload(self, datavizs: list) -> list:
+        deduped: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        ordered_keys = []
+
+        for dataviz in datavizs:
+            if dataviz is None:
+                continue
+            try:
+                visualizations = dataviz.get_enabled_visualizations()
+            except Exception:
+                visualizations = []
+
+            for visualization in visualizations:
+                if visualization is None:
+                    continue
+                try:
+                    if visualization.is_robot_specific():
+                        continue
+                except Exception:
+                    continue
+
+                payload = self._serialize_visualization_payload(
+                    visualization,
+                    scope_override="global",
+                )
+                if not payload:
+                    continue
+
+                key = (
+                    str(payload.get("type", "")),
+                    str(payload.get("topic", "")),
+                    str(payload.get("frame", "")),
+                )
+                if key in deduped:
+                    continue
+
+                deduped[key] = payload
+                ordered_keys.append(key)
+
+        return [deduped[key] for key in ordered_keys]
+
     def _build_dashboard_topic_rows(
         self,
         monitored_topics,
@@ -544,6 +691,7 @@ class RobotRegistryClient:
         timeout_sec: float = 10.0,
         keep_alive: bool = False,
         show_dashboard: bool = True,
+        workspace_scale: Optional[float] = None,
     ) -> Tuple[bool, Dict]:
         """
         Register robot with HORUS backend using internal CLI and automatic bridge management.
@@ -617,7 +765,13 @@ class RobotRegistryClient:
             bridge_state = "Active" if bridge_running else "Error"
             
             # 2. Build configuration dict
-            config = self._build_robot_config_dict(robot, dataviz)
+            global_visualizations = self._build_global_visualizations_payload([dataviz])
+            config = self._build_robot_config_dict(
+                robot,
+                dataviz,
+                global_visualizations=global_visualizations,
+                workspace_scale=workspace_scale,
+            )
             config_json = json.dumps(config)
             camera_topic_profiles = self._extract_camera_topic_profiles(config)
             
@@ -815,7 +969,11 @@ class RobotRegistryClient:
                                 dashboard.update_registration("Re-registering")
                                 dashboard.update_status(f"Re-registering{ip_str}...")
                                 # Re-publish fresh config
-                                config = self._build_robot_config_dict(robot, dataviz)
+                                config = self._build_robot_config_dict(
+                                    robot,
+                                    dataviz,
+                                    workspace_scale=workspace_scale,
+                                )
                                 msg = String()
                                 msg.data = json.dumps(config)
                                 self.publisher.publish(msg)
@@ -862,6 +1020,7 @@ class RobotRegistryClient:
         timeout_sec: float = 10.0,
         keep_alive: bool = True,
         show_dashboard: bool = True,
+        workspace_scale: Optional[float] = None,
     ) -> Tuple[bool, Dict]:
         """Register multiple robots with a single session."""
         from horus.utils import cli
@@ -931,8 +1090,14 @@ class RobotRegistryClient:
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             robot_topics = []
             camera_topic_profiles = {}
+            global_visualizations = self._build_global_visualizations_payload(datavizs)
             for robot, dataviz in zip(robots, datavizs):
-                config = self._build_robot_config_dict(robot, dataviz)
+                config = self._build_robot_config_dict(
+                    robot,
+                    dataviz,
+                    global_visualizations=global_visualizations,
+                    workspace_scale=workspace_scale,
+                )
                 msg = String()
                 msg.data = json.dumps(config)
                 entries.append((robot, dataviz, msg))
@@ -1267,7 +1432,13 @@ class RobotRegistryClient:
         # Implementation simplified for now.
         return True, {"message": "Unregistered (Local cleanup only)"}
 
-    def _build_robot_config_dict(self, robot, dataviz) -> Dict:
+    def _build_robot_config_dict(
+        self,
+        robot,
+        dataviz,
+        global_visualizations: Optional[list] = None,
+        workspace_scale: Optional[float] = None,
+    ) -> Dict:
         """Build simple JSON dictionary for robot config"""
         dimensions = None
         if getattr(robot, "dimensions", None):
@@ -1480,18 +1651,40 @@ class RobotRegistryClient:
                 },
             }
 
+        robot_visualizations = []
+        fallback_global_visualizations = []
+        for visualization in dataviz.visualizations:
+            payload = self._serialize_visualization_payload(visualization)
+            if not payload:
+                continue
+
+            if payload.get("scope") == "global":
+                fallback_global_visualizations.append(payload)
+                continue
+
+            robot_visualizations.append(payload)
+
+        if global_visualizations is None:
+            global_visualizations = []
+            seen_global = set()
+            for payload in fallback_global_visualizations:
+                key = (
+                    str(payload.get("type", "")),
+                    str(payload.get("topic", "")),
+                    str(payload.get("frame", "")),
+                )
+                if key in seen_global:
+                    continue
+                seen_global.add(key)
+                global_visualizations.append(payload)
+
         config = {
             "action": "register",
             "robot_name": robot.name,
             "robot_type": robot.get_type_str(),
             "sensors": sensor_payloads,
-            "visualizations": [
-                {
-                    "type": v.viz_type.value,
-                    "topic": v.data_source.topic,
-                    "color": v.render_options.get("color", "white")
-                } for v in dataviz.visualizations
-            ],
+            "visualizations": robot_visualizations,
+            "global_visualizations": global_visualizations,
             "control": {
                 "drive_topic": f"/{robot.name}/cmd_vel" # Default assumption
             },
@@ -1501,6 +1694,21 @@ class RobotRegistryClient:
 
         if dimensions is not None:
             config["dimensions"] = dimensions
+
+        normalized_workspace_scale = None
+        if workspace_scale is not None:
+            try:
+                candidate = float(workspace_scale)
+            except (TypeError, ValueError):
+                candidate = None
+
+            if candidate is not None and math.isfinite(candidate) and candidate > 0.0:
+                normalized_workspace_scale = candidate
+
+        if normalized_workspace_scale is not None:
+            config["workspace_config"] = {
+                "position_scale": normalized_workspace_scale,
+            }
 
         return config
 
