@@ -82,18 +82,18 @@ source install/setup.bash
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
 
-### 2) Start fake data (optional load generator)
+### 2) Start fake data (TF + camera + occupancy map)
 
 ```bash
 cd ~/horus_sdk
-python3 python/examples/fake_tf_publisher.py --robot-count 4 --with-camera
+python3 python/examples/fake_tf_publisher.py --robot-count 4 --with-camera --publish-occupancy-grid
 ```
 
 ### 3) Run SDK registration demo
 
 ```bash
 cd ~/horus_sdk
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera --with-occupancy-grid --workspace-scale 0.1
 ```
 
 ## Camera Registration Model
@@ -110,6 +110,14 @@ Typical policy:
 
 > [!TIP]
 > Keep legacy `streaming_type` populated for compatibility with older MR clients while using profile fields for new behavior.
+
+## Global Visualization and Workspace Config Model
+
+Registration payloads can now include:
+- `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid),
+- `workspace_config.position_scale` (global scale hint consumed by MR runtime).
+
+This enables 2D occupancy-map wiring without duplicating map config in each robot-scoped visualization block.
 
 ## Dashboard Semantics
 
@@ -144,10 +152,19 @@ python3 python/examples/fake_tf_publisher.py --robot-count 10 --with-camera
 python3 python/examples/sdk_registration_demo.py --robot-count 10 --with-camera
 ```
 
+### Occupancy-map integration test
+
+```bash
+python3 python/examples/fake_tf_publisher.py --robot-count 6 --with-camera --publish-occupancy-grid --occupancy-rate 1.0
+python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-camera --with-occupancy-grid --workspace-scale 0.1
+```
+
 ### Targeted tests
 
 ```bash
 pytest python/tests/test_camera_transport_profiles.py
+pytest python/tests/test_global_visualizations_payload.py
+pytest python/tests/test_workspace_scale_payload.py
 pytest python/tests
 ```
 
@@ -162,6 +179,7 @@ pytest python/tests
 Current Unity MR baseline relevant to SDK integration:
 - Workspace-gated registration is active and expected before full robot activation.
 - Camera runtime follows MiniMap/Teleop transport profiles (MiniMap-first startup policy).
+- Occupancy map is consumed from global visualization payload and remains hidden until workspace accept.
 - Registration-path batching/deduping exists on MR side to reduce workspace-accept stalls.
 
 > [!NOTE]
@@ -173,38 +191,35 @@ Current Unity MR baseline relevant to SDK integration:
 The MR roadmap introduces upcoming requirements that depend on SDK payload and orchestration maturity:
 - 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-lead teleop).
 - Expanded sensor visualization requirements (battery, velocity, LaserScan, PointCloud).
+- Session recording + after-action replay data contracts.
+- Resource-aware streaming policy signals (quality tiers, priority, stream caps).
+- Persistent mission objects (pins/annotations/evidence/task assignment).
+- Safety and semantic perception signals for teleop and supervision.
 - Multi-operator and copilot-oriented orchestration scenarios.
 
 SDK roadmap and examples should evolve to provide the metadata, presets, and validation scripts needed for these MR milestones.
 
 ## Roadmap
 
-- [ ] Robot Manager
-- [ ] Teleoperation
-- [ ] 2D Map
-- [ ] 3D Map
-- [ ] Tasking (2D)
-  - [ ] Go to Point
-  - [ ] Waypoint
-  - [ ] Path Drawing
-  - [ ] Go to Label
-  - [ ] Multi-Robot Go to Point
-  - [ ] Follow-Lead Teleop
-- [ ] Tasking (3D)
-  - [ ] Go to Point
-  - [ ] Waypoint
-  - [ ] Path Drawing
-  - [ ] Go to Label
-  - [ ] Multi-Robot Go to Point
-  - [ ] Follow-Lead Teleop
-- [ ] Sensor Visualization
-  - [ ] Battery
-  - [ ] Velocity
-  - [ ] LaserScan
-  - [ ] PointCloud
-- [ ] Gaussian Splatting Map
-- [ ] Copilot Operator
-- [ ] Multi-Operator
+> [!NOTE]
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features.
+
+| Track | Status | SDK Baseline | Next Milestone |
+|---|---|---|---|
+| Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
+| Teleoperation Contracts | :large_orange_diamond: In progress | MiniMap/Teleop transport profile fields are active in camera config payloads. | Add explicit teleop mode capability descriptors and handoff metadata. |
+| 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
+| 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
+| Tasking (2D/3D) | :white_circle: Planned | Generic task hooks exist; structured task catalogs are not finalized. | Publish typed task schema for Go to Point, Waypoint, Path Drawing, Go to Label, Multi-Robot Go to Point, and Follow-Lead Teleop. |
+| Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
+| After-Action Replay | :white_circle: Planned | - | Add replay manifest schema and deterministic timeline reconstruction inputs. |
+| Adaptive Streaming Policies | :white_circle: Planned | Static transport profiles exist, but no load-aware policy orchestration. | Add policy payload for per-robot FPS/resolution tiers, priority (teleop-first), transport fallback, and dynamic max-stream guardrails. |
+| Operator Safety Contracts | :white_circle: Planned | - | Add deadman/e-stop/geofence/risk-confirm metadata channels with policy defaults. |
+| Persistent Mission Objects | :white_circle: Planned | - | Add shared mission-object schema (pins, notes, attachments, assignees, lifecycle). |
+| Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
+| Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
+| Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
+| Copilot and Multi-Operator | :white_circle: Planned | Single-operator path is primary baseline. | Add operator identity/session ownership metadata and copilot action-scoping contracts. |
 
 ## 📖 Citation
 
