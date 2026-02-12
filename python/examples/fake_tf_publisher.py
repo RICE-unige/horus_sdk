@@ -12,6 +12,7 @@ try:
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import TransformStamped
+    from nav_msgs.msg import OccupancyGrid
     from sensor_msgs.msg import CompressedImage, Image
     from tf2_msgs.msg import TFMessage
 except Exception as exc:
@@ -105,6 +106,14 @@ class FakeTFPublisher(Node):
         jpeg_quality,
         vary_image_resolution,
         image_resolutions,
+        publish_occupancy_grid,
+        occupancy_topic,
+        occupancy_rate_hz,
+        occupancy_resolution,
+        occupancy_width,
+        occupancy_height,
+        occupancy_unknown_ratio,
+        occupancy_obstacle_count,
     ):
         super().__init__("horus_fake_tf_publisher")
         self.robot_names = robot_names
@@ -131,6 +140,14 @@ class FakeTFPublisher(Node):
         self.jpeg_quality = max(30, min(95, int(jpeg_quality)))
         self.vary_image_resolution = vary_image_resolution
         self.image_resolutions = image_resolutions or []
+        self.publish_occupancy_grid = publish_occupancy_grid
+        self.occupancy_topic = occupancy_topic
+        self.occupancy_rate_hz = max(occupancy_rate_hz, 0.0)
+        self.occupancy_resolution = max(occupancy_resolution, 0.01)
+        self.occupancy_width = max(occupancy_width, 32)
+        self.occupancy_height = max(occupancy_height, 32)
+        self.occupancy_unknown_ratio = max(0.0, min(0.4, occupancy_unknown_ratio))
+        self.occupancy_obstacle_count = max(0, occupancy_obstacle_count)
         self.start_time = time.time()
         self.last_update_time = self.start_time
         self.random = random.Random(seed if seed is not None else time.time())
@@ -154,6 +171,13 @@ class FakeTFPublisher(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.tf_static_pub = self.create_publisher(TFMessage, "/tf_static", static_qos)
+        self.occupancy_pub = None
+        self.occupancy_timer = None
+        self.occupancy_data = None
+        self._occupied_threshold = 50
+
+        if self.publish_occupancy_grid:
+            self.occupancy_data = self._build_fake_occupancy_data()
 
         self.robots = self._init_robots()
         self._initialize_robot_image_sizes()
@@ -168,6 +192,26 @@ class FakeTFPublisher(Node):
 
         if self.publish_static_frames:
             self._publish_static_frames()
+
+        if self.publish_occupancy_grid:
+            occupancy_qos = QoSProfile(
+                depth=1,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                reliability=ReliabilityPolicy.RELIABLE,
+            )
+            self.occupancy_pub = self.create_publisher(
+                OccupancyGrid,
+                self.occupancy_topic,
+                occupancy_qos,
+            )
+            self._publish_occupancy_grid()
+            if self.occupancy_rate_hz > 0.0:
+                self._occupancy_callback_group = ReentrantCallbackGroup()
+                self.occupancy_timer = self.create_timer(
+                    1.0 / self.occupancy_rate_hz,
+                    self._publish_occupancy_grid,
+                    callback_group=self._occupancy_callback_group,
+                )
 
         self.image_publishers = {}
         self.compressed_image_publishers = {}
@@ -234,6 +278,14 @@ class FakeTFPublisher(Node):
                 for name, size in self._robot_image_size.items()
             )
             self.get_logger().info(f"Per-robot camera resolution: {detail}")
+        if self.publish_occupancy_grid:
+            map_w_m = self.occupancy_width * self.occupancy_resolution
+            map_h_m = self.occupancy_height * self.occupancy_resolution
+            self.get_logger().info(
+                f"Publishing fake occupancy grid on {self.occupancy_topic} "
+                f"({self.occupancy_width}x{self.occupancy_height}, res={self.occupancy_resolution:.3f}m, "
+                f"size={map_w_m:.1f}m x {map_h_m:.1f}m, rate={self.occupancy_rate_hz:.2f}Hz)"
+            )
 
     def _initialize_robot_image_sizes(self):
         if self.vary_image_resolution and self.image_resolutions:
@@ -255,7 +307,10 @@ class FakeTFPublisher(Node):
                 attempts += 1
                 x = self.random.uniform(-self.area_size, self.area_size)
                 y = self.random.uniform(-self.area_size, self.area_size)
-                if all(self._distance_xy(x, y, r.x, r.y) >= self.min_distance for r in robots):
+                if (
+                    all(self._distance_xy(x, y, r.x, r.y) >= self.min_distance for r in robots)
+                    and not self._is_world_position_blocked(x, y)
+                ):
                     placed = True
                     angle = self.random.uniform(0.0, math.tau)
                     speed = self.max_speed * 0.5
@@ -269,7 +324,8 @@ class FakeTFPublisher(Node):
                 speed = self.max_speed * 0.5
                 vx = math.cos(angle) * speed
                 vy = math.sin(angle) * speed
-                robot = RobotState(name, 0.0, 0.0, vx, vy, angle)
+                fallback_x, fallback_y = self._nearest_free_world_position(0.0, 0.0)
+                robot = RobotState(name, fallback_x, fallback_y, vx, vy, angle)
                 robot.target_x, robot.target_y = self._sample_patrol_target(0.0, 0.0)
                 robots.append(robot)
 
@@ -280,12 +336,116 @@ class FakeTFPublisher(Node):
 
     def _sample_patrol_target(self, around_x, around_y):
         max_offset = self.area_size * 0.6
-        target_x = around_x + self.random.uniform(-max_offset, max_offset)
-        target_y = around_y + self.random.uniform(-max_offset, max_offset)
         clamp = self.area_size * 0.9
-        target_x = max(-clamp, min(clamp, target_x))
-        target_y = max(-clamp, min(clamp, target_y))
-        return target_x, target_y
+        for _ in range(25):
+            target_x = around_x + self.random.uniform(-max_offset, max_offset)
+            target_y = around_y + self.random.uniform(-max_offset, max_offset)
+            target_x = max(-clamp, min(clamp, target_x))
+            target_y = max(-clamp, min(clamp, target_y))
+            if not self._is_world_position_blocked(target_x, target_y):
+                return target_x, target_y
+        return self._nearest_free_world_position(around_x, around_y)
+
+    def _occupancy_cell_size_world(self):
+        scale = self.scale if abs(self.scale) > 1e-6 else 1.0
+        return self.occupancy_resolution * scale
+
+    def _occupancy_origin_world(self):
+        cell_size = self._occupancy_cell_size_world()
+        half_width_world = (self.occupancy_width * cell_size) * 0.5
+        half_height_world = (self.occupancy_height * cell_size) * 0.5
+        return -half_width_world, -half_height_world
+
+    def _world_to_grid(self, x, y):
+        if self.occupancy_data is None:
+            return None
+        scale = self.scale if abs(self.scale) > 1e-6 else 1.0
+        world_x = x * scale
+        world_y = y * scale
+        origin_x, origin_y = self._occupancy_origin_world()
+        cell_size = self._occupancy_cell_size_world()
+        gx = int(math.floor((world_x - origin_x) / cell_size))
+        gy = int(math.floor((world_y - origin_y) / cell_size))
+        return gx, gy
+
+    def _grid_to_world(self, gx, gy):
+        scale = self.scale if abs(self.scale) > 1e-6 else 1.0
+        origin_x, origin_y = self._occupancy_origin_world()
+        cell_size = self._occupancy_cell_size_world()
+        world_x = origin_x + (gx + 0.5) * cell_size
+        world_y = origin_y + (gy + 0.5) * cell_size
+        return world_x / scale, world_y / scale
+
+    def _grid_index(self, gx, gy):
+        return (gy * self.occupancy_width) + gx
+
+    def _is_grid_blocked(self, gx, gy):
+        if gx < 0 or gy < 0 or gx >= self.occupancy_width or gy >= self.occupancy_height:
+            return True
+        if self.occupancy_data is None:
+            return False
+        value = self.occupancy_data[self._grid_index(gx, gy)]
+        return value < 0 or value >= self._occupied_threshold
+
+    def _is_world_position_blocked(self, x, y):
+        grid = self._world_to_grid(x, y)
+        if grid is None:
+            return False
+        gx, gy = grid
+        return self._is_grid_blocked(gx, gy)
+
+    def _nearest_free_world_position(self, x, y):
+        grid = self._world_to_grid(x, y)
+        if grid is None:
+            return x, y
+
+        gx, gy = grid
+        if not self._is_grid_blocked(gx, gy):
+            return x, y
+
+        max_radius = max(self.occupancy_width, self.occupancy_height)
+        best = None
+        best_dist = float("inf")
+
+        for radius in range(1, max_radius + 1):
+            min_x = max(0, gx - radius)
+            max_x = min(self.occupancy_width - 1, gx + radius)
+            min_y = max(0, gy - radius)
+            max_y = min(self.occupancy_height - 1, gy + radius)
+
+            for sy in range(min_y, max_y + 1):
+                for sx in range(min_x, max_x + 1):
+                    if sx not in (min_x, max_x) and sy not in (min_y, max_y):
+                        continue
+                    if self._is_grid_blocked(sx, sy):
+                        continue
+
+                    candidate_x, candidate_y = self._grid_to_world(sx, sy)
+                    distance = self._distance_xy(x, y, candidate_x, candidate_y)
+                    if distance < best_dist:
+                        best_dist = distance
+                        best = (candidate_x, candidate_y)
+
+            if best is not None:
+                return best
+
+        return 0.0, 0.0
+
+    def _enforce_free_space(self):
+        if self.occupancy_data is None:
+            return
+
+        for robot in self.robots:
+            if not self._is_world_position_blocked(robot.x, robot.y):
+                continue
+
+            previous_x, previous_y = robot.x, robot.y
+            robot.x, robot.y = self._nearest_free_world_position(robot.x, robot.y)
+            robot.vx *= 0.2
+            robot.vy *= 0.2
+
+            if self._distance_xy(previous_x, previous_y, robot.x, robot.y) > 1e-3:
+                robot.target_x, robot.target_y = self._sample_patrol_target(robot.x, robot.y)
 
     def _publish_static_frames(self):
         now = self.get_clock().now().to_msg()
@@ -321,6 +481,149 @@ class FakeTFPublisher(Node):
             self.tf_static_pub.publish(TFMessage(transforms=transforms))
             self.get_logger().info("Published static wheel/sensor TF frames")
 
+    def _build_fake_occupancy_data(self):
+        width = self.occupancy_width
+        height = self.occupancy_height
+
+        data = [0] * (width * height)
+
+        def index_of(x, y):
+            return (y * width) + x
+
+        # Mark map boundaries as occupied to get a clear border in visualization.
+        for x in range(width):
+            data[index_of(x, 0)] = 100
+            data[index_of(x, height - 1)] = 100
+        for y in range(height):
+            data[index_of(0, y)] = 100
+            data[index_of(width - 1, y)] = 100
+
+        # Central free corridor cross helps with orientation while testing.
+        center_x = width // 2
+        center_y = height // 2
+        corridor_half = max(2, min(width, height) // 20)
+        for y in range(height):
+            for dx in range(-corridor_half, corridor_half + 1):
+                x = center_x + dx
+                if 1 <= x < (width - 1):
+                    data[index_of(x, y)] = 0
+        for x in range(width):
+            for dy in range(-corridor_half, corridor_half + 1):
+                y = center_y + dy
+                if 1 <= y < (height - 1):
+                    data[index_of(x, y)] = 0
+
+        # Add rectangular obstacles.
+        obstacles = self.occupancy_obstacle_count
+        max_obstacle_w = max(4, width // 8)
+        max_obstacle_h = max(4, height // 8)
+        for _ in range(obstacles):
+            obstacle_w = self.random.randint(3, max_obstacle_w)
+            obstacle_h = self.random.randint(3, max_obstacle_h)
+            start_x = self.random.randint(1, max(1, width - obstacle_w - 2))
+            start_y = self.random.randint(1, max(1, height - obstacle_h - 2))
+            for y in range(start_y, min(height - 1, start_y + obstacle_h)):
+                for x in range(start_x, min(width - 1, start_x + obstacle_w)):
+                    # Keep corridor cross free for easier orientation.
+                    if abs(x - center_x) <= corridor_half or abs(y - center_y) <= corridor_half:
+                        continue
+                    data[index_of(x, y)] = 100
+
+        # Add structured unknown blocks around map outskirts for more realistic frontier-like edges.
+        def paint_unknown_block(start_x, start_y, block_w, block_h):
+            end_x = min(width - 1, start_x + block_w)
+            end_y = min(height - 1, start_y + block_h)
+            for y in range(max(1, start_y), end_y):
+                for x in range(max(1, start_x), end_x):
+                    if x >= (width - 1) or y >= (height - 1):
+                        continue
+                    # Keep central guide corridors clean.
+                    if abs(x - center_x) <= corridor_half or abs(y - center_y) <= corridor_half:
+                        continue
+                    idx = index_of(x, y)
+                    if data[idx] == 0:
+                        data[idx] = -1
+
+        outer_band = max(3, min(width, height) // 14)
+        block_span = max(4, min(width, height) // 18)
+        block_gap = max(2, block_span // 2)
+
+        x = 1
+        while x < (width - 1):
+            paint_unknown_block(x, 1, block_span, outer_band)
+            paint_unknown_block(x, height - 1 - outer_band, block_span, outer_band)
+            x += block_span + block_gap
+
+        y = 1
+        while y < (height - 1):
+            paint_unknown_block(1, y, outer_band, block_span)
+            paint_unknown_block(width - 1 - outer_band, y, outer_band, block_span)
+            y += block_span + block_gap
+
+        # Add unknown areas as contiguous blobs (instead of random speckles).
+        if self.occupancy_unknown_ratio > 0.0:
+            unknown_cells_target = int((width * height) * self.occupancy_unknown_ratio)
+            unknown_cells_added = 0
+            max_blob_radius = max(2, min(width, height) // 30)
+            attempts = 0
+            max_attempts = max(200, unknown_cells_target * 8)
+
+            while unknown_cells_added < unknown_cells_target and attempts < max_attempts:
+                attempts += 1
+                cx = self.random.randint(2, width - 3)
+                cy = self.random.randint(2, height - 3)
+                blob_radius = self.random.randint(1, max_blob_radius)
+
+                min_x = max(1, cx - blob_radius)
+                max_x = min(width - 2, cx + blob_radius)
+                min_y = max(1, cy - blob_radius)
+                max_y = min(height - 2, cy + blob_radius)
+
+                for y in range(min_y, max_y + 1):
+                    for x in range(min_x, max_x + 1):
+                        if ((x - cx) * (x - cx)) + ((y - cy) * (y - cy)) > (blob_radius * blob_radius):
+                            continue
+                        if abs(x - center_x) <= corridor_half or abs(y - center_y) <= corridor_half:
+                            continue
+                        idx = index_of(x, y)
+                        if data[idx] != 0:
+                            continue
+                        data[idx] = -1
+                        unknown_cells_added += 1
+                        if unknown_cells_added >= unknown_cells_target:
+                            break
+                    if unknown_cells_added >= unknown_cells_target:
+                        break
+
+        return data
+
+    def _publish_occupancy_grid(self):
+        if self.occupancy_pub is None or self.occupancy_data is None:
+            return
+
+        now = self.get_clock().now().to_msg()
+        msg = OccupancyGrid()
+        msg.header.stamp = now
+        msg.header.frame_id = self.map_frame
+        msg.info.map_load_time = now
+        msg.info.resolution = float(self.occupancy_resolution)
+        msg.info.width = int(self.occupancy_width)
+        msg.info.height = int(self.occupancy_height)
+
+        half_width_m = (self.occupancy_width * self.occupancy_resolution) * 0.5
+        half_height_m = (self.occupancy_height * self.occupancy_resolution) * 0.5
+        # Keep map origin in native map-frame meters; visual scale is handled in MR via occupancy position_scale.
+        msg.info.origin.position.x = -half_width_m
+        msg.info.origin.position.y = -half_height_m
+        msg.info.origin.position.z = 0.0
+        msg.info.origin.orientation.x = 0.0
+        msg.info.origin.orientation.y = 0.0
+        msg.info.origin.orientation.z = 0.0
+        msg.info.origin.orientation.w = 1.0
+
+        msg.data = self.occupancy_data
+        self.occupancy_pub.publish(msg)
+
     def _on_timer(self):
         now = self.get_clock().now().to_msg()
         current_time = time.time()
@@ -334,6 +637,7 @@ class FakeTFPublisher(Node):
             self._update_circle(current_time)
         else:
             self._update_wander(dt)
+        self._enforce_free_space()
 
         transforms = []
         for robot in self.robots:
@@ -829,6 +1133,60 @@ def build_parser():
         default=65,
         help="JPEG quality for compressed images (30-95).",
     )
+    parser.add_argument(
+        "--publish-occupancy-grid",
+        dest="publish_occupancy_grid",
+        action="store_true",
+        default=True,
+        help="Publish fake occupancy grid on /map (default: on).",
+    )
+    parser.add_argument(
+        "--no-publish-occupancy-grid",
+        dest="publish_occupancy_grid",
+        action="store_false",
+        help="Disable fake occupancy grid publishing.",
+    )
+    parser.add_argument(
+        "--occupancy-topic",
+        default="/map",
+        help="Occupancy grid topic name.",
+    )
+    parser.add_argument(
+        "--occupancy-rate",
+        type=float,
+        default=1.0,
+        help="Occupancy grid publish rate in Hz (use 0 for one-shot latched publish).",
+    )
+    parser.add_argument(
+        "--occupancy-resolution",
+        type=float,
+        default=0.10,
+        help="Occupancy grid resolution in meters/cell.",
+    )
+    parser.add_argument(
+        "--occupancy-width",
+        type=int,
+        default=220,
+        help="Occupancy grid width in cells.",
+    )
+    parser.add_argument(
+        "--occupancy-height",
+        type=int,
+        default=220,
+        help="Occupancy grid height in cells.",
+    )
+    parser.add_argument(
+        "--occupancy-unknown-ratio",
+        type=float,
+        default=0.0,
+        help="Fraction of cells marked unknown (-1).",
+    )
+    parser.add_argument(
+        "--occupancy-obstacle-count",
+        type=int,
+        default=16,
+        help="Number of random rectangular occupied regions.",
+    )
     return parser
 
 
@@ -879,6 +1237,14 @@ def main():
         jpeg_quality=args.jpeg_quality,
         vary_image_resolution=args.vary_image_resolution,
         image_resolutions=parsed_resolutions,
+        publish_occupancy_grid=args.publish_occupancy_grid,
+        occupancy_topic=args.occupancy_topic,
+        occupancy_rate_hz=args.occupancy_rate,
+        occupancy_resolution=args.occupancy_resolution,
+        occupancy_width=args.occupancy_width,
+        occupancy_height=args.occupancy_height,
+        occupancy_unknown_ratio=args.occupancy_unknown_ratio,
+        occupancy_obstacle_count=args.occupancy_obstacle_count,
     )
 
     executor = None
