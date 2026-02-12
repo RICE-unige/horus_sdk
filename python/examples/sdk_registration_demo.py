@@ -8,6 +8,7 @@ Usage:
   python3 sdk_registration_demo.py
   python3 sdk_registration_demo.py --robot-count 4
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
+  python3 sdk_registration_demo.py --with-occupancy-grid
   python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
   python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
   python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
@@ -197,6 +198,54 @@ def build_parser():
         default="160x90,192x108,224x126,256x144,320x180,426x240",
         help="Comma-separated WxH list used when varying camera resolution.",
     )
+    parser.add_argument(
+        "--with-occupancy-grid",
+        dest="with_occupancy_grid",
+        action="store_true",
+        default=True,
+        help="Publish global occupancy-grid visualization config to MR (default: on).",
+    )
+    parser.add_argument(
+        "--no-occupancy-grid",
+        dest="with_occupancy_grid",
+        action="store_false",
+        help="Disable occupancy-grid visualization config in registration payload.",
+    )
+    parser.add_argument(
+        "--occupancy-topic",
+        default="/map",
+        help="Occupancy grid topic (default: /map).",
+    )
+    parser.add_argument(
+        "--occupancy-frame",
+        default="map",
+        help="Occupancy grid frame id (default: map).",
+    )
+    parser.add_argument(
+        "--occupancy-position-scale",
+        type=float,
+        default=None,
+        help="Optional occupancy map position scale override for MR visualizer. Ignored when workspace scale is set.",
+    )
+    parser.add_argument(
+        "--workspace-scale",
+        type=float,
+        default=None,
+        help="Optional global workspace position scale applied across MR entities.",
+    )
+    parser.add_argument(
+        "--occupancy-show-unknown-space",
+        dest="occupancy_show_unknown_space",
+        action="store_true",
+        default=True,
+        help="Render unknown occupancy cells in MR (default: on).",
+    )
+    parser.add_argument(
+        "--occupancy-hide-unknown-space",
+        dest="occupancy_show_unknown_space",
+        action="store_false",
+        help="Hide unknown occupancy cells in MR.",
+    )
     return parser
 
 
@@ -235,6 +284,7 @@ def main():
 
     cli.print_step("Defining Robot Configuration...")
     robots = []
+    datavizs = []
     for idx, name in enumerate(robot_names):
         length = args.length + (0.1 * idx)
         width = args.width + (0.05 * idx)
@@ -318,13 +368,29 @@ def main():
             camera.add_metadata("overhead_rotation_offset", [90.0, 0.0, 0.0])
             robot.add_sensor(camera)
 
+        dataviz = robot.create_dataviz()
+        if args.with_occupancy_grid:
+            occupancy_render_options = {
+                "show_unknown_space": bool(args.occupancy_show_unknown_space),
+            }
+            if args.occupancy_position_scale is not None:
+                occupancy_render_options["position_scale"] = max(0.01, float(args.occupancy_position_scale))
+
+            dataviz.add_occupancy_grid(
+                topic=args.occupancy_topic,
+                frame_id=args.occupancy_frame,
+                render_options=occupancy_render_options,
+            )
+        datavizs.append(dataviz)
         robots.append(robot)
 
     cli.print_step(f"Registering {len(robots)} robot(s)...")
     success, result = register_robots(
         robots,
+        datavizs=datavizs,
         keep_alive=args.keep_alive,
         show_dashboard=True,
+        workspace_scale=args.workspace_scale,
     )
     if not success:
         if isinstance(result, dict) and result.get("error") == "Cancelled":
