@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
 
+source_setup_file() {
+  local setup_file="$1"
+  local had_nounset=0
+
+  if [[ $- == *u* ]]; then
+    had_nounset=1
+    set +u
+  fi
+
+  # shellcheck disable=SC1090
+  source "$setup_file"
+
+  if [ "$had_nounset" -eq 1 ]; then
+    set -u
+  fi
+}
+
 setup_python_sdk_runtime() {
   local sdk_dir="$1"
 
@@ -12,7 +29,7 @@ setup_python_sdk_runtime() {
   local python_bin="$sdk_dir/.venv/bin/python"
 
   run_cmd "$pip_bin" install --upgrade pip setuptools wheel
-  run_cmd "$pip_bin" install -e "$sdk_dir"
+  run_cmd "$pip_bin" install -e "$sdk_dir" --no-deps
   run_cmd "$python_bin" -c "import horus; print('horus import OK')"
 
   log_success "Python SDK runtime is ready"
@@ -26,8 +43,7 @@ build_ros2_backend_workspace() {
   [ -d "$ros2_dir" ] || die "ROS2 directory missing: $ros2_dir"
   [ -f "/opt/ros/$distro/setup.bash" ] || die "ROS setup missing: /opt/ros/$distro/setup.bash"
 
-  # shellcheck disable=SC1090
-  source "/opt/ros/$distro/setup.bash"
+  source_setup_file "/opt/ros/$distro/setup.bash"
 
   local webrtc_flag="OFF"
   if [ "$webrtc" = "on" ]; then
@@ -70,10 +86,8 @@ validate_runtime_install() {
   local ros2_setup="$install_root/ros2/install/setup.bash"
   [ -f "$ros2_setup" ] || die "Expected ROS2 install setup not found: $ros2_setup"
 
-  # shellcheck disable=SC1090
-  source "/opt/ros/$distro/setup.bash"
-  # shellcheck disable=SC1090
-  source "$ros2_setup"
+  source_setup_file "/opt/ros/$distro/setup.bash"
+  source_setup_file "$ros2_setup"
 
   if ! ros2 pkg prefix horus_backend >/dev/null 2>&1; then
     die "horus_backend package not found after build"

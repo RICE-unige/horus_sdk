@@ -38,6 +38,18 @@ WEBRTC_PACKAGES=(
   libopencv-dev
 )
 
+sudo_noninteractive() {
+  sudo env DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC "$@"
+}
+
+apt_update() {
+  run_cmd sudo_noninteractive apt-get update
+}
+
+apt_install() {
+  run_cmd sudo_noninteractive apt-get install -y "$@"
+}
+
 detect_platform() {
   [ -f /etc/os-release ] || die "Missing /etc/os-release; unsupported host"
 
@@ -107,19 +119,19 @@ setup_ros_apt_repository() {
   local list_file="/etc/apt/sources.list.d/ros2.list"
 
   log_info "Configuring ROS 2 apt repository"
-  run_cmd sudo apt-get update
-  run_cmd sudo apt-get install -y software-properties-common
-  run_cmd sudo add-apt-repository -y universe >/dev/null 2>&1 || true
+  apt_update
+  apt_install software-properties-common
+  run_cmd sudo_noninteractive add-apt-repository -y universe >/dev/null 2>&1 || true
 
-  run_cmd sudo mkdir -p /usr/share/keyrings
-  run_cmd sudo curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o "$keyring"
+  run_cmd sudo_noninteractive mkdir -p /usr/share/keyrings
+  run_cmd sudo_noninteractive curl -fsSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o "$keyring"
 
   local arch
   arch="$(dpkg --print-architecture)"
   printf "deb [arch=%s signed-by=%s] http://packages.ros.org/ros2/ubuntu %s main\n" \
     "$arch" "$keyring" "$codename" | sudo tee "$list_file" >/dev/null
 
-  run_cmd sudo apt-get update
+  apt_update
 }
 
 build_ros_runtime_packages() {
@@ -147,12 +159,12 @@ install_dependencies() {
   build_ros_runtime_packages "$distro"
 
   log_info "Installing system dependencies"
-  run_cmd sudo apt-get install -y "${BASE_PACKAGES[@]}"
-  run_cmd sudo apt-get install -y "${ROS_RUNTIME_PACKAGES[@]}"
+  apt_install "${BASE_PACKAGES[@]}"
+  apt_install "${ROS_RUNTIME_PACKAGES[@]}"
 
   if [ "$webrtc" = "on" ]; then
     log_info "Installing WebRTC/media dependencies"
-    run_cmd sudo apt-get install -y "${WEBRTC_PACKAGES[@]}"
+    apt_install "${WEBRTC_PACKAGES[@]}"
   fi
 
   log_success "Dependency installation completed"

@@ -2,6 +2,14 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOCAL_INSTALLER="$SCRIPT_DIR/install/install.sh"
+
+# Prefer local installer when running from a checked-out repo.
+if [ -f "$LOCAL_INSTALLER" ]; then
+  exec bash "$LOCAL_INSTALLER" "$@"
+fi
+
 BOOTSTRAP_REPO_URL="${HORUS_INSTALLER_REPO_URL:-https://github.com/RICE-unige/horus_sdk.git}"
 BOOTSTRAP_REF="${HORUS_INSTALLER_REF:-main}"
 
@@ -23,6 +31,13 @@ if ! git clone --depth 1 --branch "$BOOTSTRAP_REF" "$BOOTSTRAP_REPO_URL" "$CLONE
   echo "[warn] shallow clone by branch failed, retrying full clone + checkout"
   git clone "$BOOTSTRAP_REPO_URL" "$CLONE_PATH"
   git -C "$CLONE_PATH" checkout "$BOOTSTRAP_REF"
+fi
+
+if [ ! -f "$CLONE_PATH/install/install.sh" ]; then
+  echo "[error] installer payload not found at '$CLONE_PATH/install/install.sh'" >&2
+  echo "[error] the selected ref '$BOOTSTRAP_REF' may not include installer sources yet." >&2
+  echo "[hint] try: HORUS_INSTALLER_REF=<branch-or-commit> bash install.sh" >&2
+  exit 1
 fi
 
 exec bash "$CLONE_PATH/install/install.sh" "$@"

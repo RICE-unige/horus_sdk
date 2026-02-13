@@ -13,14 +13,29 @@ write_helper_scripts() {
 export HORUS_HOME="$install_root"
 export HORUS_ROS_DISTRO="$ros_distro"
 
+_horus_source_setup() {
+  local setup_file="\$1"
+  local had_nounset=0
+
+  if [[ \$- == *u* ]]; then
+    had_nounset=1
+    set +u
+  fi
+
+  # shellcheck disable=SC1090
+  source "\$setup_file"
+
+  if [ "\$had_nounset" -eq 1 ]; then
+    set -u
+  fi
+}
+
 if [ -f "/opt/ros/\$HORUS_ROS_DISTRO/setup.bash" ]; then
-  # shellcheck disable=SC1091
-  source "/opt/ros/\$HORUS_ROS_DISTRO/setup.bash"
+  _horus_source_setup "/opt/ros/\$HORUS_ROS_DISTRO/setup.bash"
 fi
 
 if [ -f "\$HORUS_HOME/ros2/install/setup.bash" ]; then
-  # shellcheck disable=SC1090
-  source "\$HORUS_HOME/ros2/install/setup.bash"
+  _horus_source_setup "\$HORUS_HOME/ros2/install/setup.bash"
 fi
 
 if [ -f "\$HORUS_HOME/sdk/.venv/bin/activate" ]; then
