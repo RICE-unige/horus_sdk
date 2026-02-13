@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# =============================================================================
+# HORUS Installer - Argument Parsing
+# =============================================================================
 
 INSTALL_ROOT_DEFAULT="$HOME/horus"
 CHANNEL_DEFAULT="stable"
@@ -15,23 +18,37 @@ ASSUME_YES=0
 LOG_FILE=""
 
 print_usage() {
-  cat <<USAGE
-HORUS installer
+  if [ -t 1 ]; then
+    printf '\n'
+    printf '  %bHORUS Installer%b v%s\n' '\033[1;34m' '\033[0m' "${HORUS_INSTALLER_VERSION:-0.1.0}"
+    printf '  %bHolistic Operational Reality for Unified Systems%b\n' '\033[2m' '\033[0m'
+    printf '\n'
+  fi
 
+  cat <<'USAGE'
 Usage:
   install.sh [options]
 
 Options:
-  --yes                     Non-interactive mode (accept defaults/flags)
-  --channel <stable|main>   Source channel (default: stable)
-  --install-root <path>     Install root (default: ~/horus)
+  --yes                         Non-interactive mode (accept all defaults)
+  --channel <stable|main>       Source channel [default: stable]
+  --install-root <path>         Installation directory [default: ~/horus]
   --ros-distro <auto|jazzy|humble>
-                            ROS 2 distro (default: auto)
-  --webrtc <on|off>         Build bridge with WebRTC support (default: on)
-  --shell-config <auto|manual>
-                            Shell integration mode (default: auto)
-  --log-file <path>         Installer log output path
-  --help                    Show this help
+                                ROS 2 distribution [default: auto-detect]
+  --webrtc <on|off>             WebRTC bridge support [default: on]
+  --shell-config <auto|manual>  Shell integration mode [default: auto]
+  --log-file <path>             Custom log file path
+  --help                        Show this help message
+
+Examples:
+  install.sh                              Interactive installation
+  install.sh --yes                        Accept all defaults
+  install.sh --yes --channel main         Track development branch
+  install.sh --yes --webrtc off           Skip WebRTC dependencies
+
+Documentation:
+  https://github.com/RICE-unige/horus_sdk
+
 USAGE
 }
 
