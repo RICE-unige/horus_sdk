@@ -94,7 +94,7 @@ Occupancy payload:
 - `custom_passthrough_only = false`
 
 Deadman defaults:
-- `policy = either_index_trigger` (`either_index_trigger|left_index_trigger|right_index_trigger|either_grip_trigger`)
+- `policy = either_grip_trigger` (`either_index_trigger|left_index_trigger|right_index_trigger|either_grip_trigger`)
 - `timeout_ms = 200` (clamped to `[50, 2000]`)
 
 Axis shaping defaults:

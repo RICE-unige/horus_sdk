@@ -10,7 +10,7 @@
     "publish_rate_hz": 30.0,
     "custom_passthrough_only": false,
     "deadman": {
-      "policy": "either_index_trigger",
+      "policy": "either_grip_trigger",
       "timeout_ms": 200
     },
     "axes": {
