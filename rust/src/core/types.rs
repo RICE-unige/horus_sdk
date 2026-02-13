@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Robot type classifications
+pub type Metadata = HashMap<String, serde_json::Value>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RobotType {
     #[serde(rename = "wheeled")]
@@ -13,16 +14,15 @@ pub enum RobotType {
 }
 
 impl RobotType {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
-            RobotType::Wheeled => "wheeled",
-            RobotType::Legged => "legged",
-            RobotType::Aerial => "aerial",
+            Self::Wheeled => "wheeled",
+            Self::Legged => "legged",
+            Self::Aerial => "aerial",
         }
     }
 }
 
-/// Sensor type classifications
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SensorType {
     #[serde(rename = "camera")]
@@ -32,84 +32,71 @@ pub enum SensorType {
     #[serde(rename = "lidar_3d")]
     Lidar3D,
     #[serde(rename = "imu")]
-    IMU,
+    Imu,
     #[serde(rename = "gps")]
-    GPS,
+    Gps,
     #[serde(rename = "odometry")]
     Odometry,
 }
 
 impl SensorType {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
-            SensorType::Camera => "camera",
-            SensorType::LaserScan => "laser_scan",
-            SensorType::Lidar3D => "lidar_3d",
-            SensorType::IMU => "imu",
-            SensorType::GPS => "gps",
-            SensorType::Odometry => "odometry",
+            Self::Camera => "camera",
+            Self::LaserScan => "laser_scan",
+            Self::Lidar3D => "lidar_3d",
+            Self::Imu => "imu",
+            Self::Gps => "gps",
+            Self::Odometry => "odometry",
         }
     }
 }
 
-/// ROS topic message types relevant to HORUS
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TopicType {
-    // Sensor data topics
     Image,
     PointCloud,
     LaserScan,
-    IMU,
-    GPS,
-    
-    // Navigation topics
+    Imu,
+    Gps,
     Odometry,
     Path,
     OccupancyGrid,
     Goal,
-    
-    // Robot control topics
     Twist,
     JointState,
-    
-    // Transform topics
-    TF,
-    TFStatic,
-    
-    // HORUS-specific topics
+    Tf,
+    TfStatic,
     RobotStatus,
     RobotCommand,
     RobotConfig,
-    
-    // Generic/Unknown
     Unknown,
 }
 
 impl TopicType {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
-            TopicType::Image => "sensor_msgs/Image",
-            TopicType::PointCloud => "sensor_msgs/PointCloud2",
-            TopicType::LaserScan => "sensor_msgs/LaserScan",
-            TopicType::IMU => "sensor_msgs/Imu",
-            TopicType::GPS => "sensor_msgs/NavSatFix",
-            TopicType::Odometry => "nav_msgs/Odometry",
-            TopicType::Path => "nav_msgs/Path",
-            TopicType::OccupancyGrid => "nav_msgs/OccupancyGrid",
-            TopicType::Goal => "geometry_msgs/PoseStamped",
-            TopicType::Twist => "geometry_msgs/Twist",
-            TopicType::JointState => "sensor_msgs/JointState",
-            TopicType::TF => "tf2_msgs/TFMessage",
-            TopicType::TFStatic => "tf2_msgs/TFMessage",
-            TopicType::RobotStatus => "horus_interfaces/RobotStatus",
-            TopicType::RobotCommand => "horus_interfaces/RobotCommand",
-            TopicType::RobotConfig => "horus_interfaces/RobotConfig",
-            TopicType::Unknown => "unknown",
+            Self::Image => "sensor_msgs/Image",
+            Self::PointCloud => "sensor_msgs/PointCloud2",
+            Self::LaserScan => "sensor_msgs/LaserScan",
+            Self::Imu => "sensor_msgs/Imu",
+            Self::Gps => "sensor_msgs/NavSatFix",
+            Self::Odometry => "nav_msgs/Odometry",
+            Self::Path => "nav_msgs/Path",
+            Self::OccupancyGrid => "nav_msgs/OccupancyGrid",
+            Self::Goal => "geometry_msgs/PoseStamped",
+            Self::Twist => "geometry_msgs/Twist",
+            Self::JointState => "sensor_msgs/JointState",
+            Self::Tf => "tf2_msgs/TFMessage",
+            Self::TfStatic => "tf2_msgs/TFMessage",
+            Self::RobotStatus => "horus_interfaces/RobotStatus",
+            Self::RobotCommand => "horus_interfaces/RobotCommand",
+            Self::RobotConfig => "horus_interfaces/RobotConfig",
+            Self::Unknown => "unknown",
         }
     }
 }
 
-/// Topic data direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TopicDirection {
     Publish,
@@ -118,16 +105,15 @@ pub enum TopicDirection {
 }
 
 impl TopicDirection {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
-            TopicDirection::Publish => "publish",
-            TopicDirection::Subscribe => "subscribe",
-            TopicDirection::Bidirectional => "bidirectional",
+            Self::Publish => "publish",
+            Self::Subscribe => "subscribe",
+            Self::Bidirectional => "bidirectional",
         }
     }
 }
 
-/// Event priority levels for processing order
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum EventPriority {
@@ -137,32 +123,43 @@ pub enum EventPriority {
     Critical = 3,
 }
 
-/// Types of data sources for visualization
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DataSourceType {
-    // Sensor-based data
     Sensor,
-    
-    // Robot-specific data
     RobotState,
     RobotTransform,
     RobotGlobalPath,
     RobotLocalPath,
     RobotTrajectory,
-    
-    // Environmental/World data (robot-independent)
     OccupancyGrid,
     Costmap,
     Map3D,
     GlobalNavigationPath,
-    
-    // Shared/Global data
-    TFTree,
+    TfTree,
     GlobalMarkers,
     CoordinateFrame,
 }
 
-/// Types of data visualization rendering
+impl DataSourceType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sensor => "sensor",
+            Self::RobotState => "robot_state",
+            Self::RobotTransform => "robot_transform",
+            Self::RobotGlobalPath => "robot_global_path",
+            Self::RobotLocalPath => "robot_local_path",
+            Self::RobotTrajectory => "robot_trajectory",
+            Self::OccupancyGrid => "occupancy_grid",
+            Self::Costmap => "costmap",
+            Self::Map3D => "map_3d",
+            Self::GlobalNavigationPath => "global_navigation_path",
+            Self::TfTree => "tf_tree",
+            Self::GlobalMarkers => "global_markers",
+            Self::CoordinateFrame => "coordinate_frame",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum VisualizationType {
     CameraFeed,
@@ -178,7 +175,24 @@ pub enum VisualizationType {
     Heatmap,
 }
 
-/// Predefined color schemes for robot visualizations
+impl VisualizationType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CameraFeed => "camera_feed",
+            Self::LaserScan => "laser_scan",
+            Self::PointCloud => "point_cloud",
+            Self::OccupancyGrid => "occupancy_grid",
+            Self::Trajectory => "trajectory",
+            Self::Path => "path",
+            Self::Markers => "markers",
+            Self::TransformTree => "transform_tree",
+            Self::CoordinateAxes => "coordinate_axes",
+            Self::Mesh => "mesh",
+            Self::Heatmap => "heatmap",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ColorScheme {
     Bright,
@@ -189,16 +203,13 @@ pub enum ColorScheme {
 }
 
 impl ColorScheme {
-    pub fn as_str(&self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
-            ColorScheme::Bright => "bright",
-            ColorScheme::Pastel => "pastel",
-            ColorScheme::Dark => "dark",
-            ColorScheme::Rainbow => "rainbow",
-            ColorScheme::Neon => "neon",
+            Self::Bright => "bright",
+            Self::Pastel => "pastel",
+            Self::Dark => "dark",
+            Self::Rainbow => "rainbow",
+            Self::Neon => "neon",
         }
     }
 }
-
-/// Type alias for metadata
-pub type Metadata = HashMap<String, serde_json::Value>;

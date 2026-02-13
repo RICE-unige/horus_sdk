@@ -1,0 +1,6 @@
+{
+  "streaming_type": "webrtc",
+  "minimap_streaming_type": "webrtc",
+  "teleop_streaming_type": "webrtc",
+  "startup_mode": "minimap"
+}

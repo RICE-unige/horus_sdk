@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "prefab_asset_path": "Assets/Prefabs/UI/RobotManager.prefab",
+  "prefab_resource_path": "",
+  "sections": {
+    "status": true,
+    "data_viz": true,
+    "teleop": true,
+    "tasks": true
+  }
+}

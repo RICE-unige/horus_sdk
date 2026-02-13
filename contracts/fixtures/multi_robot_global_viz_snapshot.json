@@ -1,0 +1,9 @@
+{
+  "global_visualizations_count": 1,
+  "global_visualization": {
+    "type": "occupancy_grid",
+    "topic": "/map",
+    "scope": "global",
+    "frame": "map"
+  }
+}
