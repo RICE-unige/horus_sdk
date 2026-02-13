@@ -146,7 +146,8 @@ Next steps:
   2) Check status: horus-status
   3) Start backend: horus-start
   4) Run demo (new shell):
-     python "$INSTALL_ROOT/sdk/python/examples/sdk_registration_demo.py" --robot-count 4 --with-camera --with-occupancy-grid
+     python3 "$INSTALL_ROOT/sdk/python/examples/sdk_registration_demo.py" --robot-count 4 --with-camera --with-occupancy-grid
+  5) Uninstall later if needed: horus-uninstall
 
 EOM
 }

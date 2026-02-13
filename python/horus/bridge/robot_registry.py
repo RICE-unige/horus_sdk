@@ -27,6 +27,7 @@ import atexit
 import signal
 import os
 import math
+import shutil
 from typing import Any, Dict, Tuple, Optional
 
 try:
@@ -176,6 +177,125 @@ class RobotRegistryClient:
         
         # Give ROS time to initialize
         time.sleep(1.0)
+
+    def _is_port_open(self, port: int) -> bool:
+        """Check whether localhost:port is accepting TCP connections."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            return s.connect_ex(("localhost", port)) == 0
+
+    def _auto_start_bridge_with_horus_helper(self) -> bool:
+        """Try bridge startup using installer-generated horus-start helper."""
+        from horus.utils import cli
+
+        candidate_paths = []
+        env_horus_home = os.environ.get("HORUS_HOME")
+        if env_horus_home:
+            candidate_paths.append(os.path.join(env_horus_home, "bin", "horus-start"))
+
+        candidate_paths.append(os.path.expanduser("~/horus/bin/horus-start"))
+
+        horus_start_in_path = shutil.which("horus-start")
+        if horus_start_in_path:
+            candidate_paths.append(horus_start_in_path)
+
+        # Deduplicate while preserving order.
+        deduped_paths = []
+        seen = set()
+        for path in candidate_paths:
+            if path not in seen:
+                deduped_paths.append(path)
+                seen.add(path)
+
+        for helper_path in deduped_paths:
+            if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
+                continue
+
+            cli.print_info(f"Trying helper auto-start: {helper_path}")
+            try:
+                self.bridge_process = subprocess.Popen(
+                    [helper_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:
+                continue
+
+            atexit.register(self._cleanup_bridge)
+            with cli.status("Launching Horus Bridge...", spinner="dots"):
+                for _ in range(20):
+                    if self._is_port_open(10000):
+                        cli.print_success("Horus Bridge launched successfully.")
+                        return True
+                    if self.bridge_process and self.bridge_process.poll() is not None:
+                        break
+                    time.sleep(1.0)
+
+            self._cleanup_bridge()
+
+        return False
+
+    def _auto_start_bridge_with_ros2_launch(self) -> bool:
+        """Fallback bridge startup using direct ros2 launch command."""
+        from horus.utils import cli
+
+        if shutil.which("ros2") is None:
+            cli.print_error("'ros2' command not found.")
+            return False
+
+        try:
+            check_pkg = subprocess.run(
+                ["ros2", "pkg", "prefix", "horus_unity_bridge"],
+                capture_output=True,
+            )
+            if check_pkg.returncode != 0:
+                return False
+
+            bridge_prefix = check_pkg.stdout.decode().strip()
+            if bridge_prefix:
+                cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
+
+            self.bridge_process = subprocess.Popen(
+                ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            atexit.register(self._cleanup_bridge)
+
+            with cli.status("Launching Horus Bridge...", spinner="dots"):
+                for _ in range(15):
+                    if self._is_port_open(10000):
+                        cli.print_success("Horus Bridge launched successfully.")
+                        return True
+                    if self.bridge_process and self.bridge_process.poll() is not None:
+                        break
+                    time.sleep(1.0)
+        except Exception:
+            return False
+
+        self._cleanup_bridge()
+        return False
+
+    def _ensure_bridge_running(self) -> bool:
+        """Ensure bridge port is available, auto-starting bridge if needed."""
+        from horus.utils import cli
+
+        if self._is_port_open(10000):
+            cli.print_info("Horus Bridge detected on port 10000.")
+            return True
+
+        cli.print_info("No Bridge on port 10000. Attempting auto-start...")
+
+        if self._auto_start_bridge_with_horus_helper():
+            return True
+
+        if self._auto_start_bridge_with_ros2_launch():
+            return True
+
+        cli.print_error("Failed to auto-launch bridge.")
+        return False
 
     def _ack_callback(self, msg):
         """Handle registration acknowledgement"""
@@ -719,46 +839,9 @@ class RobotRegistryClient:
 
         try:
             # 1. Bridge Detection (Infrastructure must be external)
-            bridge_running = False
-            
-            def is_port_open(port):
-                import socket
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(0.5)
-                    return s.connect_ex(('localhost', port)) == 0
-
-            # ... (Bridge Auto-start logic omitted for brevity, keeping existing flow) ...
-            if is_port_open(10000):
-                bridge_running = True
-                cli.print_info("Horus Bridge detected on port 10000.")
-            else:
-                cli.print_info("No Bridge on port 10000. Attempting auto-start...")
-                # Try to launch via ROS 2
-                try:
-                    check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
-                    if check_pkg.returncode == 0:
-                        bridge_prefix = check_pkg.stdout.decode().strip()
-                        if bridge_prefix:
-                            cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
-                        self.bridge_process = subprocess.Popen(
-                            ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-                        )
-                        atexit.register(self._cleanup_bridge)
-                        with cli.status("Launching Horus Bridge...", spinner="dots"):
-                            for _ in range(15):
-                                if is_port_open(10000):
-                                    bridge_running = True
-                                    cli.print_success("Horus Bridge launched successfully.")
-                                    break
-                                time.sleep(1.0)
-                    
-                    if not bridge_running:
-                        cli.print_error("Failed to auto-launch bridge.")
-                        return False, {"error": "Bridge Start Failed"}
-                except FileNotFoundError:
-                     cli.print_error("'ros2' command not found.")
-                     return False, {"error": "ROS2 Not Found"}
+            bridge_running = self._ensure_bridge_running()
+            if not bridge_running:
+                return False, {"error": "Bridge Start Failed"}
 
             # Display Connect Info using Dashboard
             local_ip = self._get_local_ip()
@@ -1043,44 +1126,9 @@ class RobotRegistryClient:
             if len(datavizs) != len(robots):
                 return False, {"error": "Robot/dataviz length mismatch"}
 
-            bridge_running = False
-
-            def is_port_open(port):
-                import socket
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(0.5)
-                    return s.connect_ex(('localhost', port)) == 0
-
-            if is_port_open(10000):
-                bridge_running = True
-                cli.print_info("Horus Bridge detected on port 10000.")
-            else:
-                cli.print_info("No Bridge on port 10000. Attempting auto-start...")
-                try:
-                    check_pkg = subprocess.run(['ros2', 'pkg', 'prefix', 'horus_unity_bridge'], capture_output=True)
-                    if check_pkg.returncode == 0:
-                        bridge_prefix = check_pkg.stdout.decode().strip()
-                        if bridge_prefix:
-                            cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
-                        self.bridge_process = subprocess.Popen(
-                            ['ros2', 'launch', 'horus_unity_bridge', 'unity_bridge.launch.py'],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-                        )
-                        atexit.register(self._cleanup_bridge)
-                        with cli.status("Launching Horus Bridge...", spinner="dots"):
-                            for _ in range(15):
-                                if is_port_open(10000):
-                                    bridge_running = True
-                                    cli.print_success("Horus Bridge launched successfully.")
-                                    break
-                                time.sleep(1.0)
-
-                    if not bridge_running:
-                        cli.print_error("Failed to auto-launch bridge.")
-                        return False, {"error": "Bridge Start Failed"}
-                except FileNotFoundError:
-                    cli.print_error("'ros2' command not found.")
-                    return False, {"error": "ROS2 Not Found"}
+            bridge_running = self._ensure_bridge_running()
+            if not bridge_running:
+                return False, {"error": "Bridge Start Failed"}
 
             local_ip = self._get_local_ip()
             bridge_state = "Active" if bridge_running else "Error"

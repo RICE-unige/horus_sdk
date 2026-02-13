@@ -44,6 +44,59 @@ if [ -f "\$HORUS_HOME/sdk/.venv/bin/activate" ]; then
 fi
 EOM
 
+  cat > "$bin_dir/horus-python" <<'EOM'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/horus-env"
+exec "$HORUS_HOME/sdk/.venv/bin/python3" "$@"
+EOM
+
+  cat > "$bin_dir/python3" <<'EOM'
+#!/usr/bin/env bash
+set -euo pipefail
+
+HORUS_HOME="${HORUS_HOME:-$HOME/horus}"
+SYSTEM_PYTHON="/usr/bin/python3"
+
+use_horus_python=0
+
+if [ $# -gt 0 ]; then
+  first_arg="$1"
+
+  # Absolute path under installed SDK tree.
+  if [[ "$first_arg" == "$HORUS_HOME"/sdk/* ]]; then
+    use_horus_python=1
+  fi
+
+  # Relative script path that resolves under installed SDK tree.
+  if [ "$use_horus_python" -eq 0 ] && [[ "$first_arg" != -* ]] && [ -e "$first_arg" ]; then
+    resolved="$(readlink -f "$first_arg" 2>/dev/null || true)"
+    if [[ "$resolved" == "$HORUS_HOME"/sdk/* ]]; then
+      use_horus_python=1
+    fi
+  fi
+fi
+
+# Running from SDK root with `-m`, `-c`, or no args: prefer HORUS env.
+if [ "$use_horus_python" -eq 0 ] && [[ "$(pwd)" == "$HORUS_HOME"/sdk* ]]; then
+  case "${1-}" in
+    -m|-c|'') use_horus_python=1 ;;
+  esac
+fi
+
+if [ "$use_horus_python" -eq 1 ] && [ -x "$HORUS_HOME/sdk/.venv/bin/python3" ]; then
+  if [ -f "$HORUS_HOME/bin/horus-env" ]; then
+    # shellcheck disable=SC1090
+    source "$HORUS_HOME/bin/horus-env"
+  fi
+  exec "$HORUS_HOME/sdk/.venv/bin/python3" "$@"
+fi
+
+exec "$SYSTEM_PYTHON" "$@"
+EOM
+
   cat > "$bin_dir/horus-start" <<'EOM'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -154,12 +207,163 @@ exec bash "$INSTALL_SCRIPT" \
   --shell-config "${HORUS_SHELL_CONFIG:-auto}"
 EOM
 
+  cat > "$bin_dir/horus-uninstall" <<'EOM'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ASSUME_YES=0
+PURGE_ROS_PACKAGES=0
+HORUS_HOME_DEFAULT="$HOME/horus"
+HORUS_HOME="${HORUS_HOME:-$HORUS_HOME_DEFAULT}"
+STATE_FILE="$HORUS_HOME/state/install-config.env"
+ROS_DISTRO="${HORUS_ROS_DISTRO:-}"
+
+usage() {
+  cat <<USAGE
+HORUS uninstall helper
+
+Usage:
+  horus-uninstall [options]
+
+Options:
+  --yes                  Non-interactive mode
+  --purge-ros-packages   Also remove installer ROS apt packages for this distro
+  --help                 Show this help
+USAGE
+}
+
+log() { echo "[horus-uninstall] $*"; }
+warn() { echo "[horus-uninstall][warn] $*" >&2; }
+die() { echo "[horus-uninstall][error] $*" >&2; exit 1; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --yes)
+      ASSUME_YES=1
+      shift
+      ;;
+    --purge-ros-packages)
+      PURGE_ROS_PACKAGES=1
+      shift
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      die "Unknown argument: $1"
+      ;;
+  esac
+done
+
+if [ -f "$STATE_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$STATE_FILE"
+  if [ -n "${HORUS_INSTALL_ROOT:-}" ]; then
+    HORUS_HOME="$HORUS_INSTALL_ROOT"
+  fi
+  if [ -z "$ROS_DISTRO" ] && [ -n "${HORUS_ROS_DISTRO:-}" ]; then
+    ROS_DISTRO="$HORUS_ROS_DISTRO"
+  fi
+fi
+
+if [ -z "$ROS_DISTRO" ]; then
+  if [ -d /opt/ros/jazzy ]; then
+    ROS_DISTRO="jazzy"
+  elif [ -d /opt/ros/humble ]; then
+    ROS_DISTRO="humble"
+  fi
+fi
+
+if [ "$ASSUME_YES" -ne 1 ] && ! tty -s; then
+  die "No interactive TTY detected. Re-run with --yes."
+fi
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  echo "This will remove HORUS files from: $HORUS_HOME"
+  if [ "$PURGE_ROS_PACKAGES" -eq 1 ]; then
+    echo "It will also purge selected ROS apt packages for distro: ${ROS_DISTRO:-unknown}"
+  fi
+  printf "Continue? [y/N]: "
+  read -r answer || true
+  answer="${answer,,}"
+  case "$answer" in
+    y|yes) ;;
+    *) echo "Aborted."; exit 0 ;;
+  esac
+fi
+
+log "Stopping running HORUS processes (if any)"
+pkill -f horus_backend_node 2>/dev/null || true
+pkill -f horus_unity_bridge_node 2>/dev/null || true
+pkill -f horus_unity_bridge 2>/dev/null || true
+
+if command -v lsof >/dev/null 2>&1; then
+  lsof -ti :8080,10000 | xargs -r kill -TERM 2>/dev/null || true
+fi
+
+bashrc="$HOME/.bashrc"
+marker_start="# >>> HORUS installer >>>"
+marker_end="# <<< HORUS installer <<<"
+if [ -f "$bashrc" ] && grep -Fq "$marker_start" "$bashrc"; then
+  log "Removing HORUS shell integration block from ~/.bashrc"
+  tmp_bashrc="$(mktemp)"
+  awk -v start="$marker_start" -v end="$marker_end" '
+    $0 == start { skip = 1; next }
+    $0 == end { skip = 0; next }
+    skip != 1 { print }
+  ' "$bashrc" > "$tmp_bashrc"
+  cat "$tmp_bashrc" > "$bashrc"
+  rm -f "$tmp_bashrc"
+fi
+
+if [ "$PURGE_ROS_PACKAGES" -eq 1 ]; then
+  [ -n "$ROS_DISTRO" ] || die "Cannot infer ROS distro for package purge."
+  if ! command -v sudo >/dev/null 2>&1; then
+    die "sudo is required for --purge-ros-packages"
+  fi
+  log "Purging ROS apt packages for distro '$ROS_DISTRO'"
+  sudo env DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get remove --purge -y \
+    "ros-${ROS_DISTRO}-desktop" \
+    "ros-${ROS_DISTRO}-rclpy" \
+    "ros-${ROS_DISTRO}-std-msgs" \
+    "ros-${ROS_DISTRO}-geometry-msgs" \
+    "ros-${ROS_DISTRO}-sensor-msgs" \
+    "ros-${ROS_DISTRO}-nav-msgs" \
+    "ros-${ROS_DISTRO}-tf2-ros" \
+    "ros-${ROS_DISTRO}-tf2-msgs" \
+    "ros-${ROS_DISTRO}-std-srvs" \
+    "ros-${ROS_DISTRO}-example-interfaces" \
+    "ros-${ROS_DISTRO}-ament-cmake" \
+    "ros-${ROS_DISTRO}-rclcpp" || warn "ROS package purge reported issues."
+  sudo env DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get autoremove -y || true
+fi
+
+if [ -e "$HORUS_HOME" ]; then
+  case "$PWD" in
+    "$HORUS_HOME"|"$HORUS_HOME"/*)
+      cd "$HOME"
+      ;;
+  esac
+  log "Removing install root: $HORUS_HOME"
+  rm -rf "$HORUS_HOME"
+else
+  warn "Install root does not exist: $HORUS_HOME"
+fi
+
+log "Uninstall complete."
+echo "Restart your shell (or run: source ~/.bashrc)."
+EOM
+
   chmod +x \
     "$bin_dir/horus-env" \
+    "$bin_dir/python3" \
+    "$bin_dir/horus-python" \
     "$bin_dir/horus-start" \
     "$bin_dir/horus-stop" \
     "$bin_dir/horus-status" \
-    "$bin_dir/horus-update"
+    "$bin_dir/horus-update" \
+    "$bin_dir/horus-uninstall"
 
   log_success "Helper commands created in $bin_dir"
 }
@@ -178,8 +382,18 @@ configure_shell_integration() {
   local marker_end="# <<< HORUS installer <<<"
 
   if [ -f "$bashrc" ] && grep -Fq "$marker_start" "$bashrc"; then
-    log_info "~/.bashrc already has HORUS integration block"
-    return 0
+    log_info "~/.bashrc already has HORUS integration block; refreshing"
+    local tmp_bashrc
+    tmp_bashrc="$(mktemp)"
+
+    awk -v start="$marker_start" -v end="$marker_end" '
+      $0 == start { skip = 1; next }
+      $0 == end { skip = 0; next }
+      skip != 1 { print }
+    ' "$bashrc" > "$tmp_bashrc"
+
+    cat "$tmp_bashrc" > "$bashrc"
+    rm -f "$tmp_bashrc"
   fi
 
   cat >> "$bashrc" <<EOM

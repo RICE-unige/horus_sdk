@@ -23,12 +23,20 @@ setup_python_sdk_runtime() {
   [ -d "$sdk_dir" ] || die "SDK directory missing: $sdk_dir"
 
   log_info "Setting up Python virtual environment"
-  run_cmd python3 -m venv "$sdk_dir/.venv"
+  # Use system-site-packages so apt-installed ROS Python modules (e.g., rclpy)
+  # are visible inside the SDK venv.
+  run_cmd python3 -m venv --clear --system-site-packages "$sdk_dir/.venv"
 
   local pip_bin="$sdk_dir/.venv/bin/pip"
   local python_bin="$sdk_dir/.venv/bin/python"
 
-  run_cmd "$pip_bin" install --upgrade pip setuptools wheel
+  # Keep setuptools compatible with ROS tooling (colcon-core requires <80).
+  run_cmd "$pip_bin" install --upgrade pip "setuptools<80" wheel
+  # Install pure-Python/runtime deps explicitly; ROS Python packages come from apt.
+  run_cmd "$pip_bin" install \
+    "numpy>=1.21.0" \
+    "dataclasses-json>=0.5.0" \
+    "rich>=13.0.0"
   run_cmd "$pip_bin" install -e "$sdk_dir" --no-deps
   run_cmd "$python_bin" -c "import horus; print('horus import OK')"
 

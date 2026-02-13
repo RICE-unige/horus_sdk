@@ -106,8 +106,15 @@ Post-install helpers:
 - `horus-start`
 - `horus-stop`
 - `horus-update`
+- `horus-python`
+- `horus-uninstall`
 
 See `docs/INSTALLER.md` for flags and non-interactive usage.
+
+The installer keeps your shell clean (no global venv auto-activation). Use:
+- `python3 <~/horus/sdk/...>` directly (shim auto-routes HORUS scripts to HORUS env)
+- `horus-python <script.py>` for SDK scripts
+- `source ~/horus/bin/horus-env` for a session-scoped HORUS environment
 
 Install (development):
 

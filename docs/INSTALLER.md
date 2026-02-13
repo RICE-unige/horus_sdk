@@ -27,8 +27,9 @@ curl -fsSL https://raw.githubusercontent.com/RICE-unige/horus_sdk/main/install.s
 - Channel: `stable` (pinned refs from `install/manifest/releases.json`)
 - Bridge mode: WebRTC ON
 - Startup mode: manual (`horus-start`)
-- Python setup: virtualenv in `~/horus/sdk/.venv`
-- Shell integration: idempotent PATH/HORUS_HOME block in `~/.bashrc`
+- Python setup: virtualenv in `~/horus/sdk/.venv` with `--system-site-packages` so apt ROS Python modules are available
+- Shell integration: idempotent `~/.bashrc` block that sets `HORUS_HOME` and adds `~/horus/bin` to `PATH` (no global venv activation)
+- Python UX: `python3` is shimmed via `~/horus/bin/python3` to auto-use HORUS env for scripts under `~/horus/sdk`, while forwarding non-HORUS usage to system Python
 
 ## Flags
 
@@ -54,6 +55,27 @@ After install:
 - `horus-start`
 - `horus-stop`
 - `horus-update`
+- `horus-python`
+- `horus-uninstall`
+
+Uninstall usage:
+
+```bash
+horus-uninstall
+# non-interactive
+horus-uninstall --yes
+# optional: also purge ROS apt packages installed by installer
+horus-uninstall --yes --purge-ros-packages
+```
+
+Use environment on-demand:
+
+```bash
+# one command with HORUS env
+horus-python path/to/script.py
+# or manual session-scoped activation
+source ~/horus/bin/horus-env
+```
 
 ## Notes
 

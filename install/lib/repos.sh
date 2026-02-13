@@ -65,7 +65,15 @@ ensure_git_repo_clean() {
   local status
   status="$(git -C "$repo_path" status --porcelain)"
   if [ -n "$status" ]; then
-    die "$repo_label repository is dirty: $repo_path\nCommit/stash changes or choose a different install root."
+    local short_status
+    short_status="$(git -C "$repo_path" status --short)"
+    die "$repo_label repository is dirty: $repo_path
+Uncommitted changes:
+$short_status
+Use one of:
+  - stash changes: git -C \"$repo_path\" stash push -u -m \"horus-installer-backup\"
+  - commit changes in that repo
+  - use a different install root with --install-root <path>"
   fi
 }
 
