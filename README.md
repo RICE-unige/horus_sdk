@@ -54,14 +54,28 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 > [!NOTE]
 > Python remains the most complete and actively used track for current experiments.
 
-## SDK Parity Branches
+## Rust/C++ Parity Workstreams
 
-- Rust parity track: `feature/sdk-rust-parity`
-- C++ parity track: `feature/sdk-cpp-parity`
+- Canonical parity contract and fixtures:
+  - `contracts/sdk_payload_contract.md`
+  - `contracts/fixtures/*.json`
+- Branches:
+  - `feature/sdk-rust-parity`
+  - `feature/sdk-cpp-parity`
 
-Language-specific setup and commands:
-- Rust: `rust/README.md`
-- C++: `cpp/README.md`
+Rust parity branch currently includes:
+- typed registration payload builders,
+- camera transport profile fallback/default parity,
+- global visualization dedupe parity,
+- workspace scale serialization parity,
+- robot manager config defaults parity,
+- Rust integration tests mirroring Python parity tests under `rust/tests/`.
+
+C++ parity branch now also includes:
+- `feature/sdk-cpp-parity` implementation of parity APIs and typed payload builders,
+- C++ examples parity (`sdk_registration_demo`, `fake_tf_publisher`, `e2e_registration_check`),
+- C++ parity tests and benchmark binaries,
+- ROS/no-ROS C++ CI coverage through the matrix workflow.
 
 ## Requirements
 

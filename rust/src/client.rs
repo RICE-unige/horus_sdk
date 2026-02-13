@@ -15,4 +15,12 @@ impl Client {
     pub async fn shutdown(&self) {
         // TODO: Implement shutdown logic
     }
+
+    pub fn backend_type(&self) -> &str {
+        &self.backend_type
+    }
+
+    pub fn auto_launch(&self) -> bool {
+        self.auto_launch
+    }
 }

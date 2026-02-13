@@ -1,18 +1,19 @@
 use crate::core::types::EventPriority;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-/// Event class for EventBus communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub topic: String,
     pub data: serde_json::Value,
     pub priority: EventPriority,
-    pub source: String,
+    pub source: Option<String>,
     pub event_id: String,
     pub timestamp: f64,
 }
@@ -28,20 +29,19 @@ impl Event {
             topic: topic.into(),
             data,
             priority,
-            source: source.into(),
+            source: Some(source.into()),
             event_id: Uuid::new_v4().to_string(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_else(|_| Duration::from_secs(0))
                 .as_secs_f64(),
         }
     }
 }
 
-/// Event subscription callback type
-pub type EventCallback = Arc<dyn Fn(Event) -> () + Send + Sync>;
+pub type EventCallback = Arc<dyn Fn(Event) + Send + Sync + 'static>;
 
-/// Manages a single event subscription
+#[derive(Clone)]
 struct EventSubscription {
     callback: EventCallback,
     topic_filter: String,
@@ -51,11 +51,7 @@ struct EventSubscription {
 }
 
 impl EventSubscription {
-    fn new(
-        callback: EventCallback,
-        topic_filter: String,
-        priority_filter: EventPriority,
-    ) -> Self {
+    fn new(callback: EventCallback, topic_filter: String, priority_filter: EventPriority) -> Self {
         Self {
             callback,
             topic_filter,
@@ -69,299 +65,343 @@ impl EventSubscription {
         if !self.active {
             return false;
         }
-
-        if !self.matches_topic(&event.topic, &self.topic_filter) {
+        if event.priority < self.priority_filter {
             return false;
         }
-
-        if (event.priority as u8) < (self.priority_filter as u8) {
-            return false;
-        }
-
-        true
-    }
-
-    fn matches_topic(&self, event_topic: &str, topic_filter: &str) -> bool {
-        if topic_filter == "*" {
-            return true;
-        }
-
-        if event_topic == topic_filter {
-            return true;
-        }
-
-        // Simple wildcard matching
-        if topic_filter.ends_with('*') {
-            let prefix = &topic_filter[..topic_filter.len() - 1];
-            return event_topic.starts_with(prefix);
-        }
-
-        // Split by '.' and match parts
-        let event_parts: Vec<&str> = event_topic.split('.').collect();
-        let filter_parts: Vec<&str> = topic_filter.split('.').collect();
-
-        if filter_parts.is_empty() {
-            return false;
-        }
-
-        // Handle trailing wildcard in parts
-        if filter_parts.last() == Some(&"*") {
-            let prefix_parts = &filter_parts[..filter_parts.len() - 1];
-            if event_parts.len() < prefix_parts.len() {
-                return false;
-            }
-
-            for (i, filter_part) in prefix_parts.iter().enumerate() {
-                if *filter_part != "+" && *filter_part != event_parts[i] {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        // Exact match with + wildcards
-        if event_parts.len() != filter_parts.len() {
-            return false;
-        }
-
-        for (event_part, filter_part) in event_parts.iter().zip(filter_parts.iter()) {
-            if *filter_part != "+" && *filter_part != *event_part {
-                return false;
-            }
-        }
-
-        true
+        matches_topic(&event.topic, &self.topic_filter)
     }
 }
 
-/// Thread-safe event bus for HORUS SDK component communication
-///
-/// Enables real-time data flow between ROS robots and Meta Quest 3 application
-/// through topic-based publish/subscribe messaging with priority handling.
-pub struct EventBus {
-    subscriptions: Arc<RwLock<HashMap<String, Vec<Arc<RwLock<EventSubscription>>>>>>,
-    event_tx: mpsc::UnboundedSender<Event>,
-    stats: Arc<RwLock<EventBusStats>>,
-    max_queue_size: usize,
+fn matches_topic(event_topic: &str, topic_filter: &str) -> bool {
+    if topic_filter == "*" {
+        return true;
+    }
+    if event_topic == topic_filter {
+        return true;
+    }
+    if topic_filter.ends_with('*') {
+        let prefix = &topic_filter[..topic_filter.len() - 1];
+        return event_topic.starts_with(prefix);
+    }
+
+    let filter_parts: Vec<&str> = topic_filter.split('.').collect();
+    let event_parts: Vec<&str> = event_topic.split('.').collect();
+    if filter_parts.is_empty() {
+        return false;
+    }
+
+    if filter_parts.last() == Some(&"*") {
+        let prefix_parts = &filter_parts[..filter_parts.len() - 1];
+        if event_parts.len() < prefix_parts.len() {
+            return false;
+        }
+        return prefix_parts
+            .iter()
+            .zip(event_parts.iter())
+            .all(|(fp, ep)| *fp == "+" || *fp == *ep);
+    }
+
+    if filter_parts.len() != event_parts.len() {
+        return false;
+    }
+    filter_parts
+        .iter()
+        .zip(event_parts.iter())
+        .all(|(fp, ep)| *fp == "+" || *fp == *ep)
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Default)]
 struct EventBusStats {
-    events_published: usize,
-    events_processed: usize,
-    dropped_events: usize,
+    events_published: AtomicUsize,
+    events_processed: AtomicUsize,
+    dropped_events: AtomicUsize,
+    active_subscriptions: AtomicUsize,
+}
+
+pub struct EventBus {
+    max_queue_size: usize,
+    running: Arc<AtomicBool>,
+    queue: Arc<(Mutex<Vec<Event>>, Condvar)>,
+    subscriptions: Arc<RwLock<HashMap<String, Vec<EventSubscription>>>>,
+    stats: Arc<EventBusStats>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl EventBus {
-    /// Create a new EventBus with specified max queue size
     pub fn new(max_queue_size: usize) -> Self {
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
-        let subscriptions = Arc::new(RwLock::new(HashMap::new()));
-        let stats = Arc::new(RwLock::new(EventBusStats::default()));
+        let queue = Arc::new((Mutex::new(Vec::<Event>::new()), Condvar::new()));
+        let subscriptions = Arc::new(RwLock::new(HashMap::<String, Vec<EventSubscription>>::new()));
+        let stats = Arc::new(EventBusStats::default());
+        let running = Arc::new(AtomicBool::new(true));
 
-        // Spawn event processing task
-        let subs_clone = Arc::clone(&subscriptions);
-        let stats_clone = Arc::clone(&stats);
-        tokio::spawn(async move {
-            while let Some(event) = event_rx.recv().await {
-                // Dispatch event to all matching subscriptions
-                let subs = subs_clone.read().await;
-                let mut matching_subs = Vec::new();
-
-                for sub_list in subs.values() {
-                    for sub in sub_list {
-                        let sub_lock = sub.read().await;
-                        if sub_lock.matches(&event) {
-                            matching_subs.push(Arc::clone(&sub_lock.callback));
+        let queue_for_thread = Arc::clone(&queue);
+        let subscriptions_for_thread = Arc::clone(&subscriptions);
+        let stats_for_thread = Arc::clone(&stats);
+        let running_for_thread = Arc::clone(&running);
+        let worker = thread::spawn(move || {
+            loop {
+                let maybe_event = {
+                    let (lock, cvar) = &*queue_for_thread;
+                    let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                    while guard.is_empty() {
+                        let res = cvar
+                            .wait_timeout(guard, Duration::from_millis(100))
+                            .unwrap_or_else(|e| e.into_inner());
+                        guard = res.0;
+                        if guard.is_empty() && !running_for_thread.load(Ordering::Relaxed) {
+                            return;
                         }
                     }
-                }
-                drop(subs);
+                    guard.sort_by(|a, b| b.priority.cmp(&a.priority));
+                    guard.pop()
+                };
 
-                // Invoke callbacks
-                for callback in matching_subs {
-                    let event_clone = event.clone();
-                    tokio::spawn(async move {
-                        callback(event_clone);
-                    });
-                }
+                let Some(event) = maybe_event else {
+                    continue;
+                };
 
-                // Update stats
-                let mut stats = stats_clone.write().await;
-                stats.events_processed += 1;
+                let callbacks: Vec<EventCallback> = {
+                    let subs = subscriptions_for_thread.read().unwrap_or_else(|e| e.into_inner());
+                    subs.values()
+                        .flat_map(|v| v.iter())
+                        .filter(|s| s.matches(&event))
+                        .map(|s| Arc::clone(&s.callback))
+                        .collect()
+                };
+
+                for cb in callbacks {
+                    cb(event.clone());
+                }
+                stats_for_thread
+                    .events_processed
+                    .fetch_add(1, Ordering::Relaxed);
             }
         });
 
         Self {
-            subscriptions,
-            event_tx,
-            stats,
             max_queue_size,
+            running,
+            queue,
+            subscriptions,
+            stats,
+            worker: Mutex::new(Some(worker)),
         }
     }
 
-    /// Publish an event to the bus
-    pub async fn publish(&self, event: Event) {
-        let mut stats = self.stats.write().await;
-        
-        // Note: UnboundedSender doesn't have a size limit, but we track conceptually
-        if stats.events_published - stats.events_processed > self.max_queue_size {
-            stats.dropped_events += 1;
-            return;
+    pub fn publish_event(&self, event: Event) {
+        let (lock, cvar) = &*self.queue;
+        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() >= self.max_queue_size {
+            if let Some(idx) = guard.iter().position(|e| e.priority == EventPriority::Low) {
+                guard.remove(idx);
+            } else if !guard.is_empty() {
+                guard.remove(0);
+            }
+            self.stats.dropped_events.fetch_add(1, Ordering::Relaxed);
         }
-
-        if self.event_tx.send(event).is_ok() {
-            stats.events_published += 1;
-        }
+        guard.push(event);
+        self.stats
+            .events_published
+            .fetch_add(1, Ordering::Relaxed);
+        cvar.notify_one();
     }
 
-    /// Publish with convenience parameters
-    pub async fn publish_simple(
+    pub fn publish_simple(
         &self,
         topic: impl Into<String>,
         data: serde_json::Value,
         priority: EventPriority,
         source: impl Into<String>,
     ) {
-        let event = Event::new(topic, data, priority, source);
-        self.publish(event).await;
+        self.publish_event(Event::new(topic, data, priority, source));
     }
 
-    /// Subscribe to events matching topic filter
-    pub async fn subscribe(
+    pub fn subscribe(
         &self,
-        topic_filter: String,
+        topic_filter: impl Into<String>,
         callback: EventCallback,
         priority_filter: EventPriority,
     ) -> String {
-        let subscription = Arc::new(RwLock::new(EventSubscription::new(
-            callback,
-            topic_filter.clone(),
-            priority_filter,
-        )));
-
-        let subscription_id = subscription.read().await.subscription_id.clone();
-
-        let mut subs = self.subscriptions.write().await;
-        subs.entry(topic_filter)
-            .or_insert_with(Vec::new)
-            .push(subscription);
-
+        let topic_filter = topic_filter.into();
+        let subscription = EventSubscription::new(callback, topic_filter.clone(), priority_filter);
+        let subscription_id = subscription.subscription_id.clone();
+        let mut subs = self.subscriptions.write().unwrap_or_else(|e| e.into_inner());
+        subs.entry(topic_filter).or_default().push(subscription);
+        let active_count: usize = subs.values().map(|v| v.len()).sum();
+        self.stats
+            .active_subscriptions
+            .store(active_count, Ordering::Relaxed);
         subscription_id
     }
 
-    /// Unsubscribe from events
-    pub async fn unsubscribe(&self, subscription_id: &str) -> bool {
-        let mut subs = self.subscriptions.write().await;
-
-        for (topic, sub_list) in subs.iter_mut() {
-            sub_list.retain(|sub| {
-                let sub_lock = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(sub.read())
-                });
-                sub_lock.subscription_id != subscription_id
-            });
-
-            if sub_list.is_empty() {
-                subs.remove(topic);
-                return true;
+    pub fn unsubscribe(&self, subscription_id: &str) -> bool {
+        let mut subs = self.subscriptions.write().unwrap_or_else(|e| e.into_inner());
+        let mut found = false;
+        let keys: Vec<String> = subs.keys().cloned().collect();
+        for key in keys {
+            if let Some(list) = subs.get_mut(&key) {
+                let before = list.len();
+                list.retain(|s| s.subscription_id != subscription_id);
+                if list.len() != before {
+                    found = true;
+                }
+            }
+            let remove_key = subs.get(&key).map(|v| v.is_empty()).unwrap_or(false);
+            if remove_key {
+                subs.remove(&key);
             }
         }
-
-        false
+        let active_count: usize = subs.values().map(|v| v.len()).sum();
+        self.stats
+            .active_subscriptions
+            .store(active_count, Ordering::Relaxed);
+        found
     }
 
-    /// Get event bus statistics
-    pub async fn get_stats(&self) -> HashMap<String, usize> {
-        let stats = self.stats.read().await;
-        let mut result = HashMap::new();
-        result.insert("events_published".to_string(), stats.events_published);
-        result.insert("events_processed".to_string(), stats.events_processed);
-        result.insert("dropped_events".to_string(), stats.dropped_events);
-        result.insert(
-            "active_subscriptions".to_string(),
-            self.subscriptions.read().await.len(),
-        );
-        result
+    pub fn unsubscribe_all(&self, topic_filter: Option<&str>) {
+        let mut subs = self.subscriptions.write().unwrap_or_else(|e| e.into_inner());
+        match topic_filter {
+            Some(filter) => {
+                subs.remove(filter);
+            }
+            None => subs.clear(),
+        }
+        let active_count: usize = subs.values().map(|v| v.len()).sum();
+        self.stats
+            .active_subscriptions
+            .store(active_count, Ordering::Relaxed);
     }
 
-    /// Get current subscription counts by topic
-    pub async fn get_subscriptions(&self) -> HashMap<String, usize> {
-        let subs = self.subscriptions.read().await;
-        subs.iter()
-            .map(|(topic, sub_list)| (topic.clone(), sub_list.len()))
+    pub fn get_stats(&self) -> HashMap<String, usize> {
+        let queue_size = self
+            .queue
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len();
+        HashMap::from([
+            (
+                "events_published".to_string(),
+                self.stats.events_published.load(Ordering::Relaxed),
+            ),
+            (
+                "events_processed".to_string(),
+                self.stats.events_processed.load(Ordering::Relaxed),
+            ),
+            (
+                "dropped_events".to_string(),
+                self.stats.dropped_events.load(Ordering::Relaxed),
+            ),
+            (
+                "active_subscriptions".to_string(),
+                self.stats.active_subscriptions.load(Ordering::Relaxed),
+            ),
+            ("queue_size".to_string(), queue_size),
+        ])
+    }
+
+    pub fn get_subscriptions(&self) -> HashMap<String, usize> {
+        self.subscriptions
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(k, v)| (k.clone(), v.len()))
             .collect()
     }
 }
 
-// Global event bus instance
-static GLOBAL_EVENT_BUS: once_cell::sync::Lazy<EventBus> =
-    once_cell::sync::Lazy::new(|| EventBus::new(1000));
+impl Drop for EventBus {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        self.queue.1.notify_all();
+        if let Ok(mut handle_guard) = self.worker.lock() {
+            if let Some(handle) = handle_guard.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
 
-/// Get the global HORUS event bus instance
+static GLOBAL_EVENT_BUS: Lazy<EventBus> = Lazy::new(|| EventBus::new(1000));
+
 pub fn get_event_bus() -> &'static EventBus {
     &GLOBAL_EVENT_BUS
 }
 
-/// Convenience function to publish to global event bus
+pub fn publish_now(
+    topic: impl Into<String>,
+    data: serde_json::Value,
+    priority: EventPriority,
+    source: impl Into<String>,
+) {
+    get_event_bus().publish_simple(topic, data, priority, source);
+}
+
 pub async fn publish(
     topic: impl Into<String>,
     data: serde_json::Value,
     priority: EventPriority,
     source: impl Into<String>,
 ) {
-    get_event_bus()
-        .publish_simple(topic, data, priority, source)
-        .await;
+    publish_now(topic, data, priority, source);
 }
 
-/// Convenience function to subscribe to global event bus
-pub async fn subscribe(
-    topic_filter: String,
+pub fn subscribe_now(
+    topic_filter: impl Into<String>,
     callback: EventCallback,
     priority_filter: EventPriority,
 ) -> String {
-    get_event_bus()
-        .subscribe(topic_filter, callback, priority_filter)
-        .await
+    get_event_bus().subscribe(topic_filter, callback, priority_filter)
 }
 
-/// Convenience function to unsubscribe from global event bus
+pub async fn subscribe(
+    topic_filter: impl Into<String>,
+    callback: EventCallback,
+    priority_filter: EventPriority,
+) -> String {
+    subscribe_now(topic_filter, callback, priority_filter)
+}
+
+pub fn unsubscribe_now(subscription_id: &str) -> bool {
+    get_event_bus().unsubscribe(subscription_id)
+}
+
 pub async fn unsubscribe(subscription_id: &str) -> bool {
-    get_event_bus().unsubscribe(subscription_id).await
+    unsubscribe_now(subscription_id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
-    #[tokio::test]
-    async fn test_event_creation() {
-        let event = Event::new("test.topic", serde_json::json!({}), EventPriority::Normal, "test");
-        assert_eq!(event.topic, "test.topic");
-        assert!(!event.event_id.is_empty());
+    #[test]
+    fn topic_matching_supports_plus_and_star() {
+        assert!(matches_topic("robot.status.ready", "robot.status.*"));
+        assert!(matches_topic("robot.status.ready", "robot.+.ready"));
+        assert!(!matches_topic("robot.status.ready", "robot.ready"));
     }
 
-    #[tokio::test]
-    async fn test_event_bus_publish_subscribe() {
-        let bus = EventBus::new(100);
-        let received = Arc::new(RwLock::new(false));
-        let received_clone = Arc::clone(&received);
-
-        let callback: EventCallback = Arc::new(move |_event| {
-            let received = Arc::clone(&received_clone);
-            tokio::spawn(async move {
-                *received.write().await = true;
-            });
-        });
-
-        bus.subscribe("test.*".to_string(), callback, EventPriority::Low)
-            .await;
-
-        bus.publish_simple("test.message", serde_json::json!({}), EventPriority::Normal, "test")
-            .await;
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        assert!(*received.read().await);
+    #[test]
+    fn publish_and_subscribe_flow() {
+        let bus = EventBus::new(16);
+        let seen = Arc::new(AtomicUsize::new(0));
+        let seen_cb = Arc::clone(&seen);
+        let sub = bus.subscribe(
+            "robot.*",
+            Arc::new(move |_| {
+                seen_cb.fetch_add(1, Ordering::Relaxed);
+            }),
+            EventPriority::Low,
+        );
+        bus.publish_simple(
+            "robot.status",
+            serde_json::json!({"ok": true}),
+            EventPriority::Normal,
+            "test",
+        );
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(seen.load(Ordering::Relaxed) >= 1);
+        assert!(bus.unsubscribe(&sub));
     }
 }

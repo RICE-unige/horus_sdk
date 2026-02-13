@@ -1,0 +1,13 @@
+{
+  "action": "register",
+  "robot_name": "test_bot",
+  "robot_type": "wheeled",
+  "control": {
+    "drive_topic": "/test_bot/cmd_vel"
+  },
+  "dimensions": {
+    "length": 0.8,
+    "width": 0.6,
+    "height": 0.4
+  }
+}

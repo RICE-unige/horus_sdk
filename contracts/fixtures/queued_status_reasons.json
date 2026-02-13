@@ -1,0 +1,6 @@
+{
+  "Queued": "Waiting for Workspace",
+  "Queued(Waiting for Workspace)": "Waiting for Workspace",
+  "Queued: Waiting for TF": "Waiting for TF",
+  "Queued - Waiting for TF": "Waiting for TF"
+}

@@ -1,0 +1,10 @@
+{
+  "streaming_type": "webrtc",
+  "minimap_streaming_type": "webrtc",
+  "teleop_streaming_type": "webrtc",
+  "startup_mode": "minimap",
+  "webrtc_client_signal_topic": "/horus/webrtc/client_signal",
+  "webrtc_server_signal_topic": "/horus/webrtc/server_signal",
+  "webrtc_bitrate_kbps": 2000,
+  "webrtc_framerate": 30
+}
