@@ -184,6 +184,7 @@ obj/
 # Dependency directories
 node_modules/
 jspm_packages/
+.docusaurus/
 
 # OS generated files
 .DS_Store  # Mac-specific
