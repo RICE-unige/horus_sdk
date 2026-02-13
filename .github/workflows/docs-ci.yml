@@ -1,0 +1,49 @@
+name: Docs CI
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "static/**"
+      - "docusaurus.config.js"
+      - "sidebars.js"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/docs-ci.yml"
+      - ".github/scripts/check_docs_examples.py"
+  push:
+    branches:
+      - docs/site-v1
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "static/**"
+      - "docusaurus.config.js"
+      - "sidebars.js"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/docs-ci.yml"
+      - ".github/scripts/check_docs_examples.py"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run docs quality checks
+        run: npm run docs:check
+
+      - name: Build Docusaurus docs
+        run: npm run docs:build
