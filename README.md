@@ -215,6 +215,16 @@ python3 python/examples/fake_tf_publisher.py --robot-count 6 --with-camera --pub
 python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-camera --with-occupancy-grid --workspace-scale 0.1
 ```
 
+### Teleop command-flow fake TF tests
+
+```bash
+# Single robot: remains static until /test_bot/cmd_vel receives Twist
+python3 python/examples/fake_tf_teleop_single.py --robot-name test_bot --static-camera --publish-compressed-images
+
+# Multi-robot: all stay static until per-robot cmd_vel commands arrive
+python3 python/examples/fake_tf_teleop_multi.py --robot-count 4 --robot-name test_bot --static-camera --publish-compressed-images
+```
+
 ### Targeted tests
 
 ```bash
