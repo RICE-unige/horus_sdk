@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
+# =============================================================================
+# HORUS Installer - Common Utilities
+#
+# Logging, prompts, and shared helpers. All user-facing log functions also
+# write to the log file (via _log_to_file from ui.sh).
+# =============================================================================
 
 set -o pipefail
 
 HORUS_INSTALLER_VERSION="0.1.0"
 
+# ---------------------------------------------------------------------------
+# Color codes (disabled when not a TTY)
+# ---------------------------------------------------------------------------
 if [ -t 1 ]; then
   C_RESET='\033[0m'
+  C_BOLD='\033[1m'
   C_BLUE='\033[1;34m'
   C_GREEN='\033[1;32m'
   C_YELLOW='\033[1;33m'
@@ -13,6 +23,7 @@ if [ -t 1 ]; then
   C_DIM='\033[2m'
 else
   C_RESET=''
+  C_BOLD=''
   C_BLUE=''
   C_GREEN=''
   C_YELLOW=''
@@ -20,20 +31,28 @@ else
   C_DIM=''
 fi
 
+# ---------------------------------------------------------------------------
+# Logging (user-facing + log file)
+# ---------------------------------------------------------------------------
+
 log_info() {
-  printf "%b[horus]%b %s\n" "$C_BLUE" "$C_RESET" "$*"
+  printf "  %b[horus]%b %s\n" "$C_BLUE" "$C_RESET" "$*"
+  _log_to_file "[info] $*" 2>/dev/null || true
 }
 
 log_success() {
-  printf "%b[ok]%b %s\n" "$C_GREEN" "$C_RESET" "$*"
+  printf "  %b[ok]%b %s\n" "$C_GREEN" "$C_RESET" "$*"
+  _log_to_file "[ok] $*" 2>/dev/null || true
 }
 
 log_warn() {
-  printf "%b[warn]%b %s\n" "$C_YELLOW" "$C_RESET" "$*"
+  printf "  %b[warn]%b %s\n" "$C_YELLOW" "$C_RESET" "$*"
+  _log_to_file "[warn] $*" 2>/dev/null || true
 }
 
 log_error() {
-  printf "%b[error]%b %s\n" "$C_RED" "$C_RESET" "$*" >&2
+  printf "  %b[error]%b %s\n" "$C_RED" "$C_RESET" "$*" >&2
+  _log_to_file "[error] $*" 2>/dev/null || true
 }
 
 die() {
@@ -41,14 +60,17 @@ die() {
   exit 1
 }
 
+# ---------------------------------------------------------------------------
+# Command helpers
+# ---------------------------------------------------------------------------
+
 command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
-run_cmd() {
-  log_info "Running: $*"
-  "$@"
-}
+# ---------------------------------------------------------------------------
+# Prompt helpers
+# ---------------------------------------------------------------------------
 
 NO_TTY_PROMPT_WARNED=0
 
@@ -130,6 +152,10 @@ prompt_yes_no() {
       ;;
   esac
 }
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
 
 normalize_path() {
   local raw="$1"
