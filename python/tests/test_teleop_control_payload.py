@@ -34,7 +34,7 @@ def test_teleop_control_defaults():
     assert teleop["response_mode"] == "analog"
     assert teleop["publish_rate_hz"] == 30.0
     assert teleop["custom_passthrough_only"] is False
-    assert teleop["deadman"]["policy"] == "either_index_trigger"
+    assert teleop["deadman"]["policy"] == "either_grip_trigger"
     assert teleop["deadman"]["timeout_ms"] == 200
 
 
@@ -128,7 +128,7 @@ def test_teleop_control_invalid_values_clamped_to_safe_defaults():
     assert teleop["robot_profile"] == "wheeled"
     assert teleop["response_mode"] == "analog"
     assert teleop["publish_rate_hz"] == 5.0
-    assert teleop["deadman"]["policy"] == "either_index_trigger"
+    assert teleop["deadman"]["policy"] == "either_grip_trigger"
     assert teleop["deadman"]["timeout_ms"] == 50
     assert teleop["axes"]["deadzone"] == 0.5
     assert teleop["axes"]["expo"] == 1.0

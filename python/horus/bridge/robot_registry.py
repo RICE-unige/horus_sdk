@@ -384,6 +384,8 @@ class RobotRegistryClient:
 
     def _collect_topics(self, dataviz):
         topics = []
+        if dataviz is None:
+            return topics
         try:
             for viz in dataviz.get_enabled_visualizations():
                 topic = viz.data_source.topic
@@ -392,6 +394,40 @@ class RobotRegistryClient:
         except Exception:
             pass
         return topics
+
+    def _collect_control_topics(self, config: Dict[str, Any]) -> list:
+        topics = []
+        if not isinstance(config, dict):
+            return topics
+
+        control = config.get("control")
+        if not isinstance(control, dict):
+            return topics
+
+        def _append_topic(value: Any):
+            topic = str(value or "").strip()
+            if topic and topic not in topics:
+                topics.append(topic)
+
+        _append_topic(control.get("drive_topic"))
+
+        teleop = control.get("teleop")
+        if isinstance(teleop, dict):
+            _append_topic(teleop.get("command_topic"))
+            _append_topic(teleop.get("raw_input_topic"))
+            _append_topic(teleop.get("head_pose_topic"))
+
+        return topics
+
+    @staticmethod
+    def _merge_topics(*topic_lists: list) -> list:
+        merged = []
+        for topic_list in topic_lists:
+            for topic in topic_list or []:
+                normalized = str(topic or "").strip()
+                if normalized and normalized not in merged:
+                    merged.append(normalized)
+        return merged
 
     def _apply_registration_metadata(self, robot, dataviz, ack: Dict):
         try:
@@ -495,14 +531,20 @@ class RobotRegistryClient:
             infos = self.node.get_subscriptions_info_by_topic(topic)
         except Exception:
             return False
-        return any(self._is_backend_node_name(info.node_name) for info in infos)
+        if any(self._is_backend_node_name(info.node_name) for info in infos):
+            return True
+        # Fallback: any non-local subscriber means the bridge side has a consumer.
+        return any(not self._is_local_node_name(info.node_name) for info in infos)
 
     def _has_backend_publisher(self, topic: str) -> bool:
         try:
             infos = self.node.get_publishers_info_by_topic(topic)
         except Exception:
             return False
-        return any(self._is_backend_node_name(info.node_name) for info in infos)
+        if any(self._is_backend_node_name(info.node_name) for info in infos):
+            return True
+        # Fallback: any non-local publisher means topic source is present beyond SDK process.
+        return any(not self._is_local_node_name(info.node_name) for info in infos)
 
     def _has_local_publisher(self, topic: str) -> bool:
         try:
@@ -518,15 +560,16 @@ class RobotRegistryClient:
             return False
         return any(self._is_local_node_name(info.node_name) for info in infos)
 
-    def _build_topic_roles(self, robot_topics):
+    def _build_topic_roles(self, robot_topics, control_topics: Optional[list] = None):
         roles = {
             "/horus/registration": "sdk_pub",
             "/horus/registration_ack": "sdk_sub",
             "/horus/heartbeat": "sdk_sub",
         }
+        control_topic_set = set(control_topics or [])
         for topic in robot_topics:
             if topic not in roles:
-                roles[topic] = "backend_sub"
+                roles[topic] = "backend_pub" if topic in control_topic_set else "backend_sub"
         return roles
 
     def _topic_group(self, topic: str, robot_names):
@@ -763,6 +806,22 @@ class RobotRegistryClient:
                 else:
                     link = "OK" if backend_pub else "NO"
                     data = "ACTIVE" if backend_pub else "IDLE"
+            elif role == "backend_pub":
+                backend_pub = self._has_backend_publisher(topic)
+                _, subs = self._get_topic_counts(topic)
+                pubs = 1 if backend_pub else 0
+                role_label = "bridge->robot" if topic.endswith("/cmd_vel") else "bridge->topic"
+                if not is_connected or not registration_done:
+                    link = "NO"
+                    data = "IDLE"
+                else:
+                    link = "OK" if backend_pub else "NO"
+                    if not backend_pub:
+                        data = "IDLE"
+                    elif subs > 0:
+                        data = "ACTIVE"
+                    else:
+                        data = "STALE"
             else:
                 role_label = "data->bridge"
                 pubs, _ = self._get_topic_counts(topic)
@@ -858,8 +917,10 @@ class RobotRegistryClient:
             config_json = json.dumps(config)
             camera_topic_profiles = self._extract_camera_topic_profiles(config)
             
-            robot_topics = self._collect_topics(dataviz)
-            topic_roles = self._build_topic_roles(robot_topics)
+            data_topics = self._collect_topics(dataviz)
+            control_topics = self._collect_control_topics(config)
+            robot_topics = self._merge_topics(data_topics, control_topics)
+            topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
@@ -1137,6 +1198,7 @@ class RobotRegistryClient:
             entry_by_name = {}
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             robot_topics = []
+            control_topics = []
             camera_topic_profiles = {}
             global_visualizations = self._build_global_visualizations_payload(datavizs)
             for robot, dataviz in zip(robots, datavizs):
@@ -1151,11 +1213,11 @@ class RobotRegistryClient:
                 entries.append((robot, dataviz, msg))
                 entry_by_name[robot.name] = (robot, dataviz, msg)
                 camera_topic_profiles.update(self._extract_camera_topic_profiles(config))
-                for topic in self._collect_topics(dataviz):
-                    if topic and topic not in robot_topics:
-                        robot_topics.append(topic)
+                robot_topics = self._merge_topics(robot_topics, self._collect_topics(dataviz))
+                control_topics = self._merge_topics(control_topics, self._collect_control_topics(config))
 
-            topic_roles = self._build_topic_roles(robot_topics)
+            robot_topics = self._merge_topics(robot_topics, control_topics)
+            topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
             try:
@@ -1754,10 +1816,10 @@ class RobotRegistryClient:
 
             deadman_policy = _coerce_text(
                 deadman_metadata.get("policy"),
-                "either_index_trigger",
+                "either_grip_trigger",
             ).lower()
             if deadman_policy not in allowed_deadman_policies:
-                deadman_policy = "either_index_trigger"
+                deadman_policy = "either_grip_trigger"
 
             deadman_timeout_ms = _coerce_int(deadman_metadata.get("timeout_ms"), 200)
             deadman_timeout_ms = max(50, min(2000, deadman_timeout_ms))
