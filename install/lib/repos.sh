@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# =============================================================================
+# HORUS Installer - Repository & Manifest Management
+# =============================================================================
 
 MANIFEST_SDK_URL=""
 MANIFEST_SDK_REF=""
@@ -81,30 +84,31 @@ checkout_ref() {
   local repo_path="$1"
   local ref="$2"
 
-  run_cmd git -C "$repo_path" fetch --tags --prune origin
+  run_silent "Fetching remote refs" git -C "$repo_path" fetch --tags --prune origin
 
   if [[ "$ref" == refs/heads/* ]]; then
     local branch
     branch="${ref#refs/heads/}"
 
     if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$branch"; then
-      run_cmd git -C "$repo_path" checkout "$branch"
+      run_silent "Checking out branch $branch" git -C "$repo_path" checkout "$branch"
     else
-      run_cmd git -C "$repo_path" checkout -b "$branch" "origin/$branch"
+      run_silent "Creating tracking branch $branch" git -C "$repo_path" checkout -b "$branch" "origin/$branch"
     fi
 
-    run_cmd git -C "$repo_path" reset --hard "origin/$branch"
+    run_silent "Resetting to origin/$branch" git -C "$repo_path" reset --hard "origin/$branch"
     return 0
   fi
 
   if [[ "$ref" == refs/tags/* ]]; then
     local tag
     tag="${ref#refs/tags/}"
-    run_cmd git -C "$repo_path" checkout --detach "tags/$tag"
+    run_silent "Checking out tag $tag" git -C "$repo_path" checkout --detach "tags/$tag"
     return 0
   fi
 
-  run_cmd git -C "$repo_path" checkout --detach "$ref"
+  local short_ref="${ref:0:12}"
+  run_silent "Checking out ref $short_ref" git -C "$repo_path" checkout --detach "$ref"
 }
 
 sync_repo_to_ref() {
@@ -115,13 +119,13 @@ sync_repo_to_ref() {
 
   if [ -e "$repo_path" ]; then
     ensure_git_repo_clean "$repo_path" "$repo_label"
-    run_cmd git -C "$repo_path" remote set-url origin "$repo_url"
+    run_silent "Updating $repo_label remote URL" git -C "$repo_path" remote set-url origin "$repo_url"
   else
-    run_cmd git clone "$repo_url" "$repo_path"
+    run_silent "Cloning $repo_label" git clone "$repo_url" "$repo_path"
   fi
 
   checkout_ref "$repo_path" "$ref"
-  log_success "$repo_label synced at ref $ref"
+  _log_to_file "$repo_label synced at ref $ref"
 }
 
 prepare_install_root() {
@@ -140,7 +144,6 @@ prepare_install_root() {
   fi
 
   if [ -n "$(ls -A "$target_root" 2>/dev/null)" ]; then
-    # Root will always contain dirs we just made; treat unknown content as conflict.
     local non_managed
     non_managed="$(find "$target_root" -mindepth 1 -maxdepth 1 \
       ! -name bin ! -name logs ! -name state -print -quit)"

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# =============================================================================
+# HORUS Installer - Runtime Setup & Workspace Build
+# =============================================================================
 
 source_setup_file() {
   local setup_file="$1"
@@ -22,25 +25,26 @@ setup_python_sdk_runtime() {
 
   [ -d "$sdk_dir" ] || die "SDK directory missing: $sdk_dir"
 
-  log_info "Setting up Python virtual environment"
-  # Use system-site-packages so apt-installed ROS Python modules (e.g., rclpy)
-  # are visible inside the SDK venv.
-  run_cmd python3 -m venv --clear --system-site-packages "$sdk_dir/.venv"
+  run_silent "Creating Python virtual environment" \
+    python3 -m venv --clear --system-site-packages "$sdk_dir/.venv"
 
   local pip_bin="$sdk_dir/.venv/bin/pip"
   local python_bin="$sdk_dir/.venv/bin/python"
 
-  # Keep setuptools compatible with ROS tooling (colcon-core requires <80).
-  run_cmd "$pip_bin" install --upgrade pip "setuptools<80" wheel
-  # Install pure-Python/runtime deps explicitly; ROS Python packages come from apt.
-  run_cmd "$pip_bin" install \
-    "numpy>=1.21.0" \
-    "dataclasses-json>=0.5.0" \
-    "rich>=13.0.0"
-  run_cmd "$pip_bin" install -e "$sdk_dir" --no-deps
-  run_cmd "$python_bin" -c "import horus; print('horus import OK')"
+  run_silent "Upgrading pip and setuptools" \
+    "$pip_bin" install --upgrade pip "setuptools<80" wheel
 
-  log_success "Python SDK runtime is ready"
+  run_silent "Installing Python dependencies" \
+    "$pip_bin" install \
+      "numpy>=1.21.0" \
+      "dataclasses-json>=0.5.0" \
+      "rich>=13.0.0"
+
+  run_silent "Installing HORUS SDK package" \
+    "$pip_bin" install -e "$sdk_dir" --no-deps
+
+  run_silent "Verifying HORUS import" \
+    "$python_bin" -c "import horus; print('horus import OK')"
 }
 
 build_ros2_backend_workspace() {
@@ -58,33 +62,22 @@ build_ros2_backend_workspace() {
     webrtc_flag="ON"
   fi
 
-  log_info "Installing ROS package dependencies via rosdep"
-  (
-    cd "$ros2_dir"
-    run_cmd rosdep install --from-paths . -y --ignore-src --rosdistro "$distro" --skip-keys "nlohmann-json3-dev"
-  )
+  run_silent "Installing ROS workspace dependencies via rosdep" \
+    bash -c "cd '$ros2_dir' && rosdep install --from-paths . -y --ignore-src --rosdistro '$distro' --skip-keys 'nlohmann-json3-dev'"
 
-  log_info "Building HORUS ROS2 workspace (ENABLE_WEBRTC=$webrtc_flag)"
-  if ! (
-    cd "$ros2_dir"
-    colcon build --symlink-install --event-handlers console_direct+ \
-      --cmake-args -DCMAKE_BUILD_TYPE=Release "-DENABLE_WEBRTC=$webrtc_flag"
-  ); then
+  if ! run_silent "Compiling ROS 2 workspace (ENABLE_WEBRTC=$webrtc_flag)" \
+    bash -c "cd '$ros2_dir' && colcon build --symlink-install --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_WEBRTC=$webrtc_flag"; then
+
+    # Humble fallback: retry without unity bridge if GenericClient is missing
     if [ "$distro" = "humble" ] && [ ! -f "/opt/ros/$distro/include/rclcpp/rclcpp/generic_client.hpp" ]; then
-      log_warn "Humble lacks GenericClient headers used by horus_unity_bridge/main."
-      log_warn "Retrying build without unity bridge packages on Humble."
-      (
-        cd "$ros2_dir"
-        colcon build --symlink-install --event-handlers console_direct+ \
-          --packages-skip horus_unity_bridge horus_unity_bridge_test \
-          --cmake-args -DCMAKE_BUILD_TYPE=Release "-DENABLE_WEBRTC=$webrtc_flag"
-      ) || die "Fallback Humble build failed"
+      log_warn "Humble lacks GenericClient headers. Retrying without unity bridge packages."
+      run_silent "Compiling ROS 2 workspace (Humble fallback)" \
+        bash -c "cd '$ros2_dir' && colcon build --symlink-install --event-handlers console_direct+ --packages-skip horus_unity_bridge horus_unity_bridge_test --cmake-args -DCMAKE_BUILD_TYPE=Release -DENABLE_WEBRTC=$webrtc_flag" \
+        || die "Fallback Humble build failed"
     else
       die "ROS2 workspace build failed"
     fi
   fi
-
-  log_success "ROS2 workspace build completed"
 }
 
 validate_runtime_install() {
@@ -100,6 +93,4 @@ validate_runtime_install() {
   if ! ros2 pkg prefix horus_backend >/dev/null 2>&1; then
     die "horus_backend package not found after build"
   fi
-
-  log_success "Runtime validation checks passed"
 }
