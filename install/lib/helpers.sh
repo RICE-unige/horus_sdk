@@ -57,7 +57,8 @@ EOM
 #!/usr/bin/env bash
 set -euo pipefail
 
-HORUS_HOME="${HORUS_HOME:-$HOME/horus}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HORUS_HOME="${HORUS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 SYSTEM_PYTHON="/usr/bin/python3"
 
 use_horus_python=0
@@ -180,8 +181,8 @@ EOM
 #!/usr/bin/env bash
 set -euo pipefail
 
-HORUS_HOME_DEFAULT="$HOME/horus"
-HORUS_HOME="${HORUS_HOME:-$HORUS_HOME_DEFAULT}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HORUS_HOME="${HORUS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STATE_FILE="$HORUS_HOME/state/install-config.env"
 
 if [ ! -f "$STATE_FILE" ]; then
@@ -213,8 +214,8 @@ set -euo pipefail
 
 ASSUME_YES=0
 PURGE_ROS_PACKAGES=0
-HORUS_HOME_DEFAULT="$HOME/horus"
-HORUS_HOME="${HORUS_HOME:-$HORUS_HOME_DEFAULT}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HORUS_HOME="${HORUS_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STATE_FILE="$HORUS_HOME/state/install-config.env"
 ROS_DISTRO="${HORUS_ROS_DISTRO:-}"
 
