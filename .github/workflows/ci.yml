@@ -114,13 +114,21 @@ jobs:
           rosdep update --rosdistro ${{ matrix.ros-distro }}
 
       - name: Build ROS2 workspace (Integration)
+        shell: bash
         run: |
           git clone https://github.com/RICE-unige/horus_ros2.git
           cd horus_ros2
           source /opt/ros/${{ matrix.ros-distro }}/setup.bash
+
+          COLCON_SKIP_ARGS=()
+          if [ "${{ matrix.ros-distro }}" = "humble" ] && [ ! -f "/opt/ros/${{ matrix.ros-distro }}/include/rclcpp/rclcpp/generic_client.hpp" ]; then
+            echo "::warning title=Humble compatibility::horus_ros2/main currently uses GenericClient APIs not available on ROS 2 Humble. Skipping horus_unity_bridge packages in this job."
+            COLCON_SKIP_ARGS+=(--packages-skip horus_unity_bridge horus_unity_bridge_test)
+          fi
+
           rosdep install --from-paths . -y --ignore-src --rosdistro ${{ matrix.ros-distro }} --skip-keys "nlohmann-json3-dev"
-          colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release
-          colcon test --event-handlers console_direct+
+          colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release "${COLCON_SKIP_ARGS[@]}"
+          colcon test --event-handlers console_direct+ "${COLCON_SKIP_ARGS[@]}"
           colcon test-result --verbose
 
       - name: Test Python SDK
