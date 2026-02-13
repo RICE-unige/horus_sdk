@@ -1,0 +1,4 @@
+add_executable(cpp_parity_tests parity_tests.cpp)
+target_link_libraries(cpp_parity_tests PRIVATE horus_cpp_sdk)
+add_test(NAME cpp_parity_tests COMMAND cpp_parity_tests)
+

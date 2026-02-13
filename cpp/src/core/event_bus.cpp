@@ -58,11 +58,48 @@ bool EventSubscription::matches_topic(const std::string& event_topic,
     if (topic_filter == "*") return true;
     if (event_topic == topic_filter) return true;
     
-    if (topic_filter.back() == '*') {
+    if (!topic_filter.empty() && topic_filter.back() == '*') {
         std::string prefix = topic_filter.substr(0, topic_filter.size() - 1);
         return event_topic.find(prefix) == 0;
     }
-    return false;
+
+    auto split = [](const std::string& value) {
+        std::vector<std::string> parts;
+        std::stringstream stream(value);
+        std::string token;
+        while (std::getline(stream, token, '.')) {
+            parts.push_back(token);
+        }
+        return parts;
+    };
+
+    const auto filter_parts = split(topic_filter);
+    const auto event_parts = split(event_topic);
+    if (filter_parts.empty()) {
+        return false;
+    }
+
+    if (!filter_parts.empty() && filter_parts.back() == "*") {
+        if (event_parts.size() < filter_parts.size() - 1) {
+            return false;
+        }
+        for (std::size_t i = 0; i + 1 < filter_parts.size(); ++i) {
+            if (filter_parts[i] != "+" && filter_parts[i] != event_parts[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (filter_parts.size() != event_parts.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < filter_parts.size(); ++i) {
+        if (filter_parts[i] != "+" && filter_parts[i] != event_parts[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 EventBus::EventBus(size_t max_queue_size)

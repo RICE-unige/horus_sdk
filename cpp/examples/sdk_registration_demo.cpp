@@ -1,109 +1,118 @@
-/**
- * @file sdk_registration_demo.cpp
- * @brief Example of registering a custom robot with HORUS using the C++ SDK
- * 
- * Usage:
- *   mkdir build && cd build
- *   cmake ..
- *   make
- *   ./sdk_registration_demo
- */
+#include "horus/robot/robot.hpp"
+#include "horus/robot/sensors.hpp"
+#include "horus/utils/branding.hpp"
+#include "horus/utils/logging.hpp"
 
-#include <horus/robot/robot.hpp>
-#include <horus/robot/sensors.hpp>
-#include <horus/core/event_bus.hpp>
-#include <horus/utils/branding.hpp>
-#include <iostream>
 #include <memory>
-#include <thread>
-#include <chrono>
+#include <optional>
+#include <string>
+#include <vector>
 
-int main() {
-    // Display HORUS branding
+namespace {
+std::optional<std::string> get_arg(int argc, char** argv, const std::string& name) {
+    for (int i = 1; i < argc - 1; ++i) {
+        if (argv[i] == name) {
+            return std::string(argv[i + 1]);
+        }
+    }
+    return std::nullopt;
+}
+} // namespace
+
+int main(int argc, char** argv) {
     horus::utils::show_ascii_art();
-    
-    std::cout << "\n📋 Defining Robot Configuration...\n" << std::endl;
-    
-    // 1. Define your robot
-    horus::robot::Robot my_robot("SdkBot_Professional", horus::core::RobotType::WHEELED);
-    
-    std::cout << "✅ Created robot: " << my_robot.get_name() << std::endl;
-    
-    // 2. Add Sensors
-    auto front_laser = std::make_shared<horus::robot::LaserScan>(
-        "Front Lidar",
-        "laser_frame",
-        "/scan",
-        -3.14159f,  // min_angle
-        3.14159f,   // max_angle
-        0.005f,     // angle_increment
-        0.1f,       // min_range
-        12.0f,      // max_range
-        0.01f,      // range_resolution
-        "#00FFFF",  // color (cyan)
-        0.1f        // point_size
-    );
-    
-    my_robot.add_sensor(front_laser);
-    std::cout << "✅ Added sensor: Front Lidar" << std::endl;
-    
-    auto camera = std::make_shared<horus::robot::Camera>(
-        "Realsense RGB",
-        "camera_link",
-        "/camera/color/image_raw"
-    );
-    
-    my_robot.add_sensor(camera);
-    std::cout << "✅ Added sensor: Realsense RGB Camera" << std::endl;
-    
-    // 3. Add metadata
-    my_robot.add_metadata("description", std::string("Professional wheeled robot"));
-    my_robot.add_metadata("max_speed", 2.5);
-    
-    std::cout << "\n📊 Robot Configuration Summary:" << std::endl;
-    std::cout << "  Name: " << my_robot.get_name() << std::endl;
-    std::cout << "  Type: " << my_robot.get_type_str() << std::endl;
-    std::cout << "  Sensors: " << my_robot.get_sensor_count() << std::endl;
-    
-    // 4. Subscribe to events
-    std::cout << "\n📡 Setting up event subscriptions..." << std::endl;
-    
-    auto sub_id = horus::core::subscribe("robot.*", 
-        [](const horus::core::Event& event) {
-            std::cout << "📬 Received event: " << event.topic << std::endl;
-        }, 
-        horus::core::EventPriority::LOW
-    );
-    
-    std::cout << "✅ Subscribed to robot events" << std::endl;
-    
-    // 5. Publish a status event
-    std::cout << "\n📤 Publishing robot status event..." << std::endl;
-    
-    horus::core::publish("robot.status.ready", 
-                        std::any{},
-                        horus::core::EventPriority::NORMAL,
-                        "demo");
-    
-    // Give the event system time to process
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
-    // 6. Registration with HORUS backend would happen here
-    std::cout << "\n🔗 Registration with HORUS backend:" << std::endl;
-    std::cout << "  Note: Full HORUS backend integration requires ROS 2 runtime" << std::endl;
-    std::cout << "  This demo shows the robot configuration setup" << std::endl;
-    
-    // Show event bus statistics
-    auto stats = horus::core::get_event_bus().get_stats();
-    std::cout << "\n📈 Event Bus Statistics:" << std::endl;
-    std::cout << "  Events Published: " << stats["events_published"] << std::endl;
-    std::cout << "  Events Processed: " << stats["events_processed"] << std::endl;
-    std::cout << "  Active Subscriptions: " << stats["active_subscriptions"] << std::endl;
-    
-    std::cout << "\n✨ Demo completed successfully!" << std::endl;
-    
-    // Cleanup
-    horus::core::unsubscribe(sub_id);
-    
+
+    const auto robot_count = get_arg(argc, argv, "--robot-count").has_value()
+                                 ? std::max(1, std::stoi(*get_arg(argc, argv, "--robot-count")))
+                                 : 4;
+    const auto with_camera = !get_arg(argc, argv, "--with-camera").has_value() ||
+                             (*get_arg(argc, argv, "--with-camera") != "false");
+    const auto with_occupancy = !get_arg(argc, argv, "--with-occupancy-grid").has_value() ||
+                                (*get_arg(argc, argv, "--with-occupancy-grid") != "false");
+    const auto workspace_scale = get_arg(argc, argv, "--workspace-scale")
+                                     ? std::optional<double>(std::stod(*get_arg(argc, argv, "--workspace-scale")))
+                                     : std::nullopt;
+
+    horus::utils::print_step("Defining Robot Configuration...");
+
+    std::vector<horus::robot::Robot> robots;
+    std::vector<horus::dataviz::DataViz> datavizs;
+    std::vector<horus::robot::Robot*> robot_ptrs;
+
+    robots.reserve(static_cast<std::size_t>(robot_count));
+    datavizs.reserve(static_cast<std::size_t>(robot_count));
+    robot_ptrs.reserve(static_cast<std::size_t>(robot_count));
+
+    for (int i = 0; i < robot_count; ++i) {
+        const auto name = "test_bot_" + std::to_string(i + 1);
+        horus::robot::RobotDimensions dims{
+            0.8 + (0.1 * i),
+            0.6 + (0.05 * i),
+            0.4 + (0.03 * i),
+        };
+        robots.emplace_back(name, horus::core::RobotType::WHEELED, dims);
+        auto& robot = robots.back();
+        robot.add_metadata(
+            "robot_manager_config",
+            std::map<std::string, std::any>{
+                {"enabled", true},
+                {"prefab_asset_path", std::string("Assets/Prefabs/UI/RobotManager.prefab")},
+                {"prefab_resource_path", std::string("")},
+                {"sections",
+                 std::map<std::string, std::any>{
+                     {"status", true},
+                     {"data_viz", true},
+                     {"teleop", true},
+                     {"tasks", true},
+                 }},
+            });
+
+        if (with_camera) {
+            auto camera = std::make_shared<horus::robot::Camera>(
+                "front_camera",
+                name + "/camera_link",
+                "/" + name + "/camera/image_raw/compressed");
+            camera->set_streaming_type("ros");
+            camera->set_minimap_streaming_type("ros");
+            camera->set_teleop_streaming_type("webrtc");
+            camera->set_startup_mode("minimap");
+            camera->set_resolution({320, 180});
+            camera->set_fps(6);
+            camera->set_encoding("jpeg");
+            camera->add_metadata("image_type", std::string("compressed"));
+            camera->add_metadata("streaming_type", std::string("ros"));
+            camera->add_metadata("minimap_streaming_type", std::string("ros"));
+            camera->add_metadata("teleop_streaming_type", std::string("webrtc"));
+            camera->add_metadata("startup_mode", std::string("minimap"));
+            robot.add_sensor(camera);
+        }
+
+        auto dataviz = robot.create_dataviz();
+        if (with_occupancy) {
+            horus::dataviz::RenderOptions render_options;
+            render_options["show_unknown_space"] = true;
+            dataviz->add_occupancy_grid("/map", "map", render_options);
+        }
+        datavizs.push_back(*dataviz);
+        robot_ptrs.push_back(&robot);
+    }
+
+    horus::utils::print_step("Registering robots...");
+    auto [ok, result] =
+        horus::robot::register_robots(robot_ptrs, datavizs, 10.0, true, true, workspace_scale);
+    if (!ok) {
+        horus::utils::print_error("Registration failed");
+        return 1;
+    }
+
+    horus::utils::print_success("Registration completed");
+    if (const auto it = result.find("results"); it != result.end()) {
+        if (it->second.type() == typeid(std::vector<std::map<std::string, std::any>>)) {
+            const auto entries =
+                std::any_cast<std::vector<std::map<std::string, std::any>>>(it->second);
+            horus::utils::print_info("Registered robots: " + std::to_string(entries.size()));
+        }
+    }
     return 0;
 }
+

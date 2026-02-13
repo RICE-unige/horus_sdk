@@ -71,11 +71,22 @@ Rust parity branch currently includes:
 - robot manager config defaults parity,
 - Rust integration tests mirroring Python parity tests under `rust/tests/`.
 
+C++ parity branch now also includes:
+- `feature/sdk-cpp-parity` implementation of parity APIs and typed payload builders,
+- C++ examples parity (`sdk_registration_demo`, `fake_tf_publisher`, `e2e_registration_check`),
+- C++ parity tests and benchmark binaries,
+- ROS/no-ROS C++ CI coverage through the matrix workflow.
+
 ## Requirements
 
 - Python **3.10+**
 - ROS 2 **Humble** or **Jazzy** environment available (`rclpy` + message packages)
 - Running bridge from `horus_ros2` (`horus_unity_bridge`)
+
+> [!WARNING]
+> `horus_ros2/main` currently includes `GenericClient`-based bridge code that is not available in ROS 2 Humble headers.
+> For this reason, `horus_sdk` CI on Humble validates `horus_interfaces` and `horus_backend` from `horus_ros2` and skips `horus_unity_bridge` packages.
+> Full bridge build validation should be run on Jazzy or a Humble-compatible `horus_ros2` revision.
 
 Install (development):
 
