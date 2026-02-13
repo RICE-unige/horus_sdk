@@ -2,12 +2,15 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_INSTALLER="$SCRIPT_DIR/install/install.sh"
+SCRIPT_SOURCE="${BASH_SOURCE[0]-}"
+if [ -n "$SCRIPT_SOURCE" ] && [ -f "$SCRIPT_SOURCE" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  LOCAL_INSTALLER="$SCRIPT_DIR/install/install.sh"
 
-# Prefer local installer when running from a checked-out repo.
-if [ -f "$LOCAL_INSTALLER" ]; then
-  exec bash "$LOCAL_INSTALLER" "$@"
+  # Prefer local installer when running from a checked-out repo.
+  if [ -f "$LOCAL_INSTALLER" ]; then
+    exec bash "$LOCAL_INSTALLER" "$@"
+  fi
 fi
 
 BOOTSTRAP_REPO_URL="${HORUS_INSTALLER_REPO_URL:-https://github.com/RICE-unige/horus_sdk.git}"

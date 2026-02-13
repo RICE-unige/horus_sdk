@@ -57,6 +57,9 @@ read_prompt_value() {
   local result_var="$2"
   local response=""
 
+  # Always initialize caller-side variable to avoid nounset issues.
+  printf -v "$result_var" '%s' ""
+
   if tty -s; then
     if ! read -r -p "$prompt" response < /dev/tty; then
       response=""
@@ -75,7 +78,7 @@ read_prompt_value() {
 prompt_with_default() {
   local prompt="$1"
   local default="$2"
-  local response
+  local response=""
 
   read_prompt_value "$prompt [$default]: " response
   if [ -z "$response" ]; then
@@ -89,7 +92,7 @@ prompt_with_default_into() {
   local result_var="$1"
   local prompt="$2"
   local default="$3"
-  local response
+  local response=""
 
   read_prompt_value "$prompt [$default]: " response
   if [ -z "$response" ]; then
@@ -102,7 +105,7 @@ prompt_with_default_into() {
 prompt_yes_no() {
   local prompt="$1"
   local default="$2"
-  local response
+  local response=""
   local hint
 
   if [ "$default" = "yes" ]; then
