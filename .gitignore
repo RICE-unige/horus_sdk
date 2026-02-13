@@ -272,3 +272,9 @@ rosdep.yaml
 # Environment files
 .env.local
 .env.*.local
+
+# Track installer sources
+!install/
+!install/**
+!install.sh
+!docs/INSTALLER.md

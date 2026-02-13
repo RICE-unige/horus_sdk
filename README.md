@@ -88,6 +88,27 @@ C++ parity branch now also includes:
 > For this reason, `horus_sdk` CI on Humble validates `horus_interfaces` and `horus_backend` from `horus_ros2` and skips `horus_unity_bridge` packages.
 > Full bridge build validation should be run on Jazzy or a Humble-compatible `horus_ros2` revision.
 
+## One-Command Install
+
+Install HORUS SDK + ROS2 backend with a standardized local layout:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RICE-unige/horus_sdk/main/install.sh | bash
+```
+
+Default install root:
+- `~/horus/sdk`
+- `~/horus/ros2`
+- `~/horus/bin`
+
+Post-install helpers:
+- `horus-status`
+- `horus-start`
+- `horus-stop`
+- `horus-update`
+
+See `docs/INSTALLER.md` for flags and non-interactive usage.
+
 Install (development):
 
 ```bash
@@ -103,7 +124,7 @@ pip install -e ".[dev]"
 Follow the setup/install instructions in the [`horus_ros2` README](https://github.com/RICE-unige/horus_ros2), then run:
 
 ```bash
-cd ~/horus_ws/src/horus_ros2
+cd ~/horus/ros2
 source /opt/ros/humble/setup.bash  # or jazzy
 colcon build --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
 source install/setup.bash
@@ -113,14 +134,14 @@ ros2 launch horus_unity_bridge unity_bridge.launch.py
 ### 2) Start fake data (TF + camera + occupancy map)
 
 ```bash
-cd ~/horus_sdk
+cd ~/horus/sdk
 python3 python/examples/fake_tf_publisher.py --robot-count 4 --with-camera --publish-occupancy-grid
 ```
 
 ### 3) Run SDK registration demo
 
 ```bash
-cd ~/horus_sdk
+cd ~/horus/sdk
 python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera --with-occupancy-grid --workspace-scale 0.1
 ```
 

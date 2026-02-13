@@ -113,6 +113,20 @@ jobs:
           name: release-tarball
           path: horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
 
+      - name: Package installer artifacts
+        run: |
+          chmod +x install.sh install/install.sh
+          cp install.sh installer-install.sh
+          sha256sum installer-install.sh > installer-install.sh.sha256
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: |
+            installer-install.sh
+            installer-install.sh.sha256
+
   # Build Docker Images
   docker:
     name: Build Docker Images
@@ -229,13 +243,14 @@ jobs:
 
           ## Installation
           \`\`\`bash
-          # Download and extract
-          wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
-          tar -xzf horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
-          cd horus_sdk
+          # One-command installer
+          curl -fsSL https://raw.githubusercontent.com/RICE-unige/horus_sdk/main/install.sh | bash
 
-          # Build and install
-          pip install -e python/
+          # Or verify release installer checksum first
+          wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/installer-install.sh
+          wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/installer-install.sh.sha256
+          sha256sum -c installer-install.sh.sha256
+          bash installer-install.sh
           \`\`\`
           EOF
 
@@ -251,6 +266,8 @@ jobs:
             release-tarball/horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
             python-package/horus-*.whl
             python-package/horus-*.tar.gz
+            installer/installer-install.sh
+            installer/installer-install.sh.sha256
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Publish to PyPI (when ready)
