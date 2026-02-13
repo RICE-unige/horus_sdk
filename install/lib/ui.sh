@@ -39,20 +39,61 @@ _INSTALL_START_TIME=""
 
 print_banner() {
   if [ "$IS_TTY" -eq 1 ]; then
+    local sdk_cyan sdk_blue sdk_magenta sdk_purple sdk_red
+    sdk_cyan=$'\033[96m'
+    sdk_blue=$'\033[94m'
+    sdk_magenta=$'\033[95m'
+    sdk_purple=$'\033[35m'
+    sdk_red=$'\033[91m'
+
     printf '\n'
-    printf '%b' "${C_BLUE}"
-    cat <<'BANNER'
-    ░███   ███  ░████████   ░████████   ░███    ███  ░████████
-    ░███   ███  ███░░░░███  ███░░░███   ░███    ███  ░███░░░░░
-    ░███   ███  ███    ███  ███   ███   ░███    ███  ░███░░░░░
-    ░█████████  ███    ███  ████████    ░███    ███  ░████████
-    ░█████████  ███    ███  ████████    ░███    ███  ░████████
-    ░███░░░███  ███    ███  ███░░░███   ░███    ███       ░███
-    ░███   ███  ░████████   ███   ░███   ░████████   ░████████
-    ░░░   ░░░   ░░░░░░░░   ░░░   ░░░    ░░░░░░░░    ░░░░░░░░
-BANNER
-    printf '%b\n' "${C_RESET}"
-    printf '    %bHolistic Operational Reality for Unified Systems%b\n' "${C_DIM}" "${C_RESET}"
+
+    printf '    %b%s%b%b%s%b%b%s%b%b%s%b%b%s%b\n' \
+      "${sdk_cyan}" $'\u2588\u2588\u2557  \u2588\u2588\u2557 ' "${C_RESET}" \
+      "${sdk_blue}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2557 ' "${C_RESET}" \
+      "${sdk_magenta}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2557 ' "${C_RESET}" \
+      "${sdk_purple}" $'\u2588\u2588\u2557   \u2588\u2588\u2557' "${C_RESET}" \
+      "${sdk_red}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557' "${C_RESET}"
+
+    printf '    %b%s%b%b%s%b%b%s%b%b%s%b%b%s%b\n' \
+      "${sdk_cyan}" $'\u2588\u2588\u2551  \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_blue}" $'\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557' "${C_RESET}" \
+      "${sdk_magenta}" $'\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557' "${C_RESET}" \
+      "${sdk_purple}" $'\u2588\u2588\u2551   \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_red}" $'\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d' "${C_RESET}"
+
+    printf '    %b%s%b%b%s%b%b%s%b%b%s%b%b%s%b\n' \
+      "${sdk_cyan}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_blue}" $'\u2588\u2588\u2551   \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_magenta}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d' "${C_RESET}" \
+      "${sdk_purple}" $'\u2588\u2588\u2551   \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_red}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557' "${C_RESET}"
+
+    printf '    %b%s%b%b%s%b%b%s%b%b%s%b%b%s%b\n' \
+      "${sdk_cyan}" $'\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_blue}" $'\u2588\u2588\u2551   \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_magenta}" $'\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557' "${C_RESET}" \
+      "${sdk_purple}" $'\u2588\u2588\u2551   \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_red}" $'\u255a\u2550\u2550\u2550\u2550\u2588\u2588\u2551' "${C_RESET}"
+
+    printf '    %b%s%b%b%s%b%b%s%b%b%s%b%b%s%b\n' \
+      "${sdk_cyan}" $'\u2588\u2588\u2551  \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_blue}" $'\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d' "${C_RESET}" \
+      "${sdk_magenta}" $'\u2588\u2588\u2551  \u2588\u2588\u2551' "${C_RESET}" \
+      "${sdk_purple}" $'\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d' "${C_RESET}" \
+      "${sdk_red}" $'\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551' "${C_RESET}"
+
+    printf '    %b%s%b%b%s%b%b%s%b%b%s%b%b%s%b\n' \
+      "${sdk_cyan}" $'\u255a\u2550\u255d  \u255a\u2550\u255d ' "${C_RESET}" \
+      "${sdk_blue}" $'\u255a\u2550\u2550\u2550\u2550\u2550\u255d ' "${C_RESET}" \
+      "${sdk_magenta}" $'\u255a\u2550\u255d  \u255a\u2550\u255d ' "${C_RESET}" \
+      "${sdk_purple}" $'\u255a\u2550\u2550\u2550\u2550\u2550\u255d ' "${C_RESET}" \
+      "${sdk_red}" $'\u255a\u2550\u2550\u2550\u2550\u2550\u2550\u255d' "${C_RESET}"
+
+    printf '\n'
+    printf '    %b        Holistic Operational Reality%b\n' "${sdk_blue}" "${C_RESET}"
+    printf '    %b            for Unified Systems%b\n' "${sdk_magenta}" "${C_RESET}"
+    printf '\n'
     printf '    %bMixed Reality Robot Management Platform%b\n' "${C_DIM}" "${C_RESET}"
     printf '    %bRICE Lab, University of Genoa%b\n' "${C_DIM}" "${C_RESET}"
     printf '\n'
@@ -61,6 +102,7 @@ BANNER
     printf 'Mixed Reality Robot Management Platform | RICE Lab, University of Genoa\n\n'
   fi
 }
+
 
 # ===========================================================================
 # Log-file-only write helper

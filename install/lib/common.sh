@@ -16,7 +16,11 @@ HORUS_INSTALLER_VERSION="0.1.0"
 if [ -t 1 ]; then
   C_RESET='\033[0m'
   C_BOLD='\033[1m'
+  C_CYAN='\033[1;96m'
   C_BLUE='\033[1;34m'
+  C_MAGENTA='\033[1;95m'
+  C_PURPLE='\033[1;35m'
+  C_LIGHT_RED='\033[1;91m'
   C_GREEN='\033[1;32m'
   C_YELLOW='\033[1;33m'
   C_RED='\033[1;31m'
@@ -24,7 +28,11 @@ if [ -t 1 ]; then
 else
   C_RESET=''
   C_BOLD=''
+  C_CYAN=''
   C_BLUE=''
+  C_MAGENTA=''
+  C_PURPLE=''
+  C_LIGHT_RED=''
   C_GREEN=''
   C_YELLOW=''
   C_RED=''
