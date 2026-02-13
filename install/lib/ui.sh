@@ -344,16 +344,35 @@ print_config_summary() {
 
 print_completion_summary() {
   local install_root="$1"
+  local runtime_mode="${2:-full}"
+  local runtime_reason="${3:-}"
   local elapsed_total
   elapsed_total=$(( $(date +%s) - _INSTALL_START_TIME ))
   local mins=$(( elapsed_total / 60 ))
   local secs=$(( elapsed_total % 60 ))
 
+  local title_color="$C_GREEN"
+  local title_text="   HORUS installation completed successfully               "
+  if [ "$runtime_mode" != "full" ]; then
+    title_color="$C_YELLOW"
+    title_text="   HORUS installation completed with warnings              "
+  fi
+
   printf '\n'
-  printf '  %b===========================================================%b\n' "${C_GREEN}" "${C_RESET}"
-  printf '  %b   HORUS installation completed successfully               %b\n' "${C_GREEN}" "${C_RESET}"
-  printf '  %b===========================================================%b\n' "${C_GREEN}" "${C_RESET}"
+  printf '  %b===========================================================%b\n' "${title_color}" "${C_RESET}"
+  printf '  %b%s%b\n' "${title_color}" "${title_text}" "${C_RESET}"
+  printf '  %b===========================================================%b\n' "${title_color}" "${C_RESET}"
   printf '\n'
+
+  if [ "$runtime_mode" != "full" ]; then
+    if [ -n "$runtime_reason" ]; then
+      printf '  %bRuntime note:%b %s\n' "${C_YELLOW}" "${C_RESET}" "$runtime_reason"
+    fi
+    printf '  %bUnity bridge was not built; this install is backend-only.%b\n' "${C_YELLOW}" "${C_RESET}"
+    printf '  %bUse ROS 2 Jazzy for full backend + Unity bridge support.%b\n' "${C_YELLOW}" "${C_RESET}"
+    printf '\n'
+  fi
+
   printf '  Completed in %dm %ds\n' "$mins" "$secs"
   printf '  Installed to: %s\n' "$install_root"
   printf '  Full log:     %s\n' "$LOG_FILE"

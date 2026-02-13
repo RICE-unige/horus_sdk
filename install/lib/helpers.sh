@@ -442,14 +442,16 @@ write_install_summary() {
   local webrtc="$5"
   local sdk_ref="$6"
   local ros2_ref="$7"
+  local runtime_mode="${8:-full}"
+  local runtime_reason="${9:-}"
 
   local summary_file="$install_root/state/install-summary.json"
 
-  if ! python3 - "$summary_file" "$install_root" "$log_file" "$channel" "$ros_distro" "$webrtc" "$sdk_ref" "$ros2_ref" "$(timestamp_utc)" "${HORUS_INSTALLER_VERSION:-unknown}" <<'PY'
+  if ! python3 - "$summary_file" "$install_root" "$log_file" "$channel" "$ros_distro" "$webrtc" "$sdk_ref" "$ros2_ref" "$runtime_mode" "$runtime_reason" "$(timestamp_utc)" "${HORUS_INSTALLER_VERSION:-unknown}" <<'PY'
 import json
 import sys
 
-summary_file, install_root, log_file, channel, ros_distro, webrtc, sdk_ref, ros2_ref, installed_at, version = sys.argv[1:]
+summary_file, install_root, log_file, channel, ros_distro, webrtc, sdk_ref, ros2_ref, runtime_mode, runtime_reason, installed_at, version = sys.argv[1:]
 payload = {
     "installer_version": version,
     "installed_at": installed_at,
@@ -462,7 +464,10 @@ payload = {
         "horus_sdk": sdk_ref,
         "horus_ros2": ros2_ref,
     },
+    "runtime_mode": runtime_mode,
 }
+if runtime_reason:
+    payload["runtime_reason"] = runtime_reason
 
 with open(summary_file, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2)

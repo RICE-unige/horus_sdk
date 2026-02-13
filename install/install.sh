@@ -215,7 +215,7 @@ main() {
 
   # --- Step 11: Validate ---
   step_start "Validating runtime installation"
-  validate_runtime_install "$INSTALL_ROOT" "$ROS_DISTRO"
+  validate_runtime_install "$INSTALL_ROOT" "$ROS_DISTRO" "$HORUS_INSTALL_RUNTIME_MODE"
   step_done
 
   # --- Step 12: Helpers and shell ---
@@ -237,14 +237,16 @@ main() {
     "$ROS_DISTRO" \
     "$WEBRTC" \
     "$MANIFEST_SDK_REF" \
-    "$MANIFEST_ROS2_REF"
+    "$MANIFEST_ROS2_REF" \
+    "$HORUS_INSTALL_RUNTIME_MODE" \
+    "$HORUS_INSTALL_RUNTIME_REASON"
   step_done
 
   # --- WSL guidance ---
   print_wsl_guidance
 
   # --- Completion ---
-  print_completion_summary "$INSTALL_ROOT"
+  print_completion_summary "$INSTALL_ROOT" "$HORUS_INSTALL_RUNTIME_MODE" "$HORUS_INSTALL_RUNTIME_REASON"
 }
 
 main "$@"
