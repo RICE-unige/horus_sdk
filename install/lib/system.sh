@@ -280,8 +280,11 @@ init_rosdep() {
 print_wsl_guidance() {
   if [ "$IS_WSL" -eq 1 ]; then
     printf '\n'
-    log_warn "WSL2 detected: Unity-to-WSL networking may require explicit host/IP routing."
-    log_warn "If Unity cannot reach port 10000, use WSL host IP instead of localhost."
+    log_warn "WSL2 detected: Meta Quest-to-WSL networking may require explicit host/IP routing."
+    log_warn "If Meta Quest cannot reach port 10000, enable mirrored networking in %USERPROFILE%\\.wslconfig:"
+    log_warn "  [wsl2]"
+    log_warn "  networkingMode=mirrored"
+    log_warn "Then run 'wsl --shutdown' from Windows PowerShell and restart WSL."
     printf '\n'
   fi
 }
