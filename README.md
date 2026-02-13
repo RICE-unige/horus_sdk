@@ -54,6 +54,15 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 > [!NOTE]
 > Python remains the most complete and actively used track for current experiments.
 
+## SDK Parity Branches
+
+- Rust parity track: `feature/sdk-rust-parity`
+- C++ parity track: `feature/sdk-cpp-parity`
+
+Language-specific setup and commands:
+- Rust: `rust/README.md`
+- C++: `cpp/README.md`
+
 ## Requirements
 
 - Python **3.10+**

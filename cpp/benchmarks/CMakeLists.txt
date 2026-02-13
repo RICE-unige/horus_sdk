@@ -1,0 +1,6 @@
+add_executable(payload_micro payload_micro.cpp)
+target_link_libraries(payload_micro PRIVATE horus_cpp_sdk)
+
+add_executable(registration_scenario registration_scenario.cpp)
+target_link_libraries(registration_scenario PRIVATE horus_cpp_sdk)
+

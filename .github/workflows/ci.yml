@@ -1,129 +1,127 @@
-name: CI Pipeline (manual)
+name: SDK CI
 
 on:
   workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feature/sdk-rust-parity
+      - feature/sdk-cpp-parity
 
 env:
+  PYTHON_VERSION: "3.12"
   ROS_DISTRO: humble
-  PYTHON_VERSION: "3.10"
 
 jobs:
-  # Code Quality Checks
-  quality:
-    name: Code Quality
+  python-tests:
+    name: Python Baseline Tests
     runs-on: ubuntu-22.04
-    continue-on-error: true
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install black flake8 mypy bandit safety
-          pip install -e python/
-
-      - name: Format check (Black)
-        run: black --check --diff python/
-
-      - name: Lint Python code (Flake8)
-        run: flake8 python/ --max-line-length=88 --extend-ignore=E203,W503
-
-      - name: Type check (MyPy)
-        run: mypy python/horus/ --ignore-missing-imports
-
-      - name: Security scan (Bandit)
-        run: bandit -r python/horus/ -f json -o bandit-report.json || true
-
-      - name: Dependency vulnerability scan
-        run: safety check --json --output safety-report.json || true
-
-      - name: Install C++ tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-format cppcheck clang-tidy
-
-      - name: Format check C++ (clang-format)
-        run: |
-          find cpp/ -name "*.cpp" -o -name "*.hpp" | \
-          xargs clang-format --dry-run --Werror || true
-
-      - name: C++ static analysis (cppcheck)
-        run: |
-          cppcheck --enable=all --inconclusive --xml --xml-version=2 \
-          cpp/ 2> cppcheck-report.xml || true
-
-  # Build and Test Matrix
-  build-test:
-    name: Build & Test
-    needs: quality
-    continue-on-error: true
-    strategy:
-      matrix:
-        ros-distro: [humble]
-        ubuntu-version: [22.04]
-        arch: [x86_64]
-    runs-on: ubuntu-${{ matrix.ubuntu-version }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: false
-
-      - name: Set up ROS2 ${{ matrix.ros-distro }}
+      - name: Setup ROS (${{ env.ROS_DISTRO }})
         uses: ros-tooling/setup-ros@v0.7
         with:
-          required-ros-distributions: ${{ matrix.ros-distro }}
+          required-ros-distributions: ${{ env.ROS_DISTRO }}
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-pip python3-pytest python3-coverage
-          sudo apt-get install -y ros-${{ matrix.ros-distro }}-rmw-cyclonedds-cpp
-          sudo apt-get install -y build-essential cmake
-
-      - name: Set up Python environment
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install Python dependencies
+      - name: Install ROS Python deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ros-${{ env.ROS_DISTRO }}-rclpy \
+            ros-${{ env.ROS_DISTRO }}-std-msgs \
+            ros-${{ env.ROS_DISTRO }}-sensor-msgs \
+            ros-${{ env.ROS_DISTRO }}-nav-msgs \
+            ros-${{ env.ROS_DISTRO }}-geometry-msgs \
+            ros-${{ env.ROS_DISTRO }}-tf2-ros
+
+      - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pytest-xvfb "empy<4.0" catkin_pkg numpy lark setuptools pyyaml
-          pip install -e python/
+          pip install pytest
+          pip install -e . --no-deps
 
-      - name: Build ROS2 workspace (Integration)
+      - name: Run Python tests
+        shell: bash
         run: |
-          git clone https://github.com/RICE-unige/horus_ros2.git
-          cd horus_ros2
-          source /opt/ros/${{ matrix.ros-distro }}/setup.bash
-          rosdep install --from-paths . -y --ignore-src
-          colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release
-          colcon test --event-handlers console_direct+
-          colcon test-result --verbose
+          source /opt/ros/${{ env.ROS_DISTRO }}/setup.bash
+          pytest python/tests -q
 
-      - name: Test Python SDK
-        run: |
-          # Source the ROS2 workspace for integration tests if needed
-          if [ -f horus_ros2/install/setup.bash ]; then
-            source horus_ros2/install/setup.bash
-          fi
-          python -m pytest python/tests/ -v --cov=python/horus --cov-report=xml --cov-report=html
+  cpp-build-test:
+    name: C++ Build/Test (${{ matrix.ros_mode }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ros_mode: ["off", "on"]
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup ROS (${{ env.ROS_DISTRO }})
+        if: matrix.ros_mode == 'on'
+        uses: ros-tooling/setup-ros@v0.7
         with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
+          required-ros-distributions: ${{ env.ROS_DISTRO }}
 
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake
 
+      - name: Install ROS deps
+        if: matrix.ros_mode == 'on'
+        run: |
+          sudo apt-get install -y \
+            ros-${{ env.ROS_DISTRO }}-ament-cmake \
+            ros-${{ env.ROS_DISTRO }}-rclcpp \
+            ros-${{ env.ROS_DISTRO }}-std-msgs \
+            ros-${{ env.ROS_DISTRO }}-sensor-msgs \
+            ros-${{ env.ROS_DISTRO }}-nav-msgs \
+            ros-${{ env.ROS_DISTRO }}-geometry-msgs
+
+      - name: Configure CMake (no-ROS)
+        if: matrix.ros_mode == 'off'
+        run: |
+          cmake -S cpp -B cpp/build_no_ros -DHORUS_ENABLE_ROS2=OFF
+
+      - name: Configure CMake (ROS enabled)
+        if: matrix.ros_mode == 'on'
+        shell: bash
+        run: |
+          source /opt/ros/${{ env.ROS_DISTRO }}/setup.bash
+          cmake -S cpp -B cpp/build_with_ros -DHORUS_ENABLE_ROS2=ON
+
+      - name: Build
+        run: |
+          if [ "${{ matrix.ros_mode }}" = "on" ]; then
+            cmake --build cpp/build_with_ros --parallel
+          else
+            cmake --build cpp/build_no_ros --parallel
+          fi
+
+      - name: Run C++ tests
+        run: |
+          if [ "${{ matrix.ros_mode }}" = "on" ]; then
+            ctest --test-dir cpp/build_with_ros --output-on-failure
+          else
+            ctest --test-dir cpp/build_no_ros --output-on-failure
+          fi
+
+      - name: Benchmark smoke
+        run: |
+          if [ "${{ matrix.ros_mode }}" = "on" ]; then
+            ./cpp/build_with_ros/benchmarks/payload_micro
+            ./cpp/build_with_ros/benchmarks/registration_scenario
+          else
+            ./cpp/build_no_ros/benchmarks/payload_micro
+            ./cpp/build_no_ros/benchmarks/registration_scenario
+          fi

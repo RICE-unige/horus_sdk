@@ -208,6 +208,8 @@ Makefile
 compile_commands.json
 CTestTestfile.cmake
 _deps/
+cpp/build*/
+cpp/build_*/
 
 # C++ build outputs
 *.a
@@ -250,6 +252,10 @@ pip-wheel-metadata/
 *.pid
 *.sock
 *.port
+
+# Rust workspace artifacts
+rust/Cargo.lock
+rust/target/
 
 # Documentation build artifacts
 doc/html/
