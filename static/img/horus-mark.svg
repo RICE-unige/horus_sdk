@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="HORUS mark">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14b8a6"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="144" height="144" rx="26" fill="#0f1720"/>
+  <path d="M34 34h20v34h52V34h20v92h-20V88H54v38H34z" fill="url(#g)"/>
+  <circle cx="122" cy="38" r="10" fill="#2dd4bf"/>
+</svg>
