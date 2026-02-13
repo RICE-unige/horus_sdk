@@ -16,9 +16,23 @@
 
 [![CI](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
 [![Release](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml)
+[![Docs CI](https://github.com/RICE-unige/horus_sdk/actions/workflows/docs-ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/docs-ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![ROS2](https://img.shields.io/badge/ROS2-Humble%20%7C%20Jazzy-22314E)
 [![License](https://img.shields.io/badge/License-Apache--2.0-green.svg)](LICENSE)
+
+## Documentation
+
+- Site: <https://rice-unige.github.io/horus_sdk/>
+- Docs branch: `docs/site-v1`
+- Local commands:
+
+```bash
+npm ci
+npm run docs:check
+npm run docs:build
+npm run docs:start
+```
 
 > [!IMPORTANT]
 > This repository owns the SDK/client orchestration layer of HORUS.
@@ -109,7 +123,7 @@ Post-install helpers:
 - `horus-python`
 - `horus-uninstall`
 
-See `docs/INSTALLER.md` for flags and non-interactive usage.
+See `docs/getting-started/installer.md` for flags and non-interactive usage.
 
 The installer keeps your shell clean (no global venv auto-activation). Use:
 - `python3 <~/horus/sdk/...>` directly (shim auto-routes HORUS scripts to HORUS env)
