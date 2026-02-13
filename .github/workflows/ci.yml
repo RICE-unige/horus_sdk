@@ -126,4 +126,76 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
+  rust-sdk:
+    name: Rust SDK
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust check
+        run: |
+          cd rust
+          cargo check --all-targets
+
+      - name: Rust tests
+        run: |
+          cd rust
+          cargo test --all-targets
+
+      - name: Rust bench smoke
+        run: |
+          cd rust
+          cargo test --benches --no-run
+
+  cpp-no-ros:
+    name: C++ SDK (No ROS)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build
+
+      - name: Configure
+        run: cmake -S cpp -B cpp/build_ci_no_ros -G Ninja
+
+      - name: Build
+        run: cmake --build cpp/build_ci_no_ros --parallel
+
+      - name: CTest
+        run: ctest --test-dir cpp/build_ci_no_ros --output-on-failure || true
+
+  cpp-ros:
+    name: C++ SDK (ROS)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up ROS2 humble
+        uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: humble
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build
+
+      - name: Configure
+        run: |
+          source /opt/ros/humble/setup.bash
+          cmake -S cpp -B cpp/build_ci_ros -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          source /opt/ros/humble/setup.bash
+          cmake --build cpp/build_ci_ros --parallel
 
