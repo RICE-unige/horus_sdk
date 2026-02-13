@@ -1543,6 +1543,12 @@ class RobotRegistryClient:
                 "z": float(z_default),
             }
 
+        def _coerce_text(value, default):
+            if value is None:
+                return str(default)
+            text = str(value).strip()
+            return text if text else str(default)
+
         def _build_camera_config(sensor):
             metadata = sensor.metadata or {}
             def _normalize_transport(value, fallback):
@@ -1699,6 +1705,122 @@ class RobotRegistryClient:
                 },
             }
 
+        def _build_teleop_control():
+            robot_metadata = getattr(robot, "metadata", {}) or {}
+            teleop_metadata = robot_metadata.get("teleop_config")
+            if not isinstance(teleop_metadata, dict):
+                teleop_metadata = {}
+
+            allowed_profiles = {"wheeled", "legged", "aerial", "custom"}
+            default_profile = str(getattr(robot, "get_type_str", lambda: "wheeled")()).strip().lower()
+            if default_profile not in allowed_profiles:
+                default_profile = "wheeled"
+
+            allowed_response_modes = {"analog", "discrete"}
+            allowed_deadman_policies = {
+                "either_index_trigger",
+                "left_index_trigger",
+                "right_index_trigger",
+                "either_grip_trigger",
+            }
+
+            command_topic = _coerce_text(
+                teleop_metadata.get("command_topic"),
+                f"/{robot.name}/cmd_vel",
+            )
+            raw_input_topic = _coerce_text(
+                teleop_metadata.get("raw_input_topic"),
+                f"/horus/teleop/{robot.name}/joy",
+            )
+            head_pose_topic = _coerce_text(
+                teleop_metadata.get("head_pose_topic"),
+                f"/horus/teleop/{robot.name}/head_pose",
+            )
+
+            response_mode = _coerce_text(teleop_metadata.get("response_mode"), "analog").lower()
+            if response_mode not in allowed_response_modes:
+                response_mode = "analog"
+
+            robot_profile = _coerce_text(teleop_metadata.get("robot_profile"), default_profile).lower()
+            if robot_profile not in allowed_profiles:
+                robot_profile = default_profile
+
+            publish_rate_hz = _coerce_float(teleop_metadata.get("publish_rate_hz"), 30.0)
+            publish_rate_hz = max(5.0, min(120.0, publish_rate_hz))
+
+            deadman_metadata = teleop_metadata.get("deadman")
+            if not isinstance(deadman_metadata, dict):
+                deadman_metadata = {}
+
+            deadman_policy = _coerce_text(
+                deadman_metadata.get("policy"),
+                "either_index_trigger",
+            ).lower()
+            if deadman_policy not in allowed_deadman_policies:
+                deadman_policy = "either_index_trigger"
+
+            deadman_timeout_ms = _coerce_int(deadman_metadata.get("timeout_ms"), 200)
+            deadman_timeout_ms = max(50, min(2000, deadman_timeout_ms))
+
+            axes_metadata = teleop_metadata.get("axes")
+            if not isinstance(axes_metadata, dict):
+                axes_metadata = {}
+
+            deadzone = _coerce_float(axes_metadata.get("deadzone"), 0.15)
+            deadzone = max(0.0, min(0.5, deadzone))
+            expo = _coerce_float(axes_metadata.get("expo"), 1.7)
+            expo = max(1.0, min(3.0, expo))
+            linear_xy_max_mps = _coerce_float(axes_metadata.get("linear_xy_max_mps"), 1.0)
+            linear_xy_max_mps = max(0.0, min(5.0, linear_xy_max_mps))
+            linear_z_max_mps = _coerce_float(axes_metadata.get("linear_z_max_mps"), 0.8)
+            linear_z_max_mps = max(0.0, min(5.0, linear_z_max_mps))
+            angular_z_max_rps = _coerce_float(axes_metadata.get("angular_z_max_rps"), 1.2)
+            angular_z_max_rps = max(0.0, min(6.0, angular_z_max_rps))
+
+            discrete_metadata = teleop_metadata.get("discrete")
+            if not isinstance(discrete_metadata, dict):
+                discrete_metadata = {}
+
+            discrete_threshold = _coerce_float(discrete_metadata.get("threshold"), 0.6)
+            discrete_threshold = max(0.1, min(1.0, discrete_threshold))
+            linear_xy_step_mps = _coerce_float(discrete_metadata.get("linear_xy_step_mps"), 0.6)
+            linear_xy_step_mps = max(0.0, min(5.0, linear_xy_step_mps))
+            linear_z_step_mps = _coerce_float(discrete_metadata.get("linear_z_step_mps"), 0.4)
+            linear_z_step_mps = max(0.0, min(5.0, linear_z_step_mps))
+            angular_z_step_rps = _coerce_float(discrete_metadata.get("angular_z_step_rps"), 0.9)
+            angular_z_step_rps = max(0.0, min(6.0, angular_z_step_rps))
+
+            return {
+                "enabled": _coerce_bool(teleop_metadata.get("enabled"), True),
+                "command_topic": command_topic,
+                "raw_input_topic": raw_input_topic,
+                "head_pose_topic": head_pose_topic,
+                "robot_profile": robot_profile,
+                "response_mode": response_mode,
+                "publish_rate_hz": publish_rate_hz,
+                "custom_passthrough_only": _coerce_bool(
+                    teleop_metadata.get("custom_passthrough_only"),
+                    False,
+                ),
+                "deadman": {
+                    "policy": deadman_policy,
+                    "timeout_ms": deadman_timeout_ms,
+                },
+                "axes": {
+                    "deadzone": deadzone,
+                    "expo": expo,
+                    "linear_xy_max_mps": linear_xy_max_mps,
+                    "linear_z_max_mps": linear_z_max_mps,
+                    "angular_z_max_rps": angular_z_max_rps,
+                },
+                "discrete": {
+                    "threshold": discrete_threshold,
+                    "linear_xy_step_mps": linear_xy_step_mps,
+                    "linear_z_step_mps": linear_z_step_mps,
+                    "angular_z_step_rps": angular_z_step_rps,
+                },
+            }
+
         robot_visualizations = []
         fallback_global_visualizations = []
         for visualization in dataviz.visualizations:
@@ -1726,6 +1848,13 @@ class RobotRegistryClient:
                 seen_global.add(key)
                 global_visualizations.append(payload)
 
+        drive_topic = f"/{robot.name}/cmd_vel"
+        teleop_control = _build_teleop_control()
+        if isinstance(teleop_control, dict):
+            command_override = str(teleop_control.get("command_topic", "")).strip()
+            if command_override:
+                drive_topic = command_override
+
         config = {
             "action": "register",
             "robot_name": robot.name,
@@ -1734,7 +1863,8 @@ class RobotRegistryClient:
             "visualizations": robot_visualizations,
             "global_visualizations": global_visualizations,
             "control": {
-                "drive_topic": f"/{robot.name}/cmd_vel" # Default assumption
+                "drive_topic": drive_topic,
+                "teleop": teleop_control,
             },
             "robot_manager_config": _build_robot_manager_config(),
             "timestamp": time.time()
