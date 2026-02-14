@@ -62,6 +62,7 @@ class RobotRegistryClient:
         self._app_restart_seq = 0
         self._last_consumed_restart_seq = 0
         self._remote_ip = None
+        self._teleop_runtime_by_topic: Dict[str, Dict[str, Any]] = {}
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -166,6 +167,13 @@ class RobotRegistryClient:
                 "/horus/heartbeat", 
                 self._heartbeat_callback, 
                 hb_qos
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/teleop/runtime_state",
+                self._teleop_runtime_state_callback,
+                ack_qos,
             )
 
         except Exception as e:
@@ -346,13 +354,58 @@ class RobotRegistryClient:
                 self._app_restart_seq += 1
             self._app_uptime_by_id[app_id] = heartbeat_uptime
 
+    @staticmethod
+    def _normalize_transport(value: Any) -> Optional[str]:
+        normalized = str(value or "").strip().lower()
+        if normalized in ("ros", "webrtc"):
+            return normalized
+        return None
+
+    def _teleop_runtime_state_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return
+
+        camera_topic = str(payload.get("camera_topic", "") or "").strip()
+        if not camera_topic:
+            return
+
+        self._teleop_runtime_by_topic[camera_topic] = {
+            "active": bool(payload.get("active", False)),
+            "mode": str(payload.get("mode", "") or "").strip().lower(),
+            "transport": self._normalize_transport(payload.get("transport")),
+            "ts": time.time(),
+        }
+
+    def _get_runtime_transport_override(self, camera_topic: str) -> Optional[str]:
+        topic = str(camera_topic or "").strip()
+        if not topic:
+            return None
+
+        state = self._teleop_runtime_by_topic.get(topic)
+        if not state:
+            return None
+
+        if not bool(state.get("active", False)):
+            return None
+
+        return self._normalize_transport(state.get("transport"))
+
     def _get_active_app_count(self, timeout_s: float) -> int:
         now = time.time()
         stale = [ip for ip, ts in self._app_heartbeats.items() if (now - ts) > timeout_s]
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
             self._app_uptime_by_id.pop(ip, None)
-        return len(self._app_heartbeats)
+        active_count = len(self._app_heartbeats)
+        if active_count <= 0:
+            self._teleop_runtime_by_topic.clear()
+        return active_count
 
     def _consume_app_restart_signal(self) -> bool:
         if self._app_restart_seq != self._last_consumed_restart_seq:
@@ -840,6 +893,11 @@ class RobotRegistryClient:
                     else:
                         data = "STALE"
 
+            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
+            runtime_transport = self._get_runtime_transport_override(topic)
+            if runtime_transport:
+                camera_profile["active_transport"] = runtime_transport
+
             rows.append(
                 {
                     "robot": self._topic_group(topic, robot_names),
@@ -848,7 +906,7 @@ class RobotRegistryClient:
                     "topic_kind": topic_kind,
                     "link": link,
                     "data": data,
-                    "camera_profile": camera_topic_profiles.get(topic, {}),
+                    "camera_profile": camera_profile,
                     "pubs": pubs,
                     "subs": subs,
                 }
