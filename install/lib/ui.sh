@@ -384,7 +384,7 @@ print_completion_summary() {
   printf '    3. Start backend:  %bhorus-start%b\n' "${C_BOLD}" "${C_RESET}"
   printf '    4. Run demo:\n'
   printf '       %bhorus-python%b %s/sdk/python/examples/sdk_registration_demo.py \\\n' "${C_BOLD}" "${C_RESET}" "$install_root"
-  printf '         --robot-count 4 --with-camera --with-occupancy-grid\n'
+  printf '         --robot-count 4 --with-occupancy-grid\n'
   printf '    5. Uninstall:      %bhorus-uninstall%b\n' "${C_BOLD}" "${C_RESET}"
   printf '\n'
 }
