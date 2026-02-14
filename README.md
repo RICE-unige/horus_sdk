@@ -48,34 +48,19 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
 | `python/examples/` | Operational demos (`sdk_registration_demo.py`, fake publishers, e2e checks) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
-| `cpp/` | C++ SDK track |
-| `rust/` | Rust SDK track |
+| `cpp/` | C++ SDK parity track (paused) |
+| `rust/` | Rust SDK parity track (paused) |
 
 > [!NOTE]
 > Python remains the most complete and actively used track for current experiments.
 
-## Rust/C++ Parity Workstreams
+## Rust/C++ Parity Status
 
-- Canonical parity contract and fixtures:
+- Canonical parity contract and fixtures remain in:
   - `contracts/sdk_payload_contract.md`
   - `contracts/fixtures/*.json`
-- Branches:
-  - `feature/sdk-rust-parity`
-  - `feature/sdk-cpp-parity`
-
-Rust parity branch currently includes:
-- typed registration payload builders,
-- camera transport profile fallback/default parity,
-- global visualization dedupe parity,
-- workspace scale serialization parity,
-- robot manager config defaults parity,
-- Rust integration tests mirroring Python parity tests under `rust/tests/`.
-
-C++ parity branch now also includes:
-- `feature/sdk-cpp-parity` implementation of parity APIs and typed payload builders,
-- C++ examples parity (`sdk_registration_demo`, `fake_tf_publisher`, `e2e_registration_check`),
-- C++ parity tests and benchmark binaries,
-- ROS/no-ROS C++ CI coverage through the matrix workflow.
+- C++ and Rust parity tracks are intentionally paused while Python SDK reaches full teleoperation feature depth.
+- CI coverage for C++/Rust SDK test jobs is temporarily disabled in this phase and will be restored during parity bring-up.
 
 ## Requirements
 
@@ -142,14 +127,14 @@ ros2 launch horus_unity_bridge unity_bridge.launch.py
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/fake_tf_publisher.py --robot-count 4 --with-camera --publish-occupancy-grid
+python3 python/examples/fake_tf_publisher.py --robot-count 4 --publish-occupancy-grid
 ```
 
 ### 3) Run SDK registration demo
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera --with-occupancy-grid --workspace-scale 0.1
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --workspace-scale 0.1
 ```
 
 ## Camera Registration Model
@@ -166,6 +151,14 @@ Typical policy:
 
 > [!TIP]
 > Keep legacy `streaming_type` populated for compatibility with older MR clients while using profile fields for new behavior.
+
+## Teleoperation SDK Baseline
+
+Current SDK-side teleoperation support includes:
+- `control.teleop` payload serialization (`command_topic`, `raw_input_topic`, `head_pose_topic`, profile/response/deadman/axes/discrete settings),
+- teleop fake TF test scenarios (`fake_tf_teleop_single.py`, `fake_tf_teleop_multi.py`) for command-flow validation,
+- dashboard control-topic visibility for `cmd_vel`, `joy`, and `head_pose`,
+- runtime transport observability via `/horus/teleop/runtime_state` (ROS/WebRTC active path highlight).
 
 ## Global Visualization and Workspace Config Model
 
@@ -204,15 +197,15 @@ python3 python/examples/e2e_registration_check.py
 ### Multi-robot camera stress test
 
 ```bash
-python3 python/examples/fake_tf_publisher.py --robot-count 10 --with-camera
-python3 python/examples/sdk_registration_demo.py --robot-count 10 --with-camera
+python3 python/examples/fake_tf_publisher.py --robot-count 10
+python3 python/examples/sdk_registration_demo.py --robot-count 10
 ```
 
 ### Occupancy-map integration test
 
 ```bash
-python3 python/examples/fake_tf_publisher.py --robot-count 6 --with-camera --publish-occupancy-grid --occupancy-rate 1.0
-python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-camera --with-occupancy-grid --workspace-scale 0.1
+python3 python/examples/fake_tf_publisher.py --robot-count 6 --publish-occupancy-grid --occupancy-rate 1.0
+python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-occupancy-grid --workspace-scale 0.1
 ```
 
 ### Teleop command-flow fake TF tests
@@ -223,15 +216,6 @@ python3 python/examples/fake_tf_teleop_single.py --robot-name test_bot --static-
 
 # Multi-robot: all stay static until per-robot cmd_vel commands arrive
 python3 python/examples/fake_tf_teleop_multi.py --robot-count 4 --robot-name test_bot --static-camera --publish-compressed-images
-```
-
-### Targeted tests
-
-```bash
-pytest python/tests/test_camera_transport_profiles.py
-pytest python/tests/test_global_visualizations_payload.py
-pytest python/tests/test_workspace_scale_payload.py
-pytest python/tests
 ```
 
 ## Known Constraints
@@ -273,7 +257,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
 | Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
-| Teleoperation Contracts | :large_orange_diamond: In progress | MiniMap/Teleop transport profile fields are active in camera config payloads. | Add explicit teleop mode capability descriptors and handoff metadata. |
+| Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. | Add follow-leader/advanced handoff metadata and manipulator-capability descriptors. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
 | Tasking (2D/3D) | :white_circle: Planned | Generic task hooks exist; structured task catalogs are not finalized. | Publish typed task schema for Go to Point, Waypoint, Path Drawing, Go to Label, Multi-Robot Go to Point, and Follow-Lead Teleop. |
