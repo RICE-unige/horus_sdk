@@ -11,6 +11,7 @@ Usage:
   python3 sdk_registration_demo.py --with-occupancy-grid
   python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
   python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
+  python3 sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
   python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
 """
 
@@ -246,6 +247,29 @@ def build_parser():
         action="store_false",
         help="Hide unknown occupancy cells in MR.",
     )
+    parser.add_argument(
+        "--teleop-profile",
+        choices=["wheeled", "legged", "aerial", "custom"],
+        default="wheeled",
+        help="Teleop robot profile included in registration payload.",
+    )
+    parser.add_argument(
+        "--teleop-response-mode",
+        choices=["analog", "discrete"],
+        default="analog",
+        help="Teleop joystick response mode included in registration payload.",
+    )
+    parser.add_argument(
+        "--teleop-publish-rate",
+        type=float,
+        default=30.0,
+        help="Teleop command publish rate hint (Hz) included in registration payload.",
+    )
+    parser.add_argument(
+        "--teleop-passthrough-only",
+        action="store_true",
+        help="Set teleop custom_passthrough_only=true in payload.",
+    )
     return parser
 
 
@@ -311,6 +335,19 @@ def main():
                     "teleop": True,
                     "tasks": True,
                 },
+            },
+        )
+        robot.add_metadata(
+            "teleop_config",
+            {
+                "enabled": True,
+                "command_topic": f"/{name}/cmd_vel",
+                "raw_input_topic": f"/horus/teleop/{name}/joy",
+                "head_pose_topic": f"/horus/teleop/{name}/head_pose",
+                "robot_profile": args.teleop_profile,
+                "response_mode": args.teleop_response_mode,
+                "publish_rate_hz": max(5.0, float(args.teleop_publish_rate)),
+                "custom_passthrough_only": bool(args.teleop_passthrough_only),
             },
         )
         if args.with_camera:

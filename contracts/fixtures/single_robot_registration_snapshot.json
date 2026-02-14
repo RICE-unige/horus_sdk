@@ -3,7 +3,34 @@
   "robot_name": "test_bot",
   "robot_type": "wheeled",
   "control": {
-    "drive_topic": "/test_bot/cmd_vel"
+    "drive_topic": "/test_bot/cmd_vel",
+    "teleop": {
+      "enabled": true,
+      "command_topic": "/test_bot/cmd_vel",
+      "raw_input_topic": "/horus/teleop/test_bot/joy",
+      "head_pose_topic": "/horus/teleop/test_bot/head_pose",
+      "robot_profile": "wheeled",
+      "response_mode": "analog",
+      "publish_rate_hz": 30.0,
+      "custom_passthrough_only": false,
+      "deadman": {
+        "policy": "either_grip_trigger",
+        "timeout_ms": 200
+      },
+      "axes": {
+        "deadzone": 0.15,
+        "expo": 1.7,
+        "linear_xy_max_mps": 1.0,
+        "linear_z_max_mps": 0.8,
+        "angular_z_max_rps": 1.2
+      },
+      "discrete": {
+        "threshold": 0.6,
+        "linear_xy_step_mps": 0.6,
+        "linear_z_step_mps": 0.4,
+        "angular_z_step_rps": 0.9
+      }
+    }
   },
   "dimensions": {
     "length": 0.8,

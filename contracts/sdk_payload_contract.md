@@ -77,6 +77,39 @@ Occupancy payload:
 - `sections.teleop = true`
 - `sections.tasks = true`
 
+## Teleoperation Control Contract
+
+`control.drive_topic`:
+- Default: `/<robot>/cmd_vel`.
+- If `robot.metadata["teleop_config"]["command_topic"]` is set, `drive_topic` mirrors it.
+
+`control.teleop` defaults:
+- `enabled = true`
+- `command_topic = /<robot>/cmd_vel`
+- `raw_input_topic = /horus/teleop/<robot>/joy`
+- `head_pose_topic = /horus/teleop/<robot>/head_pose`
+- `robot_profile = robot_type` (`wheeled|legged|aerial|custom`, fallback `wheeled`)
+- `response_mode = analog` (`analog|discrete`)
+- `publish_rate_hz = 30.0` (clamped to `[5.0, 120.0]`)
+- `custom_passthrough_only = false`
+
+Deadman defaults:
+- `policy = either_grip_trigger` (`either_index_trigger|left_index_trigger|right_index_trigger|either_grip_trigger`)
+- `timeout_ms = 200` (clamped to `[50, 2000]`)
+
+Axis shaping defaults:
+- `deadzone = 0.15` (clamped to `[0.0, 0.5]`)
+- `expo = 1.7` (clamped to `[1.0, 3.0]`)
+- `linear_xy_max_mps = 1.0`
+- `linear_z_max_mps = 0.8`
+- `angular_z_max_rps = 1.2`
+
+Discrete response defaults:
+- `threshold = 0.6` (clamped to `[0.1, 1.0]`)
+- `linear_xy_step_mps = 0.6`
+- `linear_z_step_mps = 0.4`
+- `angular_z_step_rps = 0.9`
+
 ## Workspace Scale
 
 `workspace_config.position_scale` is included only when all are true:
@@ -99,4 +132,3 @@ Normalized reason extraction:
 Expected reasons currently exercised:
 - `Waiting for Workspace`
 - `Waiting for TF`
-

@@ -62,6 +62,7 @@ class RobotRegistryClient:
         self._app_restart_seq = 0
         self._last_consumed_restart_seq = 0
         self._remote_ip = None
+        self._teleop_runtime_by_topic: Dict[str, Dict[str, Any]] = {}
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -166,6 +167,13 @@ class RobotRegistryClient:
                 "/horus/heartbeat", 
                 self._heartbeat_callback, 
                 hb_qos
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/teleop/runtime_state",
+                self._teleop_runtime_state_callback,
+                ack_qos,
             )
 
         except Exception as e:
@@ -346,13 +354,58 @@ class RobotRegistryClient:
                 self._app_restart_seq += 1
             self._app_uptime_by_id[app_id] = heartbeat_uptime
 
+    @staticmethod
+    def _normalize_transport(value: Any) -> Optional[str]:
+        normalized = str(value or "").strip().lower()
+        if normalized in ("ros", "webrtc"):
+            return normalized
+        return None
+
+    def _teleop_runtime_state_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return
+
+        camera_topic = str(payload.get("camera_topic", "") or "").strip()
+        if not camera_topic:
+            return
+
+        self._teleop_runtime_by_topic[camera_topic] = {
+            "active": bool(payload.get("active", False)),
+            "mode": str(payload.get("mode", "") or "").strip().lower(),
+            "transport": self._normalize_transport(payload.get("transport")),
+            "ts": time.time(),
+        }
+
+    def _get_runtime_transport_override(self, camera_topic: str) -> Optional[str]:
+        topic = str(camera_topic or "").strip()
+        if not topic:
+            return None
+
+        state = self._teleop_runtime_by_topic.get(topic)
+        if not state:
+            return None
+
+        if not bool(state.get("active", False)):
+            return None
+
+        return self._normalize_transport(state.get("transport"))
+
     def _get_active_app_count(self, timeout_s: float) -> int:
         now = time.time()
         stale = [ip for ip, ts in self._app_heartbeats.items() if (now - ts) > timeout_s]
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
             self._app_uptime_by_id.pop(ip, None)
-        return len(self._app_heartbeats)
+        active_count = len(self._app_heartbeats)
+        if active_count <= 0:
+            self._teleop_runtime_by_topic.clear()
+        return active_count
 
     def _consume_app_restart_signal(self) -> bool:
         if self._app_restart_seq != self._last_consumed_restart_seq:
@@ -384,6 +437,8 @@ class RobotRegistryClient:
 
     def _collect_topics(self, dataviz):
         topics = []
+        if dataviz is None:
+            return topics
         try:
             for viz in dataviz.get_enabled_visualizations():
                 topic = viz.data_source.topic
@@ -392,6 +447,40 @@ class RobotRegistryClient:
         except Exception:
             pass
         return topics
+
+    def _collect_control_topics(self, config: Dict[str, Any]) -> list:
+        topics = []
+        if not isinstance(config, dict):
+            return topics
+
+        control = config.get("control")
+        if not isinstance(control, dict):
+            return topics
+
+        def _append_topic(value: Any):
+            topic = str(value or "").strip()
+            if topic and topic not in topics:
+                topics.append(topic)
+
+        _append_topic(control.get("drive_topic"))
+
+        teleop = control.get("teleop")
+        if isinstance(teleop, dict):
+            _append_topic(teleop.get("command_topic"))
+            _append_topic(teleop.get("raw_input_topic"))
+            _append_topic(teleop.get("head_pose_topic"))
+
+        return topics
+
+    @staticmethod
+    def _merge_topics(*topic_lists: list) -> list:
+        merged = []
+        for topic_list in topic_lists:
+            for topic in topic_list or []:
+                normalized = str(topic or "").strip()
+                if normalized and normalized not in merged:
+                    merged.append(normalized)
+        return merged
 
     def _apply_registration_metadata(self, robot, dataviz, ack: Dict):
         try:
@@ -495,14 +584,20 @@ class RobotRegistryClient:
             infos = self.node.get_subscriptions_info_by_topic(topic)
         except Exception:
             return False
-        return any(self._is_backend_node_name(info.node_name) for info in infos)
+        if any(self._is_backend_node_name(info.node_name) for info in infos):
+            return True
+        # Fallback: any non-local subscriber means the bridge side has a consumer.
+        return any(not self._is_local_node_name(info.node_name) for info in infos)
 
     def _has_backend_publisher(self, topic: str) -> bool:
         try:
             infos = self.node.get_publishers_info_by_topic(topic)
         except Exception:
             return False
-        return any(self._is_backend_node_name(info.node_name) for info in infos)
+        if any(self._is_backend_node_name(info.node_name) for info in infos):
+            return True
+        # Fallback: any non-local publisher means topic source is present beyond SDK process.
+        return any(not self._is_local_node_name(info.node_name) for info in infos)
 
     def _has_local_publisher(self, topic: str) -> bool:
         try:
@@ -518,15 +613,16 @@ class RobotRegistryClient:
             return False
         return any(self._is_local_node_name(info.node_name) for info in infos)
 
-    def _build_topic_roles(self, robot_topics):
+    def _build_topic_roles(self, robot_topics, control_topics: Optional[list] = None):
         roles = {
             "/horus/registration": "sdk_pub",
             "/horus/registration_ack": "sdk_sub",
             "/horus/heartbeat": "sdk_sub",
         }
+        control_topic_set = set(control_topics or [])
         for topic in robot_topics:
             if topic not in roles:
-                roles[topic] = "backend_sub"
+                roles[topic] = "backend_pub" if topic in control_topic_set else "backend_sub"
         return roles
 
     def _topic_group(self, topic: str, robot_names):
@@ -763,6 +859,22 @@ class RobotRegistryClient:
                 else:
                     link = "OK" if backend_pub else "NO"
                     data = "ACTIVE" if backend_pub else "IDLE"
+            elif role == "backend_pub":
+                backend_pub = self._has_backend_publisher(topic)
+                _, subs = self._get_topic_counts(topic)
+                pubs = 1 if backend_pub else 0
+                role_label = "bridge->robot" if topic.endswith("/cmd_vel") else "bridge->topic"
+                if not is_connected or not registration_done:
+                    link = "NO"
+                    data = "IDLE"
+                else:
+                    link = "OK" if backend_pub else "NO"
+                    if not backend_pub:
+                        data = "IDLE"
+                    elif subs > 0:
+                        data = "ACTIVE"
+                    else:
+                        data = "STALE"
             else:
                 role_label = "data->bridge"
                 pubs, _ = self._get_topic_counts(topic)
@@ -781,6 +893,11 @@ class RobotRegistryClient:
                     else:
                         data = "STALE"
 
+            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
+            runtime_transport = self._get_runtime_transport_override(topic)
+            if runtime_transport:
+                camera_profile["active_transport"] = runtime_transport
+
             rows.append(
                 {
                     "robot": self._topic_group(topic, robot_names),
@@ -789,7 +906,7 @@ class RobotRegistryClient:
                     "topic_kind": topic_kind,
                     "link": link,
                     "data": data,
-                    "camera_profile": camera_topic_profiles.get(topic, {}),
+                    "camera_profile": camera_profile,
                     "pubs": pubs,
                     "subs": subs,
                 }
@@ -858,8 +975,10 @@ class RobotRegistryClient:
             config_json = json.dumps(config)
             camera_topic_profiles = self._extract_camera_topic_profiles(config)
             
-            robot_topics = self._collect_topics(dataviz)
-            topic_roles = self._build_topic_roles(robot_topics)
+            data_topics = self._collect_topics(dataviz)
+            control_topics = self._collect_control_topics(config)
+            robot_topics = self._merge_topics(data_topics, control_topics)
+            topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
@@ -1137,6 +1256,7 @@ class RobotRegistryClient:
             entry_by_name = {}
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             robot_topics = []
+            control_topics = []
             camera_topic_profiles = {}
             global_visualizations = self._build_global_visualizations_payload(datavizs)
             for robot, dataviz in zip(robots, datavizs):
@@ -1151,11 +1271,11 @@ class RobotRegistryClient:
                 entries.append((robot, dataviz, msg))
                 entry_by_name[robot.name] = (robot, dataviz, msg)
                 camera_topic_profiles.update(self._extract_camera_topic_profiles(config))
-                for topic in self._collect_topics(dataviz):
-                    if topic and topic not in robot_topics:
-                        robot_topics.append(topic)
+                robot_topics = self._merge_topics(robot_topics, self._collect_topics(dataviz))
+                control_topics = self._merge_topics(control_topics, self._collect_control_topics(config))
 
-            topic_roles = self._build_topic_roles(robot_topics)
+            robot_topics = self._merge_topics(robot_topics, control_topics)
+            topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
             try:
@@ -1543,6 +1663,12 @@ class RobotRegistryClient:
                 "z": float(z_default),
             }
 
+        def _coerce_text(value, default):
+            if value is None:
+                return str(default)
+            text = str(value).strip()
+            return text if text else str(default)
+
         def _build_camera_config(sensor):
             metadata = sensor.metadata or {}
             def _normalize_transport(value, fallback):
@@ -1699,6 +1825,122 @@ class RobotRegistryClient:
                 },
             }
 
+        def _build_teleop_control():
+            robot_metadata = getattr(robot, "metadata", {}) or {}
+            teleop_metadata = robot_metadata.get("teleop_config")
+            if not isinstance(teleop_metadata, dict):
+                teleop_metadata = {}
+
+            allowed_profiles = {"wheeled", "legged", "aerial", "custom"}
+            default_profile = str(getattr(robot, "get_type_str", lambda: "wheeled")()).strip().lower()
+            if default_profile not in allowed_profiles:
+                default_profile = "wheeled"
+
+            allowed_response_modes = {"analog", "discrete"}
+            allowed_deadman_policies = {
+                "either_index_trigger",
+                "left_index_trigger",
+                "right_index_trigger",
+                "either_grip_trigger",
+            }
+
+            command_topic = _coerce_text(
+                teleop_metadata.get("command_topic"),
+                f"/{robot.name}/cmd_vel",
+            )
+            raw_input_topic = _coerce_text(
+                teleop_metadata.get("raw_input_topic"),
+                f"/horus/teleop/{robot.name}/joy",
+            )
+            head_pose_topic = _coerce_text(
+                teleop_metadata.get("head_pose_topic"),
+                f"/horus/teleop/{robot.name}/head_pose",
+            )
+
+            response_mode = _coerce_text(teleop_metadata.get("response_mode"), "analog").lower()
+            if response_mode not in allowed_response_modes:
+                response_mode = "analog"
+
+            robot_profile = _coerce_text(teleop_metadata.get("robot_profile"), default_profile).lower()
+            if robot_profile not in allowed_profiles:
+                robot_profile = default_profile
+
+            publish_rate_hz = _coerce_float(teleop_metadata.get("publish_rate_hz"), 30.0)
+            publish_rate_hz = max(5.0, min(120.0, publish_rate_hz))
+
+            deadman_metadata = teleop_metadata.get("deadman")
+            if not isinstance(deadman_metadata, dict):
+                deadman_metadata = {}
+
+            deadman_policy = _coerce_text(
+                deadman_metadata.get("policy"),
+                "either_grip_trigger",
+            ).lower()
+            if deadman_policy not in allowed_deadman_policies:
+                deadman_policy = "either_grip_trigger"
+
+            deadman_timeout_ms = _coerce_int(deadman_metadata.get("timeout_ms"), 200)
+            deadman_timeout_ms = max(50, min(2000, deadman_timeout_ms))
+
+            axes_metadata = teleop_metadata.get("axes")
+            if not isinstance(axes_metadata, dict):
+                axes_metadata = {}
+
+            deadzone = _coerce_float(axes_metadata.get("deadzone"), 0.15)
+            deadzone = max(0.0, min(0.5, deadzone))
+            expo = _coerce_float(axes_metadata.get("expo"), 1.7)
+            expo = max(1.0, min(3.0, expo))
+            linear_xy_max_mps = _coerce_float(axes_metadata.get("linear_xy_max_mps"), 1.0)
+            linear_xy_max_mps = max(0.0, min(5.0, linear_xy_max_mps))
+            linear_z_max_mps = _coerce_float(axes_metadata.get("linear_z_max_mps"), 0.8)
+            linear_z_max_mps = max(0.0, min(5.0, linear_z_max_mps))
+            angular_z_max_rps = _coerce_float(axes_metadata.get("angular_z_max_rps"), 1.2)
+            angular_z_max_rps = max(0.0, min(6.0, angular_z_max_rps))
+
+            discrete_metadata = teleop_metadata.get("discrete")
+            if not isinstance(discrete_metadata, dict):
+                discrete_metadata = {}
+
+            discrete_threshold = _coerce_float(discrete_metadata.get("threshold"), 0.6)
+            discrete_threshold = max(0.1, min(1.0, discrete_threshold))
+            linear_xy_step_mps = _coerce_float(discrete_metadata.get("linear_xy_step_mps"), 0.6)
+            linear_xy_step_mps = max(0.0, min(5.0, linear_xy_step_mps))
+            linear_z_step_mps = _coerce_float(discrete_metadata.get("linear_z_step_mps"), 0.4)
+            linear_z_step_mps = max(0.0, min(5.0, linear_z_step_mps))
+            angular_z_step_rps = _coerce_float(discrete_metadata.get("angular_z_step_rps"), 0.9)
+            angular_z_step_rps = max(0.0, min(6.0, angular_z_step_rps))
+
+            return {
+                "enabled": _coerce_bool(teleop_metadata.get("enabled"), True),
+                "command_topic": command_topic,
+                "raw_input_topic": raw_input_topic,
+                "head_pose_topic": head_pose_topic,
+                "robot_profile": robot_profile,
+                "response_mode": response_mode,
+                "publish_rate_hz": publish_rate_hz,
+                "custom_passthrough_only": _coerce_bool(
+                    teleop_metadata.get("custom_passthrough_only"),
+                    False,
+                ),
+                "deadman": {
+                    "policy": deadman_policy,
+                    "timeout_ms": deadman_timeout_ms,
+                },
+                "axes": {
+                    "deadzone": deadzone,
+                    "expo": expo,
+                    "linear_xy_max_mps": linear_xy_max_mps,
+                    "linear_z_max_mps": linear_z_max_mps,
+                    "angular_z_max_rps": angular_z_max_rps,
+                },
+                "discrete": {
+                    "threshold": discrete_threshold,
+                    "linear_xy_step_mps": linear_xy_step_mps,
+                    "linear_z_step_mps": linear_z_step_mps,
+                    "angular_z_step_rps": angular_z_step_rps,
+                },
+            }
+
         robot_visualizations = []
         fallback_global_visualizations = []
         for visualization in dataviz.visualizations:
@@ -1726,6 +1968,13 @@ class RobotRegistryClient:
                 seen_global.add(key)
                 global_visualizations.append(payload)
 
+        drive_topic = f"/{robot.name}/cmd_vel"
+        teleop_control = _build_teleop_control()
+        if isinstance(teleop_control, dict):
+            command_override = str(teleop_control.get("command_topic", "")).strip()
+            if command_override:
+                drive_topic = command_override
+
         config = {
             "action": "register",
             "robot_name": robot.name,
@@ -1734,7 +1983,8 @@ class RobotRegistryClient:
             "visualizations": robot_visualizations,
             "global_visualizations": global_visualizations,
             "control": {
-                "drive_topic": f"/{robot.name}/cmd_vel" # Default assumption
+                "drive_topic": drive_topic,
+                "teleop": teleop_control,
             },
             "robot_manager_config": _build_robot_manager_config(),
             "timestamp": time.time()

@@ -62,6 +62,7 @@ def _render_camera_profile(profile: dict) -> str:
     minimap = str(profile.get("minimap", "ros")).strip().lower()
     teleop = str(profile.get("teleop", "webrtc")).strip().lower()
     startup = str(profile.get("startup", "minimap")).strip().lower()
+    active_transport = str(profile.get("active_transport", "")).strip().lower()
 
     if minimap not in ("ros", "webrtc"):
         minimap = "ros"
@@ -70,13 +71,14 @@ def _render_camera_profile(profile: dict) -> str:
     if startup not in ("minimap", "teleop"):
         startup = "minimap"
 
-    active_transport = teleop if startup == "teleop" else minimap
+    if active_transport not in ("ros", "webrtc"):
+        active_transport = teleop if startup == "teleop" else minimap
 
     if active_transport == "ros":
         ros_chip = "[bold black on green] ROS [/]"
-        webrtc_chip = "[bold blue][ WEBRTC ][/bold blue]"
+        webrtc_chip = "[dim][ WEBRTC ][/dim]"
     else:
-        ros_chip = "[bold green][ ROS ][/bold green]"
+        ros_chip = "[dim][ ROS ][/dim]"
         webrtc_chip = "[bold white on blue] WEBRTC [/]"
 
     return f"{ros_chip} {webrtc_chip}"
