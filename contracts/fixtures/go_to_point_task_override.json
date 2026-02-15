@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "goal_topic": "/alpha/nav_goal",
+  "cancel_topic": "/alpha/nav_cancel",
+  "status_topic": "/alpha/nav_status",
+  "frame_id": "world",
+  "position_tolerance_m": 0.35,
+  "yaw_tolerance_deg": 22.5
+}

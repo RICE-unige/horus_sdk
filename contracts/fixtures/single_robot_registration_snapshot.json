@@ -30,6 +30,25 @@
         "linear_z_step_mps": 0.4,
         "angular_z_step_rps": 0.9
       }
+    },
+    "tasks": {
+      "go_to_point": {
+        "enabled": true,
+        "goal_topic": "/test_bot/goal_pose",
+        "cancel_topic": "/test_bot/goal_cancel",
+        "status_topic": "/test_bot/goal_status",
+        "frame_id": "map",
+        "position_tolerance_m": 0.2,
+        "yaw_tolerance_deg": 12.0
+      },
+      "waypoint": {
+        "enabled": true,
+        "path_topic": "/test_bot/waypoint_path",
+        "status_topic": "/test_bot/waypoint_status",
+        "frame_id": "map",
+        "position_tolerance_m": 0.2,
+        "yaw_tolerance_deg": 12.0
+      }
     }
   },
   "dimensions": {

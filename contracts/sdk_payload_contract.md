@@ -110,6 +110,31 @@ Discrete response defaults:
 - `linear_z_step_mps = 0.4`
 - `angular_z_step_rps = 0.9`
 
+## Task Control Contract
+
+`control.tasks.go_to_point` defaults:
+- `enabled = true`
+- `goal_topic = /<robot>/goal_pose` (`geometry_msgs/PoseStamped`)
+- `cancel_topic = /<robot>/goal_cancel` (`std_msgs/String`, payload: `"cancel"`)
+- `status_topic = /<robot>/goal_status` (`std_msgs/String`)
+- `frame_id = map`
+- `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
+- `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+
+`control.tasks.waypoint` defaults:
+- `enabled = true`
+- `path_topic = /<robot>/waypoint_path` (`nav_msgs/Path`)
+- `status_topic = /<robot>/waypoint_status` (`std_msgs/String` JSON status)
+- `frame_id = map`
+- `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
+- `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+
+Override source:
+- `robot.metadata["task_config"]["go_to_point"]`
+- `robot.metadata["task_config"]["waypoint"]`
+
+If provided values are missing/invalid, the serializer falls back to defaults and clamp ranges above.
+
 ## Workspace Scale
 
 `workspace_config.position_scale` is included only when all are true:
