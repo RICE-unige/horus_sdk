@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "goal_topic": "/test_bot/goal_pose",
+  "cancel_topic": "/test_bot/goal_cancel",
+  "status_topic": "/test_bot/goal_status",
+  "frame_id": "map",
+  "position_tolerance_m": 0.2,
+  "yaw_tolerance_deg": 12.0
+}

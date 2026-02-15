@@ -1941,6 +1941,41 @@ class RobotRegistryClient:
                 },
             }
 
+        def _build_task_control():
+            robot_metadata = getattr(robot, "metadata", {}) or {}
+            task_metadata = robot_metadata.get("task_config")
+            if not isinstance(task_metadata, dict):
+                task_metadata = {}
+
+            go_to_point_metadata = task_metadata.get("go_to_point")
+            if not isinstance(go_to_point_metadata, dict):
+                go_to_point_metadata = {}
+
+            topic_prefix = f"/{robot.name}"
+            goal_topic = _coerce_text(go_to_point_metadata.get("goal_topic"), f"{topic_prefix}/goal_pose")
+            cancel_topic = _coerce_text(go_to_point_metadata.get("cancel_topic"), f"{topic_prefix}/goal_cancel")
+            status_topic = _coerce_text(go_to_point_metadata.get("status_topic"), f"{topic_prefix}/goal_status")
+            frame_id = _coerce_text(go_to_point_metadata.get("frame_id"), "map")
+            if not frame_id:
+                frame_id = "map"
+
+            position_tolerance_m = _coerce_float(go_to_point_metadata.get("position_tolerance_m"), 0.20)
+            position_tolerance_m = max(0.01, min(10.0, position_tolerance_m))
+            yaw_tolerance_deg = _coerce_float(go_to_point_metadata.get("yaw_tolerance_deg"), 12.0)
+            yaw_tolerance_deg = max(0.1, min(180.0, yaw_tolerance_deg))
+
+            return {
+                "go_to_point": {
+                    "enabled": _coerce_bool(go_to_point_metadata.get("enabled"), True),
+                    "goal_topic": goal_topic,
+                    "cancel_topic": cancel_topic,
+                    "status_topic": status_topic,
+                    "frame_id": frame_id,
+                    "position_tolerance_m": position_tolerance_m,
+                    "yaw_tolerance_deg": yaw_tolerance_deg,
+                },
+            }
+
         robot_visualizations = []
         fallback_global_visualizations = []
         for visualization in dataviz.visualizations:
@@ -1970,6 +2005,7 @@ class RobotRegistryClient:
 
         drive_topic = f"/{robot.name}/cmd_vel"
         teleop_control = _build_teleop_control()
+        task_control = _build_task_control()
         if isinstance(teleop_control, dict):
             command_override = str(teleop_control.get("command_topic", "")).strip()
             if command_override:
@@ -1985,6 +2021,7 @@ class RobotRegistryClient:
             "control": {
                 "drive_topic": drive_topic,
                 "teleop": teleop_control,
+                "tasks": task_control,
             },
             "robot_manager_config": _build_robot_manager_config(),
             "timestamp": time.time()
