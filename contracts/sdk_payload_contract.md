@@ -121,8 +121,17 @@ Discrete response defaults:
 - `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
 - `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
 
+`control.tasks.waypoint` defaults:
+- `enabled = true`
+- `path_topic = /<robot>/waypoint_path` (`nav_msgs/Path`)
+- `status_topic = /<robot>/waypoint_status` (`std_msgs/String` JSON status)
+- `frame_id = map`
+- `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
+- `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+
 Override source:
 - `robot.metadata["task_config"]["go_to_point"]`
+- `robot.metadata["task_config"]["waypoint"]`
 
 If provided values are missing/invalid, the serializer falls back to defaults and clamp ranges above.
 

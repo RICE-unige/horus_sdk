@@ -40,6 +40,14 @@
         "frame_id": "map",
         "position_tolerance_m": 0.2,
         "yaw_tolerance_deg": 12.0
+      },
+      "waypoint": {
+        "enabled": true,
+        "path_topic": "/test_bot/waypoint_path",
+        "status_topic": "/test_bot/waypoint_status",
+        "frame_id": "map",
+        "position_tolerance_m": 0.2,
+        "yaw_tolerance_deg": 12.0
       }
     }
   },

@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "path_topic": "/alpha/route_path",
+  "status_topic": "/alpha/route_status",
+  "frame_id": "world",
+  "position_tolerance_m": 0.35,
+  "yaw_tolerance_deg": 22.5
+}

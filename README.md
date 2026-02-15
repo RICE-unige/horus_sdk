@@ -164,7 +164,9 @@ Current SDK-side teleoperation support includes:
 
 Current SDK-side robot task support includes:
 - `control.tasks.go_to_point` payload serialization (`goal_topic`, `cancel_topic`, `status_topic`, `frame_id`, tolerances),
+- `control.tasks.waypoint` payload serialization (`path_topic`, `status_topic`, `frame_id`, tolerances),
 - metadata override source `robot.metadata["task_config"]["go_to_point"]`,
+- metadata override source `robot.metadata["task_config"]["waypoint"]`,
 - fake goal-navigation simulator `python/examples/fake_tf_go_to_point.py` for send/cancel/reached cycle tests.
 
 ## Global Visualization and Workspace Config Model
@@ -232,6 +234,14 @@ python3 python/examples/fake_tf_teleop_multi.py --robot-count 4 --robot-name tes
 # Cancel with:  ros2 topic pub --once /<robot>/goal_cancel std_msgs/msg/String '{data: "cancel"}'
 # Goal completion/cancel status is published on /<robot>/goal_status.
 python3 python/examples/fake_tf_go_to_point.py --robot-count 3 --robot-name test_bot --static-camera
+```
+
+### Waypoint task fake TF test
+
+```bash
+# Send nav_msgs/Path to /<robot>/waypoint_path.
+# Execution progress/status is emitted on /<robot>/waypoint_status.
+python3 python/examples/fake_tf_waypoint.py --robot-count 3 --robot-name test_bot --static-camera
 ```
 
 ## Known Constraints
