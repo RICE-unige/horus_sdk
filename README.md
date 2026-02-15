@@ -167,7 +167,9 @@ Current SDK-side robot task support includes:
 - `control.tasks.waypoint` payload serialization (`path_topic`, `status_topic`, `frame_id`, tolerances),
 - metadata override source `robot.metadata["task_config"]["go_to_point"]`,
 - metadata override source `robot.metadata["task_config"]["waypoint"]`,
-- fake goal-navigation simulator `python/examples/fake_tf_go_to_point.py` for send/cancel/reached cycle tests.
+- go-to-point cancel contract on `/<robot>/goal_cancel` using `std_msgs/String` payload `"cancel"`,
+- fake goal-navigation simulator `python/examples/fake_tf_go_to_point.py` for send/cancel/reached cycle tests,
+- fake waypoint simulator `python/examples/fake_tf_waypoint.py` for ordered path/status cycle tests.
 
 ## Global Visualization and Workspace Config Model
 
@@ -286,7 +288,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. | Add follow-leader/advanced handoff metadata and manipulator-capability descriptors. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
-| Tasking (2D/3D) | :white_circle: Planned | Generic task hooks exist; structured task catalogs are not finalized. | Publish typed task schema for Go to Point, Waypoint, Path Drawing, Go to Label, Multi-Robot Go to Point, and Follow-Lead Teleop. |
+| Tasking (2D/3D) | :large_orange_diamond: In progress | Typed schemas for Go-To Point and Waypoint are integrated, with fake TF validation scripts and fixtures/tests. | Add Path Drawing + Go-To Label + Multi-Robot Go-To Point contracts and validation presets. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
 | After-Action Replay | :white_circle: Planned | - | Add replay manifest schema and deterministic timeline reconstruction inputs. |
 | Adaptive Streaming Policies | :white_circle: Planned | Static transport profiles exist, but no load-aware policy orchestration. | Add policy payload for per-robot FPS/resolution tiers, priority (teleop-first), transport fallback, and dynamic max-stream guardrails. |
