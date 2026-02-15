@@ -18,7 +18,7 @@ try:
     from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import PoseStamped, TransformStamped
-    from std_msgs.msg import Empty, String
+    from std_msgs.msg import String
     from tf2_msgs.msg import TFMessage
 except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
@@ -75,6 +75,7 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
         self._status_publishers = {}
         self._goal_subscriptions = []
         self._cancel_subscriptions = []
+        self._pending_cancel_status_bursts = []
 
         command_qos = QoSProfile(
             depth=10,
@@ -84,7 +85,7 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
         cancel_qos = QoSProfile(
             depth=10,
             durability=DurabilityPolicy.VOLATILE,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+            reliability=ReliabilityPolicy.RELIABLE,
         )
 
         for robot in self.robots:
@@ -99,7 +100,7 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
                 command_qos,
             )
             cancel_sub = self.create_subscription(
-                Empty,
+                String,
                 cancel_topic,
                 self._make_cancel_callback(robot.name),
                 cancel_qos,
@@ -116,7 +117,7 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
             robot.target_y = robot.y
 
         self.get_logger().info(
-            "Go-to-point mode active. Send PoseStamped on /<robot>/goal_pose and Empty on /<robot>/goal_cancel."
+            "Go-to-point mode active. Send PoseStamped on /<robot>/goal_pose and String('cancel') on /<robot>/goal_cancel."
         )
 
     def _make_goal_callback(self, robot_name):
@@ -144,7 +145,7 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
         return _callback
 
     def _make_cancel_callback(self, robot_name):
-        def _callback(_msg: Empty):
+        def _callback(_msg: String):
             self.get_logger().info(f"Received goal cancel for {robot_name}")
             goal = self._goals.get(robot_name)
             self._goals[robot_name] = None
@@ -152,9 +153,30 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
             if robot is not None:
                 robot.vx = 0.0
                 robot.vy = 0.0
+                robot.target_x = robot.x
+                robot.target_y = robot.y
             self._publish_status(robot_name, "goal_cancelled", goal)
+            self._schedule_cancel_status_burst(robot_name, goal)
 
         return _callback
+
+    def _schedule_cancel_status_burst(self, robot_name: str, goal: GoalState):
+        now = time.monotonic()
+        for delay in (0.1, 0.3):
+            self._pending_cancel_status_bursts.append((now + delay, robot_name, goal))
+
+    def _flush_cancel_status_burst_queue(self):
+        if not self._pending_cancel_status_bursts:
+            return
+
+        now = time.monotonic()
+        remaining = []
+        for due_time, robot_name, goal in self._pending_cancel_status_bursts:
+            if due_time <= now:
+                self._publish_status(robot_name, "goal_cancelled", goal)
+            else:
+                remaining.append((due_time, robot_name, goal))
+        self._pending_cancel_status_bursts = remaining
 
     def _robot_by_name(self, robot_name):
         for robot in self.robots:
@@ -186,6 +208,8 @@ class GoToPointFakeTFPublisher(FakeTFPublisher):
         publisher.publish(msg)
 
     def _on_timer(self):
+        self._flush_cancel_status_burst_queue()
+
         now = self.get_clock().now().to_msg()
         current_time = time.time()
         dt = current_time - self.last_update_time
