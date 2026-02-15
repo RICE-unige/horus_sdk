@@ -160,6 +160,13 @@ Current SDK-side teleoperation support includes:
 - dashboard control-topic visibility for `cmd_vel`, `joy`, and `head_pose`,
 - runtime transport observability via `/horus/teleop/runtime_state` (ROS/WebRTC active path highlight).
 
+## Robot Task Contract Baseline
+
+Current SDK-side robot task support includes:
+- `control.tasks.go_to_point` payload serialization (`goal_topic`, `cancel_topic`, `status_topic`, `frame_id`, tolerances),
+- metadata override source `robot.metadata["task_config"]["go_to_point"]`,
+- fake goal-navigation simulator `python/examples/fake_tf_go_to_point.py` for send/cancel/reached cycle tests.
+
 ## Global Visualization and Workspace Config Model
 
 Registration payloads can now include:
@@ -216,6 +223,14 @@ python3 python/examples/fake_tf_teleop_single.py --robot-name test_bot --static-
 
 # Multi-robot: all stay static until per-robot cmd_vel commands arrive
 python3 python/examples/fake_tf_teleop_multi.py --robot-count 4 --robot-name test_bot --static-camera --publish-compressed-images
+```
+
+### Go-to-point task fake TF test
+
+```bash
+# Robots stay idle until /<robot>/goal_pose is published.
+# Goal completion/cancel status is published on /<robot>/goal_status.
+python3 python/examples/fake_tf_go_to_point.py --robot-count 3 --robot-name test_bot --static-camera
 ```
 
 ## Known Constraints
