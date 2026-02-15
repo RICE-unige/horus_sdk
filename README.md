@@ -229,6 +229,7 @@ python3 python/examples/fake_tf_teleop_multi.py --robot-count 4 --robot-name tes
 
 ```bash
 # Robots stay idle until /<robot>/goal_pose is published.
+# Cancel with:  ros2 topic pub --once /<robot>/goal_cancel std_msgs/msg/String '{data: "cancel"}'
 # Goal completion/cancel status is published on /<robot>/goal_status.
 python3 python/examples/fake_tf_go_to_point.py --robot-count 3 --robot-name test_bot --static-camera
 ```

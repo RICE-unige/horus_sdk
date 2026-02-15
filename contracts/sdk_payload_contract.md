@@ -114,9 +114,9 @@ Discrete response defaults:
 
 `control.tasks.go_to_point` defaults:
 - `enabled = true`
-- `goal_topic = /<robot>/goal_pose`
-- `cancel_topic = /<robot>/goal_cancel`
-- `status_topic = /<robot>/goal_status`
+- `goal_topic = /<robot>/goal_pose` (`geometry_msgs/PoseStamped`)
+- `cancel_topic = /<robot>/goal_cancel` (`std_msgs/String`, payload: `"cancel"`)
+- `status_topic = /<robot>/goal_status` (`std_msgs/String`)
 - `frame_id = map`
 - `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
 - `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
