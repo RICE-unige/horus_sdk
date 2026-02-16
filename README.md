@@ -123,7 +123,7 @@ source install/setup.bash
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
 
-### 2) Start fake data (TF + camera + occupancy map)
+### 2) Start fake TF data (manual mode)
 
 ```bash
 cd ~/horus/sdk
@@ -139,10 +139,21 @@ python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map
 
 ### 3) Run SDK registration demo
 
+Manual fake-TF mode:
+
 ```bash
 cd ~/horus/sdk
 python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --with-3d-map --workspace-scale 0.1
 ```
+
+Auto fake-TF mode (demo starts/stops `fake_tf_publisher.py` for you):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-fake-tf --with-occupancy-grid --with-3d-map --workspace-scale 0.1
+```
+
+If `--with-3d-map` is enabled, still run `fake_3d_map_publisher.py` separately.
 
 ## Camera Registration Model
 
@@ -229,8 +240,11 @@ python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-occupanc
 ### 3D-map fake data test
 
 ```bash
+# Terminal A: 3D map point cloud source
 python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --rate 1.0
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-3d-map --with-occupancy-grid
+
+# Terminal B: TF publisher auto-started by demo
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --with-occupancy-grid --workspace-scale 0.1
 ```
 
 The SDK demo now registers 3D map defaults in fidelity mode:

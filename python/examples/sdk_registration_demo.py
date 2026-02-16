@@ -10,6 +10,7 @@ Usage:
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
   python3 sdk_registration_demo.py --with-occupancy-grid
   python3 sdk_registration_demo.py --with-3d-map --map-3d-topic /map_3d
+  python3 sdk_registration_demo.py --with-fake-tf --with-3d-map
   python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
   python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
   python3 sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
@@ -19,6 +20,8 @@ Usage:
 import sys
 import os
 import argparse
+import subprocess
+import time
 
 # Ensure we can import 'horus' package regardless of where script is run from
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -266,6 +269,30 @@ def build_parser():
         help="3D map frame id (default: map).",
     )
     parser.add_argument(
+        "--with-fake-tf",
+        dest="with_fake_tf",
+        action="store_true",
+        default=False,
+        help="Auto-start python/examples/fake_tf_publisher.py with matching robot names.",
+    )
+    parser.add_argument(
+        "--fake-tf-rate",
+        type=float,
+        default=30.0,
+        help="Publish rate used by auto-started fake_tf_publisher.py (Hz).",
+    )
+    parser.add_argument(
+        "--fake-tf-warmup-seconds",
+        type=float,
+        default=1.0,
+        help="Delay after spawning fake TF publisher before registration starts.",
+    )
+    parser.add_argument(
+        "--fake-tf-base-frame",
+        default="base_link",
+        help="Base frame used by auto-started fake_tf_publisher.py (default: base_link).",
+    )
+    parser.add_argument(
         "--teleop-profile",
         choices=["wheeled", "legged", "aerial", "custom"],
         default="wheeled",
@@ -301,6 +328,54 @@ def resolve_robot_names(args):
         return [args.robot_name]
 
     return [f"{args.robot_name}_{idx + 1}" for idx in range(args.robot_count)]
+
+
+def start_fake_tf_process(args, robot_names):
+    fake_tf_script = os.path.join(script_dir, "fake_tf_publisher.py")
+    tf_map_frame = args.map_3d_frame if args.with_3d_map else args.occupancy_frame
+
+    command = [
+        sys.executable,
+        fake_tf_script,
+        "--robot-names",
+        ",".join(robot_names),
+        "--map-frame",
+        tf_map_frame,
+        "--base-frame",
+        args.fake_tf_base_frame,
+        "--rate",
+        str(max(0.1, float(args.fake_tf_rate))),
+    ]
+
+    if args.with_camera:
+        command.extend(["--static-camera", "--publish-compressed-images"])
+    else:
+        command.extend(["--no-publish-compressed-images", "--no-publish-images"])
+
+    if args.with_occupancy_grid:
+        command.extend(["--publish-occupancy-grid", "--occupancy-topic", args.occupancy_topic])
+    else:
+        command.append("--no-publish-occupancy-grid")
+
+    cli.print_info(f"Starting fake TF publisher: {' '.join(command)}")
+    process = subprocess.Popen(command, cwd=script_dir)
+    warmup = max(0.0, float(args.fake_tf_warmup_seconds))
+    if warmup > 0.0:
+        time.sleep(warmup)
+    return process
+
+
+def stop_fake_tf_process(process):
+    if process is None or process.poll() is not None:
+        return
+
+    process.terminate()
+    try:
+        process.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5.0)
+
 
 def main():
     args = build_parser().parse_args()
@@ -460,20 +535,31 @@ def main():
         datavizs.append(dataviz)
         robots.append(robot)
 
-    cli.print_step(f"Registering {len(robots)} robot(s)...")
-    success, result = register_robots(
-        robots,
-        datavizs=datavizs,
-        keep_alive=args.keep_alive,
-        show_dashboard=True,
-        workspace_scale=args.workspace_scale,
-    )
-    if not success:
-        if isinstance(result, dict) and result.get("error") == "Cancelled":
-            cli.print_info("Registration cancelled by user.")
+    fake_tf_process = None
+    try:
+        if args.with_fake_tf:
+            fake_tf_process = start_fake_tf_process(args, robot_names)
+            if args.with_3d_map:
+                cli.print_info(
+                    "Fake TF is running. Start fake_3d_map_publisher.py separately for /map_3d data."
+                )
+
+        cli.print_step(f"Registering {len(robots)} robot(s)...")
+        success, result = register_robots(
+            robots,
+            datavizs=datavizs,
+            keep_alive=args.keep_alive,
+            show_dashboard=True,
+            workspace_scale=args.workspace_scale,
+        )
+        if not success:
+            if isinstance(result, dict) and result.get("error") == "Cancelled":
+                cli.print_info("Registration cancelled by user.")
+                return
+            cli.print_error(f"Registration failed: {result}")
             return
-        cli.print_error(f"Registration failed: {result}")
-        return
+    finally:
+        stop_fake_tf_process(fake_tf_process)
 
 
 if __name__ == "__main__":
