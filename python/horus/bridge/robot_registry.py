@@ -798,7 +798,7 @@ class RobotRegistryClient:
             point_cloud_payload: Dict[str, Any] = {}
             point_cloud_payload["point_size"] = max(
                 0.001,
-                self._payload_coerce_float(render_options.get("point_size"), 0.03),
+                self._payload_coerce_float(render_options.get("point_size"), 0.05),
             )
 
             max_points_raw = int(

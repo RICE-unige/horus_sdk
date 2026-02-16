@@ -207,8 +207,8 @@ def build_parser():
         "--with-occupancy-grid",
         dest="with_occupancy_grid",
         action="store_true",
-        default=True,
-        help="Publish global occupancy-grid visualization config to MR (default: on).",
+        default=False,
+        help="Publish global occupancy-grid visualization config to MR (default: off).",
     )
     parser.add_argument(
         "--no-occupancy-grid",
@@ -516,7 +516,7 @@ def main():
                 topic=args.map_3d_topic,
                 frame_id=args.map_3d_frame,
                 render_options={
-                    "point_size": 0.03,
+                    "point_size": 0.05,
                     "max_points_per_frame": 0,
                     "base_sample_stride": 1,
                     "min_update_interval": 0.0,

@@ -68,6 +68,7 @@ Occupancy payload:
 
 Point-cloud payload (global 3D map):
 - `point_cloud` block is always emitted for `type=point_cloud` (defaults included when options are omitted).
+- Defaults are fidelity-first (`point_size=0.05`, `max_points_per_frame=0`, `render_all_points=true`, `max_distance=0`, `auto_point_size_by_workspace_scale=true`), but explicit overrides are allowed.
 - `point_cloud.point_size`: float coercion, clamped to `>= 0.001`.
 - `point_cloud.max_points_per_frame`: int coercion, clamped to `>= 0` (`0 = unlimited / all points`).
 - `point_cloud.base_sample_stride`: int coercion, clamped to `>= 1`.

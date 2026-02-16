@@ -247,14 +247,26 @@ python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --r
 python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --with-occupancy-grid --workspace-scale 0.1
 ```
 
+### 3D-map dense realistic stress test (~3x density)
+
+```bash
+# Terminal A: denser and more realistic 3D map source
+python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map --density-multiplier 3.0 --no-ceiling --rate 1.0
+
+# Terminal B: register only a few robots (map-focused test)
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
+```
+
 The SDK demo now registers 3D map defaults in fidelity mode:
 - `max_points_per_frame=0` (unlimited),
 - `base_sample_stride=1`,
 - `render_all_points=true`,
 - `max_distance=0` (unlimited),
-- `auto_point_size_by_workspace_scale=true`.
+- `point_size=0.05`,
+- `auto_point_size_by_workspace_scale=true` (safe point-size scaling with workspace scale).
 
-Use these when constructing custom payloads to avoid map decimation/clipping artifacts.
+Use these defaults to avoid map decimation/clipping artifacts.  
+If needed, you can still override `point_cloud` fields per payload to cap load for performance tuning.
 
 ### Teleop command-flow fake TF tests
 

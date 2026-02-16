@@ -132,6 +132,7 @@ def test_point_cloud_defaults_are_emitted_without_render_options():
     assert point_cloud["max_distance"] == 0.0
     assert point_cloud["render_all_points"] is True
     assert point_cloud["auto_point_size_by_workspace_scale"] is True
+    assert point_cloud["point_size"] == 0.05
 
 
 def test_global_visualization_dedupes_point_cloud_across_multiple_robots():
