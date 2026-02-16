@@ -91,6 +91,14 @@ def test_point_cloud_serialized_as_global_visualization():
             "auto_point_size_by_workspace_scale": False,
             "min_point_size": 0.003,
             "max_point_size": 0.05,
+            "render_mode": "transparent_hq",
+            "enable_view_frustum_culling": False,
+            "frustum_padding": 0.12,
+            "enable_subpixel_culling": False,
+            "min_screen_radius_px": 1.0,
+            "visible_points_budget": 90000,
+            "max_visible_points_budget": 160000,
+            "map_static_mode": False,
         },
     )
 
@@ -113,6 +121,14 @@ def test_point_cloud_serialized_as_global_visualization():
     assert point_cloud_entry["point_cloud"]["auto_point_size_by_workspace_scale"] is False
     assert point_cloud_entry["point_cloud"]["min_point_size"] == 0.003
     assert point_cloud_entry["point_cloud"]["max_point_size"] == 0.05
+    assert point_cloud_entry["point_cloud"]["render_mode"] == "transparent_hq"
+    assert point_cloud_entry["point_cloud"]["enable_view_frustum_culling"] is False
+    assert point_cloud_entry["point_cloud"]["frustum_padding"] == 0.12
+    assert point_cloud_entry["point_cloud"]["enable_subpixel_culling"] is False
+    assert point_cloud_entry["point_cloud"]["min_screen_radius_px"] == 1.0
+    assert point_cloud_entry["point_cloud"]["visible_points_budget"] == 90000
+    assert point_cloud_entry["point_cloud"]["max_visible_points_budget"] == 160000
+    assert point_cloud_entry["point_cloud"]["map_static_mode"] is False
 
 
 def test_point_cloud_defaults_are_emitted_without_render_options():
@@ -133,6 +149,14 @@ def test_point_cloud_defaults_are_emitted_without_render_options():
     assert point_cloud["render_all_points"] is True
     assert point_cloud["auto_point_size_by_workspace_scale"] is True
     assert point_cloud["point_size"] == 0.05
+    assert point_cloud["render_mode"] == "opaque_fast"
+    assert point_cloud["enable_view_frustum_culling"] is True
+    assert point_cloud["frustum_padding"] == 0.03
+    assert point_cloud["enable_subpixel_culling"] is True
+    assert point_cloud["min_screen_radius_px"] == 0.8
+    assert point_cloud["visible_points_budget"] == 120000
+    assert point_cloud["max_visible_points_budget"] == 200000
+    assert point_cloud["map_static_mode"] is True
 
 
 def test_global_visualization_dedupes_point_cloud_across_multiple_robots():

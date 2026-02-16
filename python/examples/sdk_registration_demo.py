@@ -530,6 +530,14 @@ def main():
                     "auto_point_size_by_workspace_scale": True,
                     "min_point_size": 0.002,
                     "max_point_size": 0.04,
+                    "render_mode": "opaque_fast",
+                    "enable_view_frustum_culling": True,
+                    "frustum_padding": 0.03,
+                    "enable_subpixel_culling": True,
+                    "min_screen_radius_px": 0.8,
+                    "visible_points_budget": 120000,
+                    "max_visible_points_budget": 200000,
+                    "map_static_mode": True,
                 },
             )
         datavizs.append(dataviz)

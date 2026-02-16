@@ -860,6 +860,44 @@ class RobotRegistryClient:
             point_cloud_payload["min_point_size"] = min_point_size
             point_cloud_payload["max_point_size"] = max_point_size
 
+            render_mode = str(render_options.get("render_mode", "opaque_fast")).strip().lower()
+            if render_mode not in {"opaque_fast", "transparent_hq"}:
+                render_mode = "opaque_fast"
+            point_cloud_payload["render_mode"] = render_mode
+            point_cloud_payload["enable_view_frustum_culling"] = self._payload_coerce_bool(
+                render_options.get("enable_view_frustum_culling"),
+                True,
+            )
+            point_cloud_payload["frustum_padding"] = min(
+                0.5,
+                max(
+                    0.0,
+                    self._payload_coerce_float(render_options.get("frustum_padding"), 0.03),
+                ),
+            )
+            point_cloud_payload["enable_subpixel_culling"] = self._payload_coerce_bool(
+                render_options.get("enable_subpixel_culling"),
+                True,
+            )
+            point_cloud_payload["min_screen_radius_px"] = max(
+                0.0,
+                self._payload_coerce_float(render_options.get("min_screen_radius_px"), 0.8),
+            )
+            max_visible_points_budget = max(
+                1000,
+                int(self._payload_coerce_float(render_options.get("max_visible_points_budget"), 200000.0)),
+            )
+            visible_points_budget = max(
+                1000,
+                int(self._payload_coerce_float(render_options.get("visible_points_budget"), 120000.0)),
+            )
+            point_cloud_payload["max_visible_points_budget"] = max_visible_points_budget
+            point_cloud_payload["visible_points_budget"] = min(visible_points_budget, max_visible_points_budget)
+            point_cloud_payload["map_static_mode"] = self._payload_coerce_bool(
+                render_options.get("map_static_mode"),
+                True,
+            )
+
             payload["point_cloud"] = point_cloud_payload
 
         return payload

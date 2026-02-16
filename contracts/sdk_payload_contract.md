@@ -68,7 +68,7 @@ Occupancy payload:
 
 Point-cloud payload (global 3D map):
 - `point_cloud` block is always emitted for `type=point_cloud` (defaults included when options are omitted).
-- Defaults are fidelity-first (`point_size=0.05`, `max_points_per_frame=0`, `render_all_points=true`, `max_distance=0`, `auto_point_size_by_workspace_scale=true`), but explicit overrides are allowed.
+- Defaults keep full ingest fidelity (`point_size=0.05`, `max_points_per_frame=0`, `render_all_points=true`, `max_distance=0`, `auto_point_size_by_workspace_scale=true`) and use Quest-friendly visible-set defaults (`render_mode=opaque_fast`, frustum/subpixel culling enabled, `visible_points_budget=120000`, `max_visible_points_budget=200000`).
 - `point_cloud.point_size`: float coercion, clamped to `>= 0.001`.
 - `point_cloud.max_points_per_frame`: int coercion, clamped to `>= 0` (`0 = unlimited / all points`).
 - `point_cloud.base_sample_stride`: int coercion, clamped to `>= 1`.
@@ -83,6 +83,14 @@ Point-cloud payload (global 3D map):
 - `point_cloud.auto_point_size_by_workspace_scale`: bool coercion.
 - `point_cloud.min_point_size`: float coercion, clamped to `>= 0.0001`.
 - `point_cloud.max_point_size`: float coercion, clamped to `>= min_point_size`.
+- `point_cloud.render_mode`: enum coercion (`opaque_fast|transparent_hq`, fallback `opaque_fast`).
+- `point_cloud.enable_view_frustum_culling`: bool coercion.
+- `point_cloud.frustum_padding`: float coercion, clamped to `[0.0, 0.5]`.
+- `point_cloud.enable_subpixel_culling`: bool coercion.
+- `point_cloud.min_screen_radius_px`: float coercion, clamped to `>= 0.0`.
+- `point_cloud.visible_points_budget`: int coercion, clamped to `[1000, max_visible_points_budget]`.
+- `point_cloud.max_visible_points_budget`: int coercion, clamped to `>= 1000`.
+- `point_cloud.map_static_mode`: bool coercion.
 
 ## Robot Manager Config
 
