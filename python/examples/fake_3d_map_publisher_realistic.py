@@ -83,6 +83,7 @@ class Fake3DMapPublisherRealistic(Node):
         publish_mode: str,
         map_change_interval: float,
         on_change_republish_interval: float,
+        max_points: int = 0,
     ) -> None:
         super().__init__("horus_fake_3d_map_publisher_realistic")
         self.topic = topic
@@ -109,6 +110,7 @@ class Fake3DMapPublisherRealistic(Node):
         self.publish_mode = publish_mode.strip().lower()
         self.map_change_interval = max(0.0, float(map_change_interval))
         self.on_change_republish_interval = max(0.0, float(on_change_republish_interval))
+        self.max_points = max(0, int(max_points))
         self.seed_base = int(seed)
         self.scene_revision = 0
 
@@ -121,6 +123,9 @@ class Fake3DMapPublisherRealistic(Node):
         ]
 
         self._points = self._build_scene_points()
+        if self.max_points > 0 and len(self._points) > self.max_points:
+            self.random.shuffle(self._points)
+            self._points = self._points[: self.max_points]
 
         qos = QoSProfile(
             depth=1,
@@ -439,6 +444,9 @@ class Fake3DMapPublisherRealistic(Node):
         self.scene_revision += 1
         self.random = random.Random(self.seed_base + self.scene_revision)
         self._points = self._build_scene_points()
+        if self.max_points > 0 and len(self._points) > self.max_points:
+            self.random.shuffle(self._points)
+            self._points = self._points[: self.max_points]
         self._publish()
         self.get_logger().info(
             f"Map changed -> published revision {self.scene_revision} ({len(self._points)} points)."
@@ -516,6 +524,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="Safety republish interval in seconds for on_change mode (default: 2.0, set 0 to disable).",
     )
+    parser.add_argument(
+        "--max-points",
+        type=int,
+        default=0,
+        help="Hard max points after generation (default: 0 = unlimited). Randomly samples if exceeded.",
+    )
     return parser
 
 
@@ -541,6 +555,7 @@ def main() -> None:
         publish_mode=args.publish_mode,
         map_change_interval=args.map_change_interval,
         on_change_republish_interval=args.on_change_republish_interval,
+        max_points=args.max_points,
     )
 
     try:
