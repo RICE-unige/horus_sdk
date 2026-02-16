@@ -5,11 +5,11 @@ This profile is intended for Quest 3 minimap tests where you want:
 - a smaller indoor scene,
 - dense local structure,
 - vivid colors,
-- a hard point cap (default: 30000).
+- a hard point cap (default: 100000).
 
 Usage:
   python3 python/examples/fake_3d_map_publisher_compact_house.py
-  python3 python/examples/fake_3d_map_publisher_compact_house.py --max-points 30000 --publish-mode on_change
+  python3 python/examples/fake_3d_map_publisher_compact_house.py --max-points 100000 --publish-mode on_change
 """
 
 import argparse
@@ -76,6 +76,7 @@ class CompactHouse3DMapPublisher(Node):
         ]
 
         raw_points = self._build_scene_points()
+        self._raw_point_count = len(raw_points)
         self._records = self._limit_points(raw_points)
         self._points = [(x, y, z, rgb) for x, y, z, rgb, _ in self._records]
 
@@ -99,7 +100,7 @@ class CompactHouse3DMapPublisher(Node):
 
         self.get_logger().info(
             "Publishing compact colorful house map on "
-            f"{self.topic} ({len(self._points)} points, "
+            f"{self.topic} ({len(self._points)} points published, raw={self._raw_point_count}, "
             f"extent={self.extent_x:.1f}x{self.extent_y:.1f}m, "
             f"height={self.max_height:.1f}m, step={self.step:.3f}m, "
             f"max_points={self.max_points}, mode={self.publish_mode}, rate={self.rate_hz:.2f}Hz)"
@@ -129,7 +130,7 @@ class CompactHouse3DMapPublisher(Node):
     def _add_floor(self, points: List[PointRecord]) -> None:
         half_x = self.extent_x * 0.5
         half_y = self.extent_y * 0.5
-        floor_step = self.step * 0.9
+        floor_step = self.step * 0.65
         tile = max(0.4, self.step * 7.0)
         palette = [
             (72, 102, 132),
@@ -192,6 +193,35 @@ class CompactHouse3DMapPublisher(Node):
                 z += self.step
             d += self.step
 
+    def _add_wall_art(
+        self,
+        points: List[PointRecord],
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+        z0: float,
+        z1: float,
+        palette: List[Tuple[int, int, int]],
+    ) -> None:
+        dx = x1 - x0
+        dy = y1 - y0
+        length = max(1e-6, math.hypot(dx, dy))
+        ux = dx / length
+        uy = dy / length
+        spacing = max(self.step * 0.65, 0.03)
+        d = 0.0
+        while d <= length + 1e-6:
+            px = x0 + ux * d
+            py = y0 + uy * d
+            z = z0
+            while z <= z1 + 1e-6:
+                band = int((d / spacing) * 0.7 + (z / spacing) * 1.2)
+                c = palette[band % len(palette)]
+                points.append((px, py, z, self._shade(*c, variance=5), "feature"))
+                z += spacing
+            d += spacing
+
     def _add_layout(self, points: List[PointRecord]) -> None:
         half_x = self.extent_x * 0.5
         half_y = self.extent_y * 0.5
@@ -236,6 +266,63 @@ class CompactHouse3DMapPublisher(Node):
             (120, 172, 160),
             (166, 202, 188),
             door_gaps=[(y_len * 0.28 - gap * 0.5, y_len * 0.28 + gap * 0.5)],
+        )
+
+        # Add a den room (top-right area) with a dedicated doorway.
+        room_x0 = self.extent_x * 0.12
+        room_x1 = half_x - self.step * 1.2
+        room_y0 = self.extent_y * 0.12
+        room_y1 = half_y - self.step * 1.2
+        door = max(0.75, self.extent_x * 0.11)
+        self._add_wall_segment(
+            points,
+            room_x0,
+            room_y0,
+            room_x1,
+            room_y0,
+            (218, 212, 228),
+            (168, 132, 194),
+            (206, 176, 224),
+            door_gaps=[((room_x1 - room_x0) * 0.5 - door * 0.5, (room_x1 - room_x0) * 0.5 + door * 0.5)],
+        )
+        self._add_wall_segment(
+            points,
+            room_x0,
+            room_y0,
+            room_x0,
+            room_y1,
+            (210, 225, 214),
+            (124, 182, 146),
+            (176, 214, 184),
+            door_gaps=[((room_y1 - room_y0) * 0.72 - door * 0.45, (room_y1 - room_y0) * 0.72 + door * 0.45)],
+        )
+        self._add_wall_segment(
+            points,
+            room_x0,
+            room_y1,
+            room_x1,
+            room_y1,
+            (226, 216, 198),
+            (214, 146, 96),
+            (236, 188, 136),
+        )
+
+        # Colorful mural in the den room.
+        self._add_wall_art(
+            points,
+            room_x0 + self.step * 2.0,
+            room_y1,
+            room_x1 - self.step * 2.0,
+            room_y1,
+            self.max_height * 0.35,
+            self.max_height * 0.72,
+            [
+                (224, 92, 92),
+                (236, 168, 72),
+                (76, 168, 232),
+                (112, 196, 128),
+                (192, 126, 222),
+            ],
         )
 
     def _add_box(
@@ -310,6 +397,49 @@ class CompactHouse3DMapPublisher(Node):
                     points.append((x, y, z, self._shade(148, 156, 162, variance=9), "feature"))
                     theta += self.step / max(radius, self.step)
                 z += self.step
+
+        # Dedicated den-room content: couch, coffee table, bookshelves, and cabinets.
+        room_center_x = self.extent_x * 0.28
+        room_center_y = self.extent_y * 0.28
+        couch_top = (176, 132, 104)
+        couch_side = (142, 102, 76)
+        self._add_box(points, room_center_x, room_center_y - 0.35, 1.55, 0.72, 0.56, couch_top, couch_side)
+        self._add_box(points, room_center_x - 0.62, room_center_y - 0.35, 0.34, 0.72, 0.86, couch_top, couch_side)
+        self._add_box(points, room_center_x + 0.62, room_center_y - 0.35, 0.34, 0.72, 0.86, couch_top, couch_side)
+
+        table_top = (168, 124, 86)
+        table_side = (132, 94, 62)
+        self._add_box(points, room_center_x, room_center_y + 0.22, 0.86, 0.52, 0.46, table_top, table_side)
+
+        shelf_top = (154, 112, 78)
+        shelf_side = (120, 84, 56)
+        shelf_x = self.extent_x * 0.44
+        for idx in range(5):
+            level_h = 0.35 + idx * 0.32
+            self._add_box(points, shelf_x, room_center_y + 0.56, 0.88, 0.18, level_h, shelf_top, shelf_side)
+
+        # Small colorful decor cubes (books / decorations).
+        decor_colors = [
+            ((94, 162, 224), (74, 136, 188)),
+            ((212, 126, 92), (178, 100, 70)),
+            ((132, 198, 132), (106, 166, 106)),
+            ((198, 146, 216), (162, 114, 182)),
+        ]
+        for i in range(12):
+            dx = self.random.uniform(-0.42, 0.42)
+            dy = self.random.uniform(-0.14, 0.14)
+            sz = self.random.uniform(0.18, 0.36)
+            c_top, c_side = decor_colors[i % len(decor_colors)]
+            self._add_box(
+                points,
+                shelf_x + dx,
+                room_center_y + 0.56 + dy,
+                0.12,
+                0.12,
+                sz,
+                c_top,
+                c_side,
+            )
 
     def _add_ceiling(self, points: List[PointRecord]) -> None:
         if not self.include_ceiling:
@@ -413,9 +543,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extent-y", type=float, default=6.0, help="House depth in meters (default: 6.0).")
     parser.add_argument("--max-height", type=float, default=2.4, help="Wall height in meters (default: 2.4).")
     parser.add_argument("--resolution", type=float, default=0.10, help="Base resolution before density multiplier (default: 0.10).")
-    parser.add_argument("--density-multiplier", type=float, default=2.4, help="Density multiplier (default: 2.4).")
+    parser.add_argument("--density-multiplier", type=float, default=3.6, help="Density multiplier (default: 3.6).")
     parser.add_argument("--seed", type=int, default=42, help="Random seed (default: 42).")
-    parser.add_argument("--max-points", type=int, default=30000, help="Hard max points after capping (default: 30000).")
+    parser.add_argument("--max-points", type=int, default=100000, help="Hard max points after capping (default: 100000).")
     parser.add_argument("--include-ceiling", action="store_true", default=False, help="Include ceiling points (default: off).")
     parser.add_argument(
         "--publish-mode",
