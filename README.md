@@ -244,29 +244,56 @@ python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-occupanc
 python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --rate 1.0
 
 # Terminal B: TF publisher auto-started by demo
-python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --with-occupancy-grid --workspace-scale 0.1
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
 ```
 
 ### 3D-map dense realistic stress test (~3x density)
 
 ```bash
-# Terminal A: denser and more realistic 3D map source
-python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map --density-multiplier 3.0 --no-ceiling --rate 1.0
+# Terminal A: denser and more realistic 3D map source (with ceiling)
+python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map --density-multiplier 3.0 --include-ceiling --publish-mode on_change --on-change-republish-interval 2.0
 
 # Terminal B: register only a few robots (map-focused test)
 python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
 ```
 
-The SDK demo now registers 3D map defaults in fidelity mode:
+### 3D-map compact colorful house (capped at 30k points)
+
+```bash
+# Terminal A: smaller, denser, colorful compact house (hard cap = 30000)
+python3 python/examples/fake_3d_map_publisher_compact_house.py --topic /map_3d --frame map --max-points 30000 --publish-mode on_change --on-change-republish-interval 2.0
+
+# Terminal B: map-focused registration flow
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
+```
+
+3D-map example differences:
+
+| Example | Scene profile | Typical points | Best use |
+|---|---|---:|---|
+| `fake_3d_map_publisher.py` | Simple baseline floor/walls/boxes | Low to medium (depends on `--resolution`) | Quick bring-up and sanity checks |
+| `fake_3d_map_publisher_realistic.py` | Large realistic indoor map, walls/furniture/pillars | High (40k to 90k+) | Stress/performance tests |
+| `fake_3d_map_publisher_compact_house.py` | Smaller denser house with wall patterns + mostly wood furniture | Capped (default `30000`) | Stable visual demos and minimap interaction tests |
+
+To force continuous republish (heavier load), use:
+```bash
+python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map --density-multiplier 3.0 --include-ceiling --publish-mode continuous --rate 1.0
+```
+
+The SDK demo now registers 3D map defaults with full ingest + Quest fast visibility culling:
 - `max_points_per_frame=0` (unlimited),
 - `base_sample_stride=1`,
 - `render_all_points=true`,
 - `max_distance=0` (unlimited),
 - `point_size=0.05`,
-- `auto_point_size_by_workspace_scale=true` (safe point-size scaling with workspace scale).
+- `auto_point_size_by_workspace_scale=true` (safe point-size scaling with workspace scale),
+- `render_mode=opaque_fast`,
+- `enable_view_frustum_culling=true`,
+- `enable_subpixel_culling=true`,
+- `visible_points_budget=120000`, `max_visible_points_budget=200000`.
 
-Use these defaults to avoid map decimation/clipping artifacts.  
-If needed, you can still override `point_cloud` fields per payload to cap load for performance tuning.
+Use these defaults for Quest minimap-first performance without transport-side map decimation.  
+You can still override `point_cloud` fields per payload to tune quality/perf.
 
 ### Teleop command-flow fake TF tests
 
