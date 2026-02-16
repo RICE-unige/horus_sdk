@@ -435,6 +435,25 @@ class RobotRegistryClient:
             return detail or "Waiting for Workspace"
         return None
 
+    def _resolve_dashboard_queued_status(self, queued_reasons: Dict[str, str]) -> str:
+        if not isinstance(queued_reasons, dict) or not queued_reasons:
+            return ""
+
+        reasons = [str(reason or "").strip() for reason in queued_reasons.values() if str(reason or "").strip()]
+        if reasons and all(reason == reasons[0] for reason in reasons):
+            status = reasons[0]
+        else:
+            status = "Waiting for Workspace"
+
+        if status == "Waiting for Workspace":
+            try:
+                if self.node.count_publishers("/tf") <= 0:
+                    return "Waiting for TF"
+            except Exception:
+                pass
+
+        return status
+
     def _collect_topics(self, dataviz):
         topics = []
         if dataviz is None:
@@ -774,6 +793,74 @@ class RobotRegistryClient:
                 )
             if occupancy_payload:
                 payload["occupancy"] = occupancy_payload
+
+        if viz_type_value == "point_cloud":
+            point_cloud_payload: Dict[str, Any] = {}
+            point_cloud_payload["point_size"] = max(
+                0.001,
+                self._payload_coerce_float(render_options.get("point_size"), 0.03),
+            )
+
+            max_points_raw = int(
+                self._payload_coerce_float(render_options.get("max_points_per_frame"), 0.0)
+            )
+            point_cloud_payload["max_points_per_frame"] = 0 if max_points_raw <= 0 else max(1, max_points_raw)
+
+            point_cloud_payload["base_sample_stride"] = max(
+                1,
+                int(self._payload_coerce_float(render_options.get("base_sample_stride"), 1.0)),
+            )
+            point_cloud_payload["min_update_interval"] = max(
+                0.0,
+                self._payload_coerce_float(render_options.get("min_update_interval"), 0.0),
+            )
+            point_cloud_payload["enable_adaptive_quality"] = self._payload_coerce_bool(
+                render_options.get("enable_adaptive_quality"),
+                False,
+            )
+            point_cloud_payload["target_framerate"] = max(
+                30.0,
+                self._payload_coerce_float(render_options.get("target_framerate"), 72.0),
+            )
+            point_cloud_payload["min_quality_multiplier"] = min(
+                1.0,
+                max(
+                    0.25,
+                    self._payload_coerce_float(render_options.get("min_quality_multiplier"), 0.6),
+                ),
+            )
+            point_cloud_payload["min_distance"] = max(
+                0.0,
+                self._payload_coerce_float(render_options.get("min_distance"), 0.0),
+            )
+            point_cloud_payload["max_distance"] = max(
+                0.0,
+                self._payload_coerce_float(render_options.get("max_distance"), 0.0),
+            )
+            point_cloud_payload["replace_latest"] = self._payload_coerce_bool(
+                render_options.get("replace_latest"),
+                True,
+            )
+            point_cloud_payload["render_all_points"] = self._payload_coerce_bool(
+                render_options.get("render_all_points"),
+                True,
+            )
+            point_cloud_payload["auto_point_size_by_workspace_scale"] = self._payload_coerce_bool(
+                render_options.get("auto_point_size_by_workspace_scale"),
+                True,
+            )
+            min_point_size = max(
+                0.0001,
+                self._payload_coerce_float(render_options.get("min_point_size"), 0.002),
+            )
+            max_point_size = max(
+                min_point_size,
+                self._payload_coerce_float(render_options.get("max_point_size"), 0.04),
+            )
+            point_cloud_payload["min_point_size"] = min_point_size
+            point_cloud_payload["max_point_size"] = max_point_size
+
+            payload["point_cloud"] = point_cloud_payload
 
         return payload
 
@@ -1469,11 +1556,7 @@ class RobotRegistryClient:
 
                     queued_status = ""
                     if any_queued:
-                        reasons = list(queued_reasons.values())
-                        if reasons and all(reason == reasons[0] for reason in reasons):
-                            queued_status = reasons[0]
-                        else:
-                            queued_status = "Waiting for Workspace"
+                        queued_status = self._resolve_dashboard_queued_status(queued_reasons)
 
                     if not registration_done:
                         if not is_connected:
@@ -1514,11 +1597,7 @@ class RobotRegistryClient:
                         all_registered = bool(states) and all(state == "registered" for state in states)
                         registration_done = all_registered
                         if any_queued:
-                            reasons = list(queued_reasons.values())
-                            if reasons and all(reason == reasons[0] for reason in reasons):
-                                queued_status = reasons[0]
-                            else:
-                                queued_status = "Waiting for Workspace"
+                            queued_status = self._resolve_dashboard_queued_status(queued_reasons)
 
                         if all_registered:
                             if not keep_alive:
@@ -1553,11 +1632,7 @@ class RobotRegistryClient:
                             all_registered = bool(states) and all(state == "registered" for state in states)
                             registration_done = all_registered
                             if any_queued:
-                                reasons = list(queued_reasons.values())
-                                if reasons and all(reason == reasons[0] for reason in reasons):
-                                    queued_status = reasons[0]
-                                else:
-                                    queued_status = "Waiting for Workspace"
+                                queued_status = self._resolve_dashboard_queued_status(queued_reasons)
 
                             if not ok:
                                 dashboard.update_registration("Failed")

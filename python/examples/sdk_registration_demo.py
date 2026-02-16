@@ -9,6 +9,7 @@ Usage:
   python3 sdk_registration_demo.py --robot-count 4
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
   python3 sdk_registration_demo.py --with-occupancy-grid
+  python3 sdk_registration_demo.py --with-3d-map --map-3d-topic /map_3d
   python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
   python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
   python3 sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
@@ -248,6 +249,23 @@ def build_parser():
         help="Hide unknown occupancy cells in MR.",
     )
     parser.add_argument(
+        "--with-3d-map",
+        dest="with_3d_map",
+        action="store_true",
+        default=False,
+        help="Publish global 3D map (PointCloud2) visualization config to MR (default: off).",
+    )
+    parser.add_argument(
+        "--map-3d-topic",
+        default="/map_3d",
+        help="3D map PointCloud2 topic (default: /map_3d).",
+    )
+    parser.add_argument(
+        "--map-3d-frame",
+        default="map",
+        help="3D map frame id (default: map).",
+    )
+    parser.add_argument(
         "--teleop-profile",
         choices=["wheeled", "legged", "aerial", "custom"],
         default="wheeled",
@@ -417,6 +435,27 @@ def main():
                 topic=args.occupancy_topic,
                 frame_id=args.occupancy_frame,
                 render_options=occupancy_render_options,
+            )
+        if args.with_3d_map:
+            dataviz.add_3d_map(
+                topic=args.map_3d_topic,
+                frame_id=args.map_3d_frame,
+                render_options={
+                    "point_size": 0.03,
+                    "max_points_per_frame": 0,
+                    "base_sample_stride": 1,
+                    "min_update_interval": 0.0,
+                    "enable_adaptive_quality": False,
+                    "target_framerate": 72.0,
+                    "min_quality_multiplier": 0.6,
+                    "min_distance": 0.0,
+                    "max_distance": 0.0,
+                    "replace_latest": True,
+                    "render_all_points": True,
+                    "auto_point_size_by_workspace_scale": True,
+                    "min_point_size": 0.002,
+                    "max_point_size": 0.04,
+                },
             )
         datavizs.append(dataviz)
         robots.append(robot)

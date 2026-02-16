@@ -66,6 +66,23 @@ Occupancy payload:
 - `occupancy.position_offset`: vec3 coercion from dict/list.
 - `occupancy.rotation_offset_euler`: vec3 coercion from dict/list.
 
+Point-cloud payload (global 3D map):
+- `point_cloud` block is always emitted for `type=point_cloud` (defaults included when options are omitted).
+- `point_cloud.point_size`: float coercion, clamped to `>= 0.001`.
+- `point_cloud.max_points_per_frame`: int coercion, clamped to `>= 0` (`0 = unlimited / all points`).
+- `point_cloud.base_sample_stride`: int coercion, clamped to `>= 1`.
+- `point_cloud.min_update_interval`: float coercion, clamped to `>= 0.0`.
+- `point_cloud.enable_adaptive_quality`: bool coercion.
+- `point_cloud.target_framerate`: float coercion, clamped to `>= 30.0`.
+- `point_cloud.min_quality_multiplier`: float coercion, clamped to `[0.25, 1.0]`.
+- `point_cloud.min_distance`: float coercion, clamped to `>= 0.0`.
+- `point_cloud.max_distance`: float coercion, clamped to `>= 0.0` (`0 = unlimited`).
+- `point_cloud.replace_latest`: bool coercion.
+- `point_cloud.render_all_points`: bool coercion.
+- `point_cloud.auto_point_size_by_workspace_scale`: bool coercion.
+- `point_cloud.min_point_size`: float coercion, clamped to `>= 0.0001`.
+- `point_cloud.max_point_size`: float coercion, clamped to `>= min_point_size`.
+
 ## Robot Manager Config
 
 `robot_manager_config` defaults:

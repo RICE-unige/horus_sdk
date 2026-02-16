@@ -130,11 +130,18 @@ cd ~/horus/sdk
 python3 python/examples/fake_tf_publisher.py --robot-count 4 --publish-occupancy-grid
 ```
 
+Optional: start synthetic 3D map (PointCloud2):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map
+```
+
 ### 3) Run SDK registration demo
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --workspace-scale 0.1
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --with-3d-map --workspace-scale 0.1
 ```
 
 ## Camera Registration Model
@@ -177,7 +184,7 @@ Registration payloads can now include:
 - `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid),
 - `workspace_config.position_scale` (global scale hint consumed by MR runtime).
 
-This enables 2D occupancy-map wiring without duplicating map config in each robot-scoped visualization block.
+This enables occupancy and 3D map wiring without duplicating map config in each robot-scoped visualization block.
 
 ## Dashboard Semantics
 
@@ -218,6 +225,22 @@ python3 python/examples/sdk_registration_demo.py --robot-count 10
 python3 python/examples/fake_tf_publisher.py --robot-count 6 --publish-occupancy-grid --occupancy-rate 1.0
 python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-occupancy-grid --workspace-scale 0.1
 ```
+
+### 3D-map fake data test
+
+```bash
+python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --rate 1.0
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-3d-map --with-occupancy-grid
+```
+
+The SDK demo now registers 3D map defaults in fidelity mode:
+- `max_points_per_frame=0` (unlimited),
+- `base_sample_stride=1`,
+- `render_all_points=true`,
+- `max_distance=0` (unlimited),
+- `auto_point_size_by_workspace_scale=true`.
+
+Use these when constructing custom payloads to avoid map decimation/clipping artifacts.
 
 ### Teleop command-flow fake TF tests
 
