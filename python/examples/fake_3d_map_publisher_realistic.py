@@ -5,10 +5,20 @@ This variant is intended for Quest performance stress tests.
 Compared to fake_3d_map_publisher.py it produces a denser cloud
 and richer indoor structure (rooms, doors, furniture, pillars).
 
+By default it publishes in on-change mode:
+- publish initial map once,
+- republish when subscriber count changes (late-join safety),
+- low-rate safety republish for volatile subscribers,
+- optionally regenerate/publish when map changes.
+Use --publish-mode continuous to republish every timer tick, or
+--map-change-interval to regenerate and publish only when the map changes.
+
 Usage examples:
   python3 python/examples/fake_3d_map_publisher_realistic.py
   python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map
   python3 python/examples/fake_3d_map_publisher_realistic.py --density-multiplier 3.0
+  python3 python/examples/fake_3d_map_publisher_realistic.py --publish-mode continuous
+  python3 python/examples/fake_3d_map_publisher_realistic.py --map-change-interval 5.0
 """
 
 import argparse
@@ -70,6 +80,9 @@ class Fake3DMapPublisherRealistic(Node):
         table_count: int,
         shelf_count: int,
         pillar_count: int,
+        publish_mode: str,
+        map_change_interval: float,
+        on_change_republish_interval: float,
     ) -> None:
         super().__init__("horus_fake_3d_map_publisher_realistic")
         self.topic = topic
@@ -81,6 +94,11 @@ class Fake3DMapPublisherRealistic(Node):
         self.base_resolution = max(0.05, float(resolution))
         self.density_multiplier = max(1.0, float(density_multiplier))
         self.step = max(0.03, self.base_resolution / math.sqrt(self.density_multiplier))
+        # Keep the no-ceiling profile lighter for Quest stress tests:
+        # - floor becomes much sparser
+        # - structures are modestly thinned
+        self.floor_step = self.step * (8.0 if not include_ceiling else 1.0)
+        self.structure_step = self.step * (1.245 if not include_ceiling else 1.0)
         self.random = random.Random(seed)
         self.include_ceiling = bool(include_ceiling)
         self.dropout_rate = min(0.6, max(0.0, float(dropout_rate)))
@@ -88,6 +106,11 @@ class Fake3DMapPublisherRealistic(Node):
         self.table_count = max(0, int(table_count))
         self.shelf_count = max(0, int(shelf_count))
         self.pillar_count = max(0, int(pillar_count))
+        self.publish_mode = publish_mode.strip().lower()
+        self.map_change_interval = max(0.0, float(map_change_interval))
+        self.on_change_republish_interval = max(0.0, float(on_change_republish_interval))
+        self.seed_base = int(seed)
+        self.scene_revision = 0
 
         self._point_struct = struct.Struct("<ffff")
         self._fields = [
@@ -105,8 +128,23 @@ class Fake3DMapPublisherRealistic(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.publisher = self.create_publisher(PointCloud2, self.topic, qos)
-        self.timer = self.create_timer(1.0 / self.rate_hz, self._publish)
+        self.timer = None
+        self.change_timer = None
+        self._last_change_pub_time = self.get_clock().now().nanoseconds / 1e9
+        self._last_subscriber_count = -1
+        self._last_publish_time = 0.0
+
+        # Publish initial map once (latched via TRANSIENT_LOCAL).
         self._publish()
+
+        if self.publish_mode == "continuous":
+            self.timer = self.create_timer(1.0 / self.rate_hz, self._publish)
+        else:
+            # on_change mode: lightweight periodic check for late subscribers and optional map changes.
+            check_period = 0.5
+            if self.map_change_interval > 0.0:
+                check_period = min(check_period, max(0.1, self.map_change_interval / 10.0))
+            self.change_timer = self.create_timer(check_period, self._on_change_tick)
 
         self.get_logger().info(
             "Publishing realistic fake 3D map on "
@@ -114,7 +152,9 @@ class Fake3DMapPublisherRealistic(Node):
             f"extent={self.extent_x:.1f}x{self.extent_y:.1f}m, "
             f"height={self.max_height:.1f}m, base_res={self.base_resolution:.3f}m, "
             f"density_multiplier={self.density_multiplier:.2f}, step={self.step:.3f}m, "
-            f"rate={self.rate_hz:.2f}Hz)"
+            f"mode={self.publish_mode}, rate={self.rate_hz:.2f}Hz, "
+            f"map_change_interval={self.map_change_interval:.2f}s, "
+            f"on_change_republish_interval={self.on_change_republish_interval:.2f}s)"
         )
 
     @staticmethod
@@ -149,20 +189,21 @@ class Fake3DMapPublisherRealistic(Node):
 
         cloud.add(x, y, z, color)
 
-    def _sample_range(self, a: float, b: float) -> List[float]:
+    def _sample_range(self, a: float, b: float, step: Optional[float] = None) -> List[float]:
+        step_size = self.step if step is None else max(0.01, float(step))
         values: List[float] = []
         v = min(a, b)
         end = max(a, b)
         while v <= end + 1e-6:
             values.append(v)
-            v += self.step
+            v += step_size
         return values
 
     def _add_floor(self, cloud: PointCloudBuilder) -> None:
         half_x = self.extent_x * 0.5
         half_y = self.extent_y * 0.5
-        for x in self._sample_range(-half_x, half_x):
-            for y in self._sample_range(-half_y, half_y):
+        for x in self._sample_range(-half_x, half_x, self.floor_step):
+            for y in self._sample_range(-half_y, half_y, self.floor_step):
                 color = self._shade(95, 100, 95, variance=6)
                 self._maybe_add(cloud, x, y, 0.0, color)
 
@@ -172,8 +213,8 @@ class Fake3DMapPublisherRealistic(Node):
         z = self.max_height
         half_x = self.extent_x * 0.5
         half_y = self.extent_y * 0.5
-        for x in self._sample_range(-half_x, half_x):
-            for y in self._sample_range(-half_y, half_y):
+        for x in self._sample_range(-half_x, half_x, self.structure_step):
+            for y in self._sample_range(-half_y, half_y, self.structure_step):
                 color = self._shade(120, 125, 130, variance=6)
                 self._maybe_add(cloud, x, y, z, color)
 
@@ -190,7 +231,8 @@ class Fake3DMapPublisherRealistic(Node):
         color_rgb: Tuple[int, int, int] = (150, 160, 185),
     ) -> None:
         z_top = self.max_height if z_max is None else max(0.3, z_max)
-        t = max(self.step, thickness if thickness is not None else self.step * 0.9)
+        step = self.structure_step
+        t = max(step, thickness if thickness is not None else step * 0.9)
         dx = x1 - x0
         dy = y1 - y0
         length = max(1e-6, math.hypot(dx, dy))
@@ -208,7 +250,7 @@ class Fake3DMapPublisherRealistic(Node):
                         in_gap = True
                         break
             if in_gap:
-                d += self.step
+                d += step
                 continue
 
             cx = x0 + ux * d
@@ -218,8 +260,8 @@ class Fake3DMapPublisherRealistic(Node):
                 color = self._shade(*color_rgb, variance=8)
                 self._maybe_add(cloud, cx + nx * t * 0.5, cy + ny * t * 0.5, zz, color)
                 self._maybe_add(cloud, cx - nx * t * 0.5, cy - ny * t * 0.5, zz, color)
-                zz += self.step
-            d += self.step
+                zz += step
+            d += step
 
     def _add_box(
         self,
@@ -237,15 +279,16 @@ class Fake3DMapPublisherRealistic(Node):
         min_y = cy - sy * 0.5
         max_y = cy + sy * 0.5
 
-        for x in self._sample_range(min_x, max_x):
-            for y in self._sample_range(min_y, max_y):
+        step = self.structure_step
+        for x in self._sample_range(min_x, max_x, step):
+            for y in self._sample_range(min_y, max_y, step):
                 self._maybe_add(cloud, x, y, sz, self._shade(*color_top, variance=8))
 
-        for z in self._sample_range(0.0, sz):
-            for x in self._sample_range(min_x, max_x):
+        for z in self._sample_range(0.0, sz, step):
+            for x in self._sample_range(min_x, max_x, step):
                 self._maybe_add(cloud, x, min_y, z, self._shade(*color_side, variance=8))
                 self._maybe_add(cloud, x, max_y, z, self._shade(*color_side, variance=8))
-            for y in self._sample_range(min_y, max_y):
+            for y in self._sample_range(min_y, max_y, step):
                 self._maybe_add(cloud, min_x, y, z, self._shade(*color_side, variance=8))
                 self._maybe_add(cloud, max_x, y, z, self._shade(*color_side, variance=8))
 
@@ -257,14 +300,15 @@ class Fake3DMapPublisherRealistic(Node):
         radius: float,
         height: float,
     ) -> None:
-        radius = max(self.step * 1.5, radius)
-        for z in self._sample_range(0.0, height):
+        step = self.structure_step
+        radius = max(step * 1.5, radius)
+        for z in self._sample_range(0.0, height, step):
             theta = 0.0
             while theta < math.tau:
                 x = cx + math.cos(theta) * radius
                 y = cy + math.sin(theta) * radius
                 self._maybe_add(cloud, x, y, z, self._shade(165, 165, 172, variance=7))
-                theta += self.step / max(radius, self.step)
+                theta += step / max(radius, step)
 
     def _add_layout(self, cloud: PointCloudBuilder) -> None:
         half_x = self.extent_x * 0.5
@@ -358,8 +402,51 @@ class Fake3DMapPublisherRealistic(Node):
         self._add_furniture(cloud)
         return cloud.to_list()
 
+    def _on_change_tick(self) -> None:
+        now_s = self.get_clock().now().nanoseconds / 1e9
+
+        try:
+            sub_count = int(self.publisher.get_subscription_count())
+        except Exception:
+            sub_count = 0
+
+        if sub_count != self._last_subscriber_count:
+            self._last_subscriber_count = sub_count
+            if sub_count > 0:
+                self._publish()
+                self.get_logger().info(
+                    f"Subscriber count changed to {sub_count}; republished map snapshot."
+                )
+
+        # Safety republish for volatile subscribers that may attach after initial snapshot.
+        if (
+            self.on_change_republish_interval > 0.0
+            and now_s - self._last_publish_time >= self.on_change_republish_interval
+        ):
+            self._publish()
+
+        self._maybe_publish_changed_map()
+
+    def _maybe_publish_changed_map(self) -> None:
+        if self.map_change_interval <= 0.0:
+            return
+
+        now_s = self.get_clock().now().nanoseconds / 1e9
+        if now_s - self._last_change_pub_time < self.map_change_interval:
+            return
+
+        self._last_change_pub_time = now_s
+        self.scene_revision += 1
+        self.random = random.Random(self.seed_base + self.scene_revision)
+        self._points = self._build_scene_points()
+        self._publish()
+        self.get_logger().info(
+            f"Map changed -> published revision {self.scene_revision} ({len(self._points)} points)."
+        )
+
     def _publish(self) -> None:
         now = self.get_clock().now().to_msg()
+        self._last_publish_time = now.sec + (now.nanosec / 1e9)
         msg = PointCloud2()
         msg.header.stamp = now
         msg.header.frame_id = self.frame_id
@@ -411,6 +498,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--table-count", type=int, default=18, help="Number of table-like obstacles (default: 18).")
     parser.add_argument("--shelf-count", type=int, default=10, help="Number of shelf-like obstacles (default: 10).")
     parser.add_argument("--pillar-count", type=int, default=8, help="Number of pillars (default: 8).")
+    parser.add_argument(
+        "--publish-mode",
+        choices=("on_change", "continuous"),
+        default="on_change",
+        help="Publish policy: on_change publishes once (and on map changes), continuous republishes at --rate.",
+    )
+    parser.add_argument(
+        "--map-change-interval",
+        type=float,
+        default=0.0,
+        help="If >0 in on_change mode, regenerate and publish map every N seconds.",
+    )
+    parser.add_argument(
+        "--on-change-republish-interval",
+        type=float,
+        default=2.0,
+        help="Safety republish interval in seconds for on_change mode (default: 2.0, set 0 to disable).",
+    )
     return parser
 
 
@@ -433,6 +538,9 @@ def main() -> None:
         table_count=args.table_count,
         shelf_count=args.shelf_count,
         pillar_count=args.pillar_count,
+        publish_mode=args.publish_mode,
+        map_change_interval=args.map_change_interval,
+        on_change_republish_interval=args.on_change_republish_interval,
     )
 
     try:
@@ -441,7 +549,8 @@ def main() -> None:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
