@@ -257,11 +257,11 @@ python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --fra
 python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
 ```
 
-### 3D-map compact colorful house (capped at 30k points)
+### 3D-map compact colorful house (dense mode, capped at 100k points)
 
 ```bash
-# Terminal A: smaller, denser, colorful compact house (hard cap = 30000)
-python3 python/examples/fake_3d_map_publisher_compact_house.py --topic /map_3d --frame map --max-points 30000 --publish-mode on_change --on-change-republish-interval 2.0
+# Terminal A: smaller, denser, colorful compact house with extra room content (hard cap = 100000)
+python3 python/examples/fake_3d_map_publisher_compact_house.py --topic /map_3d --frame map --max-points 100000 --publish-mode on_change --on-change-republish-interval 2.0
 
 # Terminal B: map-focused registration flow
 python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
@@ -273,7 +273,7 @@ python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf 
 |---|---|---:|---|
 | `fake_3d_map_publisher.py` | Simple baseline floor/walls/boxes | Low to medium (depends on `--resolution`) | Quick bring-up and sanity checks |
 | `fake_3d_map_publisher_realistic.py` | Large realistic indoor map, walls/furniture/pillars | High (40k to 90k+) | Stress/performance tests |
-| `fake_3d_map_publisher_compact_house.py` | Smaller denser house with wall patterns + mostly wood furniture | Capped (default `30000`) | Stable visual demos and minimap interaction tests |
+| `fake_3d_map_publisher_compact_house.py` | Smaller denser house with wall patterns, extra den room, and mixed decor | Capped (default `100000`) | Dense stress test with realistic interior style |
 
 To force continuous republish (heavier load), use:
 ```bash
@@ -294,6 +294,14 @@ The SDK demo now registers 3D map defaults with full ingest + Quest fast visibil
 
 Use these defaults for Quest minimap-first performance without transport-side map decimation.  
 You can still override `point_cloud` fields per payload to tune quality/perf.
+
+If no points appear on Quest after workspace acceptance, check this in order:
+- Confirm workspace is accepted in the MR app (map stays hidden before accept).
+- Confirm TF is active (use `--with-fake-tf` in `sdk_registration_demo.py` or run a TF publisher).
+- Confirm map publisher is active and has a subscriber:
+  `ros2 topic info /map_3d -v`
+- Check device logs for GPU point-cloud init errors:
+  `adb logcat | grep PointCloudGPU`
 
 ### Teleop command-flow fake TF tests
 
