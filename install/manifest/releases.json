@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-02-14",
+  "updated_at": "2026-02-17",
   "repos": {
     "horus_sdk": "https://github.com/RICE-unige/horus_sdk.git",
     "horus_ros2": "https://github.com/RICE-unige/horus_ros2.git"
   },
   "channels": {
     "stable": {
-      "sdk_ref": "013ce61d85600fb519f3e00d7ab9b89f6a3904fb",
+      "sdk_ref": "7c682925a109b7b0eee772a5d5a125e209418846",
       "ros2_ref": "c88f33e92bf2d9a6aec81b36e8ac85bc31fb4969",
-      "notes": "Pinned stable baseline refreshed to latest main with teleop + task runtime validation examples."
+      "notes": "Pinned stable baseline refreshed with ops-suite and typical SDK demo examples."
     },
     "main": {
       "sdk_ref": "refs/heads/main",
