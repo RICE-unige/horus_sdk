@@ -7,9 +7,9 @@
   },
   "channels": {
     "stable": {
-      "sdk_ref": "e19ac8710fc2c72c6a170abe65fb8d134678f5af",
-      "ros2_ref": "b9cda6eb2c3891c5e8ab6fd03b2ef9b9e9c29629",
-      "notes": "Pinned stable baseline with teleop SDK + dashboard transport updates."
+      "sdk_ref": "013ce61d85600fb519f3e00d7ab9b89f6a3904fb",
+      "ros2_ref": "c88f33e92bf2d9a6aec81b36e8ac85bc31fb4969",
+      "notes": "Pinned stable baseline refreshed to latest main with teleop + task runtime validation examples."
     },
     "main": {
       "sdk_ref": "refs/heads/main",
