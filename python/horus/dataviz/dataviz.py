@@ -423,6 +423,29 @@ class DataViz:
 
         self._add_or_update_visualization(viz_config)
 
+    def add_3d_mesh(
+        self,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add global 3D mesh map visualization."""
+        data_source = EnvironmentDataSource(
+            name="map_3d_mesh",
+            source_type=DataSourceType.MAP_3D,
+            topic=topic,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.MESH,
+            data_source=data_source,
+            render_options=render_options or {},
+            layer_priority=-4,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
     def add_global_navigation_path(
         self,
         topic: str,

@@ -123,19 +123,54 @@ source install/setup.bash
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
 
-### 2) Start fake data (TF + camera + occupancy map)
+### 2) Start fake TF data (manual mode)
 
 ```bash
 cd ~/horus/sdk
 python3 python/examples/fake_tf_publisher.py --robot-count 4 --publish-occupancy-grid
 ```
 
-### 3) Run SDK registration demo
+Optional: start synthetic 3D map (PointCloud2):
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --workspace-scale 0.1
+python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map
 ```
+
+Optional: convert PointCloud2 to colored mesh marker (for mesh-map pipeline):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --voxel-size 0.10 --update-mode continuous
+```
+
+### 3) Run SDK registration demo
+
+Manual fake-TF mode:
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --with-3d-map --workspace-scale 0.1
+```
+
+Manual fake-TF mode (mesh map):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-mesh --workspace-scale 0.1
+```
+
+If you pass both `--with-3d-map` and `--with-3d-mesh`, Unity runtime applies mesh-only map rendering (point-cloud map is disabled while mesh is active).
+
+Auto fake-TF mode (demo starts/stops `fake_tf_publisher.py` for you):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-fake-tf --with-occupancy-grid --with-3d-map --workspace-scale 0.1
+```
+
+If `--with-3d-map` is enabled, still run `fake_3d_map_publisher.py` separately.
+If `--with-3d-mesh` is enabled, also run `pointcloud_to_voxel_mesh_marker.py` to publish `/map_3d_mesh`.
 
 ## Camera Registration Model
 
@@ -177,7 +212,7 @@ Registration payloads can now include:
 - `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid),
 - `workspace_config.position_scale` (global scale hint consumed by MR runtime).
 
-This enables 2D occupancy-map wiring without duplicating map config in each robot-scoped visualization block.
+This enables occupancy and 3D map wiring without duplicating map config in each robot-scoped visualization block.
 
 ## Dashboard Semantics
 
@@ -218,6 +253,116 @@ python3 python/examples/sdk_registration_demo.py --robot-count 10
 python3 python/examples/fake_tf_publisher.py --robot-count 6 --publish-occupancy-grid --occupancy-rate 1.0
 python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-occupancy-grid --workspace-scale 0.1
 ```
+
+### 3D-map fake data test
+
+```bash
+# Terminal A: 3D map point cloud source
+python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --rate 1.0
+
+# Terminal B: TF publisher auto-started by demo
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
+```
+
+### 3D-mesh map test (colored TRIANGLE_LIST)
+
+```bash
+# Terminal A: 3D map point cloud source
+python3 python/examples/fake_3d_map_publisher_compact_house.py --topic /map_3d --frame map --max-points 100000 --publish-mode on_change --on-change-republish-interval 2.0
+
+# Terminal B: PointCloud2 -> visualization_msgs/Marker(TRIANGLE_LIST)
+python3 python/examples/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --voxel-size 0.05 --max-voxels 0 --max-triangles 50000 --update-mode continuous
+
+# Terminal C: TF publisher auto-started by demo, mesh registration enabled
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-mesh --workspace-scale 0.1
+```
+
+If Unity reports `ArgumentOutOfRangeException` in `MarkerMsg.Deserialize`, retry with:
+`--max-triangles 20000` and/or a larger `--voxel-size` (for example `0.08`).
+
+### PointCloud -> mesh validation in RViz (pre-Unity)
+
+```bash
+# Terminal A: publish point cloud map
+python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --rate 1.0
+
+# Terminal B: convert PointCloud2 to voxel mesh marker
+python3 python/examples/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --voxel-size 0.10 --update-mode once --on-change-republish-interval 2.0
+```
+
+```bash
+# Terminal C: visualize mesh in RViz
+rviz2
+```
+
+In RViz:
+- set `Fixed Frame` to `map`,
+- add a `Marker` display on topic `/map_3d_mesh`.
+- if Unity starts after converter, keep `--on-change-republish-interval` enabled so late subscribers still receive mesh snapshots.
+
+### 3D-map dense realistic stress test (~3x density)
+
+```bash
+# Terminal A: denser and more realistic 3D map source (with ceiling)
+python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map --density-multiplier 3.0 --include-ceiling --publish-mode on_change --on-change-republish-interval 2.0
+
+# Terminal B: register only a few robots (map-focused test)
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
+```
+
+### 3D-map compact colorful house (dense mode, capped at 100k points)
+
+```bash
+# Terminal A: smaller, denser, colorful compact house with extra room content (hard cap = 100000)
+python3 python/examples/fake_3d_map_publisher_compact_house.py --topic /map_3d --frame map --max-points 100000 --publish-mode on_change --on-change-republish-interval 2.0
+
+# Terminal B: map-focused registration flow
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
+```
+
+3D-map example differences:
+
+| Example | Scene profile | Typical points | Best use |
+|---|---|---:|---|
+| `fake_3d_map_publisher.py` | Simple baseline floor/walls/boxes | Low to medium (depends on `--resolution`) | Quick bring-up and sanity checks |
+| `fake_3d_map_publisher_realistic.py` | Large realistic indoor map, walls/furniture/pillars | High (40k to 90k+) | Stress/performance tests |
+| `fake_3d_map_publisher_compact_house.py` | Smaller denser house with wall patterns, extra den room, and mixed decor | Capped (default `100000`) | Dense stress test with realistic interior style |
+
+To force continuous republish (heavier load), use:
+```bash
+python3 python/examples/fake_3d_map_publisher_realistic.py --topic /map_3d --frame map --density-multiplier 3.0 --include-ceiling --publish-mode continuous --rate 1.0
+```
+
+The SDK demo now registers 3D map defaults with full ingest + Quest fast visibility culling:
+- `max_points_per_frame=0` (unlimited),
+- `base_sample_stride=1`,
+- `render_all_points=true`,
+- `max_distance=0` (unlimited),
+- `point_size=0.05`,
+- `auto_point_size_by_workspace_scale=true` (safe point-size scaling with workspace scale),
+- `render_mode=opaque_fast`,
+- `enable_view_frustum_culling=true`,
+- `enable_subpixel_culling=true`,
+- `visible_points_budget=120000`, `max_visible_points_budget=200000`.
+
+Use these defaults for Quest minimap-first performance without transport-side map decimation.  
+You can still override `point_cloud` fields per payload to tune quality/perf.
+
+Runtime behavior in `horus`:
+- `render_mode=opaque_fast` uses square quad billboards (not hardware point sprites).
+- with `map_static_mode=true`, map rendering prefers direct draw for stable output when map size is within budget.
+- when map size exceeds budget, runtime falls back to cull mode automatically.
+- subpixel culling is disabled in static map mode to reduce shimmer.
+
+If no points appear on Quest after workspace acceptance, check this in order:
+- Confirm workspace is accepted in the MR app (map stays hidden before accept).
+- Confirm TF is active (use `--with-fake-tf` in `sdk_registration_demo.py` or run a TF publisher).
+- Confirm map publisher is active and has a subscriber:
+  `ros2 topic info /map_3d -v`
+- Check device logs for GPU point-cloud init errors:
+  `adb logcat | grep PointCloudGPU`
+- For mesh-map mode, if Unity logs `ArgumentOutOfRangeException` in `MarkerMsg.Deserialize`,
+  reduce mesh payload size first (`--max-triangles 20000` to `50000` and/or larger `--voxel-size`).
 
 ### Teleop command-flow fake TF tests
 
