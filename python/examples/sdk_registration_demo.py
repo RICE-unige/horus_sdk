@@ -10,6 +10,7 @@ Usage:
   python3 sdk_registration_demo.py --robot-count 4 --with-camera
   python3 sdk_registration_demo.py --with-occupancy-grid
   python3 sdk_registration_demo.py --with-3d-map --map-3d-topic /map_3d
+  python3 sdk_registration_demo.py --with-3d-mesh --map-3d-mesh-topic /map_3d_mesh
   python3 sdk_registration_demo.py --with-fake-tf --with-3d-map
   python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
   python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
@@ -269,6 +270,23 @@ def build_parser():
         help="3D map frame id (default: map).",
     )
     parser.add_argument(
+        "--with-3d-mesh",
+        dest="with_3d_mesh",
+        action="store_true",
+        default=False,
+        help="Publish global 3D mesh (visualization_msgs/Marker TRIANGLE_LIST) config to MR (default: off).",
+    )
+    parser.add_argument(
+        "--map-3d-mesh-topic",
+        default="/map_3d_mesh",
+        help="3D mesh marker topic (default: /map_3d_mesh).",
+    )
+    parser.add_argument(
+        "--map-3d-mesh-frame",
+        default="map",
+        help="3D mesh frame id (default: map).",
+    )
+    parser.add_argument(
         "--with-fake-tf",
         dest="with_fake_tf",
         action="store_true",
@@ -332,7 +350,12 @@ def resolve_robot_names(args):
 
 def start_fake_tf_process(args, robot_names):
     fake_tf_script = os.path.join(script_dir, "fake_tf_publisher.py")
-    tf_map_frame = args.map_3d_frame if args.with_3d_map else args.occupancy_frame
+    if args.with_3d_map:
+        tf_map_frame = args.map_3d_frame
+    elif args.with_3d_mesh:
+        tf_map_frame = args.map_3d_mesh_frame
+    else:
+        tf_map_frame = args.occupancy_frame
 
     command = [
         sys.executable,
@@ -540,6 +563,18 @@ def main():
                     "map_static_mode": True,
                 },
             )
+        if args.with_3d_mesh:
+            dataviz.add_3d_mesh(
+                topic=args.map_3d_mesh_topic,
+                frame_id=args.map_3d_mesh_frame,
+                render_options={
+                    "use_vertex_colors": True,
+                    "alpha": 1.0,
+                    "double_sided": True,
+                    "max_triangles": 200000,
+                    "source_coordinate_space": "enu",
+                },
+            )
         datavizs.append(dataviz)
         robots.append(robot)
 
@@ -550,6 +585,10 @@ def main():
             if args.with_3d_map:
                 cli.print_info(
                     "Fake TF is running. Start fake_3d_map_publisher.py separately for /map_3d data."
+                )
+            if args.with_3d_mesh:
+                cli.print_info(
+                    "Mesh mode is enabled. Run pointcloud_to_voxel_mesh_marker.py separately to publish /map_3d_mesh."
                 )
 
         cli.print_step(f"Registering {len(robots)} robot(s)...")

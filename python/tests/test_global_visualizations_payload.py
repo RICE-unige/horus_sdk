@@ -174,3 +174,97 @@ def test_global_visualization_dedupes_point_cloud_across_multiple_robots():
         entry for entry in global_payload if entry.get("type") == "point_cloud"
     ]
     assert len(point_cloud_entries) == 1
+
+
+def test_mesh_serialized_as_global_visualization():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_mesh(
+        topic="/map_3d_mesh",
+        frame_id="map",
+        render_options={
+            "use_vertex_colors": False,
+            "alpha": 0.85,
+            "double_sided": False,
+            "max_triangles": 150000,
+            "source_coordinate_space": "optical",
+        },
+    )
+
+    client = _build_client()
+    config = client._build_robot_config_dict(robot, dataviz)
+    mesh_entries = [
+        entry for entry in config["global_visualizations"] if entry.get("type") == "mesh"
+    ]
+    assert len(mesh_entries) == 1
+
+    mesh_entry = mesh_entries[0]
+    assert mesh_entry["scope"] == "global"
+    assert mesh_entry["topic"] == "/map_3d_mesh"
+    assert mesh_entry["frame"] == "map"
+    assert mesh_entry["mesh"]["use_vertex_colors"] is False
+    assert mesh_entry["mesh"]["alpha"] == 0.85
+    assert mesh_entry["mesh"]["double_sided"] is False
+    assert mesh_entry["mesh"]["max_triangles"] == 150000
+    assert mesh_entry["mesh"]["source_coordinate_space"] == "optical"
+
+
+def test_mesh_defaults_are_emitted_without_render_options():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_mesh(topic="/map_3d_mesh", frame_id="map")
+
+    client = _build_client()
+    config = client._build_robot_config_dict(robot, dataviz)
+    entry = next(
+        item for item in config["global_visualizations"] if item.get("type") == "mesh"
+    )
+    mesh = entry["mesh"]
+    assert mesh["use_vertex_colors"] is True
+    assert mesh["alpha"] == 1.0
+    assert mesh["double_sided"] is True
+    assert mesh["max_triangles"] == 200000
+    assert mesh["source_coordinate_space"] == "enu"
+
+
+def test_global_visualization_dedupes_mesh_across_multiple_robots():
+    robot_a = Robot(name="bot_a", robot_type=RobotType.WHEELED)
+    dataviz_a = robot_a.create_dataviz()
+    dataviz_a.add_3d_mesh(topic="/map_3d_mesh", frame_id="map")
+
+    robot_b = Robot(name="bot_b", robot_type=RobotType.WHEELED)
+    dataviz_b = robot_b.create_dataviz()
+    dataviz_b.add_3d_mesh(topic="/map_3d_mesh", frame_id="map")
+
+    client = _build_client()
+    global_payload = client._build_global_visualizations_payload([dataviz_a, dataviz_b])
+    mesh_entries = [entry for entry in global_payload if entry.get("type") == "mesh"]
+    assert len(mesh_entries) == 1
+
+
+def test_mesh_overrides_are_coerced_and_clamped():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_mesh(
+        topic="/map_3d_mesh",
+        frame_id="map",
+        render_options={
+            "use_vertex_colors": "0",
+            "alpha": 3.0,
+            "double_sided": "false",
+            "max_triangles": -10,
+            "source_coordinate_space": "unknown_space",
+        },
+    )
+
+    client = _build_client()
+    config = client._build_robot_config_dict(robot, dataviz)
+    entry = next(
+        item for item in config["global_visualizations"] if item.get("type") == "mesh"
+    )
+    mesh = entry["mesh"]
+    assert mesh["use_vertex_colors"] is False
+    assert mesh["alpha"] == 1.0
+    assert mesh["double_sided"] is False
+    assert mesh["max_triangles"] == 1000
+    assert mesh["source_coordinate_space"] == "enu"

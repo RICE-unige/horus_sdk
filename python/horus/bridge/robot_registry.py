@@ -900,6 +900,36 @@ class RobotRegistryClient:
 
             payload["point_cloud"] = point_cloud_payload
 
+        if viz_type_value == "mesh":
+            mesh_payload: Dict[str, Any] = {}
+            mesh_payload["use_vertex_colors"] = self._payload_coerce_bool(
+                render_options.get("use_vertex_colors"),
+                True,
+            )
+            mesh_payload["alpha"] = min(
+                1.0,
+                max(
+                    0.0,
+                    self._payload_coerce_float(render_options.get("alpha"), 1.0),
+                ),
+            )
+            mesh_payload["double_sided"] = self._payload_coerce_bool(
+                render_options.get("double_sided"),
+                True,
+            )
+            mesh_payload["max_triangles"] = max(
+                1000,
+                int(self._payload_coerce_float(render_options.get("max_triangles"), 200000.0)),
+            )
+            source_coordinate_space = str(
+                render_options.get("source_coordinate_space", "enu")
+            ).strip().lower()
+            if source_coordinate_space not in {"enu", "optical"}:
+                source_coordinate_space = "enu"
+            mesh_payload["source_coordinate_space"] = source_coordinate_space
+
+            payload["mesh"] = mesh_payload
+
         return payload
 
     def _build_global_visualizations_payload(self, datavizs: list) -> list:

@@ -137,6 +137,13 @@ cd ~/horus/sdk
 python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map
 ```
 
+Optional: convert PointCloud2 to colored mesh marker (for mesh-map pipeline):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --voxel-size 0.10 --update-mode continuous
+```
+
 ### 3) Run SDK registration demo
 
 Manual fake-TF mode:
@@ -146,6 +153,15 @@ cd ~/horus/sdk
 python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --with-3d-map --workspace-scale 0.1
 ```
 
+Manual fake-TF mode (mesh map):
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-mesh --workspace-scale 0.1
+```
+
+If you pass both `--with-3d-map` and `--with-3d-mesh`, Unity runtime applies mesh-only map rendering (point-cloud map is disabled while mesh is active).
+
 Auto fake-TF mode (demo starts/stops `fake_tf_publisher.py` for you):
 
 ```bash
@@ -154,6 +170,7 @@ python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-fake-tf 
 ```
 
 If `--with-3d-map` is enabled, still run `fake_3d_map_publisher.py` separately.
+If `--with-3d-mesh` is enabled, also run `pointcloud_to_voxel_mesh_marker.py` to publish `/map_3d_mesh`.
 
 ## Camera Registration Model
 
@@ -247,6 +264,42 @@ python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --r
 python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-map --workspace-scale 0.1
 ```
 
+### 3D-mesh map test (colored TRIANGLE_LIST)
+
+```bash
+# Terminal A: 3D map point cloud source
+python3 python/examples/fake_3d_map_publisher_compact_house.py --topic /map_3d --frame map --max-points 100000 --publish-mode on_change --on-change-republish-interval 2.0
+
+# Terminal B: PointCloud2 -> visualization_msgs/Marker(TRIANGLE_LIST)
+python3 python/examples/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --voxel-size 0.05 --max-voxels 0 --max-triangles 50000 --update-mode continuous
+
+# Terminal C: TF publisher auto-started by demo, mesh registration enabled
+python3 python/examples/sdk_registration_demo.py --robot-count 1 --with-fake-tf --with-3d-mesh --workspace-scale 0.1
+```
+
+If Unity reports `ArgumentOutOfRangeException` in `MarkerMsg.Deserialize`, retry with:
+`--max-triangles 20000` and/or a larger `--voxel-size` (for example `0.08`).
+
+### PointCloud -> mesh validation in RViz (pre-Unity)
+
+```bash
+# Terminal A: publish point cloud map
+python3 python/examples/fake_3d_map_publisher.py --topic /map_3d --frame map --rate 1.0
+
+# Terminal B: convert PointCloud2 to voxel mesh marker
+python3 python/examples/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --voxel-size 0.10 --update-mode once --on-change-republish-interval 2.0
+```
+
+```bash
+# Terminal C: visualize mesh in RViz
+rviz2
+```
+
+In RViz:
+- set `Fixed Frame` to `map`,
+- add a `Marker` display on topic `/map_3d_mesh`.
+- if Unity starts after converter, keep `--on-change-republish-interval` enabled so late subscribers still receive mesh snapshots.
+
 ### 3D-map dense realistic stress test (~3x density)
 
 ```bash
@@ -295,6 +348,12 @@ The SDK demo now registers 3D map defaults with full ingest + Quest fast visibil
 Use these defaults for Quest minimap-first performance without transport-side map decimation.  
 You can still override `point_cloud` fields per payload to tune quality/perf.
 
+Runtime behavior in `horus`:
+- `render_mode=opaque_fast` uses square quad billboards (not hardware point sprites).
+- with `map_static_mode=true`, map rendering prefers direct draw for stable output when map size is within budget.
+- when map size exceeds budget, runtime falls back to cull mode automatically.
+- subpixel culling is disabled in static map mode to reduce shimmer.
+
 If no points appear on Quest after workspace acceptance, check this in order:
 - Confirm workspace is accepted in the MR app (map stays hidden before accept).
 - Confirm TF is active (use `--with-fake-tf` in `sdk_registration_demo.py` or run a TF publisher).
@@ -302,6 +361,8 @@ If no points appear on Quest after workspace acceptance, check this in order:
   `ros2 topic info /map_3d -v`
 - Check device logs for GPU point-cloud init errors:
   `adb logcat | grep PointCloudGPU`
+- For mesh-map mode, if Unity logs `ArgumentOutOfRangeException` in `MarkerMsg.Deserialize`,
+  reduce mesh payload size first (`--max-triangles 20000` to `50000` and/or larger `--voxel-size`).
 
 ### Teleop command-flow fake TF tests
 
