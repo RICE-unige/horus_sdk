@@ -46,7 +46,7 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | Path | Description |
 |---|---|
 | `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
-| `python/examples/` | Operational demos (`sdk_registration_demo.py`, fake publishers, e2e checks) |
+| `python/examples/` | Operational demos (`sdk_registration_demo.py`, `sdk_typical_ops_demo.py`, fake publishers, e2e checks) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
 | `cpp/` | C++ SDK parity track (paused) |
 | `rust/` | Rust SDK parity track (paused) |
@@ -123,18 +123,18 @@ source install/setup.bash
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
 
-### 2) Start fake data (TF + camera + occupancy map)
+### 2) Start unified fake ops runtime (TF + camera + teleop + tasks)
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/fake_tf_publisher.py --robot-count 4 --publish-occupancy-grid
+python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images
 ```
 
-### 3) Run SDK registration demo
+### 3) Run typical SDK registration demo
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-occupancy-grid --workspace-scale 0.1
+python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
 ```
 
 ## Camera Registration Model
@@ -198,6 +198,34 @@ Link/Data interpretation:
 > Topic truth depends on both ROS graph state and app connection phase. Validate with full workflow (connect -> workspace accept -> register).
 
 ## Practical Validation Workflows
+
+### All-in-one 10-robot ops test (no occupancy map)
+
+```bash
+# Terminal A: unified fake runtime (robots stay static until teleop/task commands)
+python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images
+
+# Terminal B: typical SDK registration flow (camera + teleop + go-to-point + waypoint)
+python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
+```
+
+Notes:
+- this scenario intentionally does not publish occupancy grid,
+- robots move only from `/<robot>/cmd_vel`, `/<robot>/goal_pose`, or `/<robot>/waypoint_path`,
+- active teleop input cancels active go-to-point/waypoint motion and requires task resend.
+
+Command examples while the suite is running:
+
+```bash
+# Teleop (atlas): move forward while turning
+ros2 topic pub -r 10 /atlas/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.35}, angular: {z: 0.30}}"
+
+# Go-to-point (nova)
+ros2 topic pub --once /nova/goal_pose geometry_msgs/msg/PoseStamped "{header: {frame_id: map}, pose: {position: {x: 1.5, y: -0.8, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}"
+
+# Waypoint path (orion)
+ros2 topic pub --once /orion/waypoint_path nav_msgs/msg/Path "{header: {frame_id: map}, poses: [{header: {frame_id: map}, pose: {position: {x: 0.8, y: 0.8, z: 0.0}, orientation: {w: 1.0}}}, {header: {frame_id: map}, pose: {position: {x: 1.6, y: 0.2, z: 0.0}, orientation: {w: 1.0}}}]}"
+```
 
 ### Registration smoke test
 
