@@ -1,6 +1,6 @@
 <p align="center">
-  <img src="docs/horus_logo_black.svg#gh-light-mode-only" alt="HORUS logo" height="120">
-  <img src="docs/horus_logo_white.svg#gh-dark-mode-only" alt="HORUS logo" height="120">
+  <img src="docs/horus_logo_black.svg#gh-light-mode-only" alt="HORUS logo" height="90">
+  <img src="docs/horus_logo_white.svg#gh-dark-mode-only" alt="HORUS logo" height="90">
 </p>
 
 <p align="center"><em>Holistic Operational Reality for Unified Systems</em></p>
