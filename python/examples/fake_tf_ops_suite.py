@@ -54,6 +54,10 @@ def _yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
     return math.atan2(siny_cosp, cosy_cosp)
 
 
+def _is_planar_yaw_quaternion(x: float, y: float, tol: float = 1e-3) -> bool:
+    return abs(x) <= tol and abs(y) <= tol
+
+
 @dataclass
 class GoalState:
     target_x: float
@@ -101,6 +105,8 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         self._goal_subscriptions = []
         self._cancel_subscriptions = []
         self._path_subscriptions = []
+        self._non_planar_goal_warned = set()
+        self._non_planar_waypoint_warned = set()
 
         command_qos = QoSProfile(
             depth=10,
@@ -154,11 +160,23 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         def _callback(msg: PoseStamped):
             target_x = float(msg.pose.position.x) / self._map_scale
             target_y = float(msg.pose.position.y) / self._map_scale
+            qx = float(msg.pose.orientation.x)
+            qy = float(msg.pose.orientation.y)
+            qz = float(msg.pose.orientation.z)
+            qw = float(msg.pose.orientation.w)
+
+            if robot_name not in self._non_planar_goal_warned and not _is_planar_yaw_quaternion(qx, qy):
+                self.get_logger().warning(
+                    f"Non-planar goal orientation for {robot_name}: qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}, qw={qw:.4f}. "
+                    "Yaw extraction will ignore roll/pitch terms."
+                )
+                self._non_planar_goal_warned.add(robot_name)
+
             target_yaw = _yaw_from_quaternion(
-                float(msg.pose.orientation.x),
-                float(msg.pose.orientation.y),
-                float(msg.pose.orientation.z),
-                float(msg.pose.orientation.w),
+                qx,
+                qy,
+                qz,
+                qw,
             )
 
             target_x, target_y = self._nearest_free_world_position(target_x, target_y)
@@ -196,11 +214,23 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
             for pose in msg.poses:
                 target_x = float(pose.pose.position.x) / self._map_scale
                 target_y = float(pose.pose.position.y) / self._map_scale
+                qx = float(pose.pose.orientation.x)
+                qy = float(pose.pose.orientation.y)
+                qz = float(pose.pose.orientation.z)
+                qw = float(pose.pose.orientation.w)
+
+                if robot_name not in self._non_planar_waypoint_warned and not _is_planar_yaw_quaternion(qx, qy):
+                    self.get_logger().warning(
+                        f"Non-planar waypoint orientation for {robot_name}: qx={qx:.4f}, qy={qy:.4f}, qz={qz:.4f}, qw={qw:.4f}. "
+                        "Yaw extraction will ignore roll/pitch terms."
+                    )
+                    self._non_planar_waypoint_warned.add(robot_name)
+
                 target_yaw = _yaw_from_quaternion(
-                    float(pose.pose.orientation.x),
-                    float(pose.pose.orientation.y),
-                    float(pose.pose.orientation.z),
-                    float(pose.pose.orientation.w),
+                    qx,
+                    qy,
+                    qz,
+                    qw,
                 )
                 target_x, target_y = self._nearest_free_world_position(target_x, target_y)
                 queue.append(
