@@ -1,18 +1,9 @@
-| **HORUS SDK** | <h1> Holistic Operational Reality for Unified Systems </h1> |
-|---|---|
-| SDK Layer | Registration, orchestration, and observability |
+<p align="center">
+  <img src="docs/horus_logo_black.svg#gh-light-mode-only" alt="HORUS logo" height="120">
+  <img src="docs/horus_log_white.svg#gh-dark-mode-only" alt="HORUS logo" height="120">
+</p>
 
-<div align="center">
-
-```text
-██╗  ██╗ ██████╗ ██████╗ ██╗   ██╗███████╗
-██║  ██║██╔═══██╗██╔══██╗██║   ██║██╔════╝
-███████║██║   ██║██████╔╝██║   ██║███████╗
-██╔══██║██║   ██║██╔══██╗██║   ██║╚════██║
-██║  ██║╚██████╔╝██║  ██║╚██████╔╝███████║
-╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
-```
-</div>
+<p align="center"><em>Holistic Operational Reality for Unified Systems</em></p>
 
 [![CI](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/ci.yml)
 [![Release](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml/badge.svg)](https://github.com/RICE-unige/horus_sdk/actions/workflows/release.yml)
