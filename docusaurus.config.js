@@ -40,12 +40,13 @@ const config = {
     ]
   ],
   themeConfig: /** @type {import('@docusaurus/preset-classic').ThemeConfig} */ ({
-    image: "img/horus-mark.svg",
+    image: "img/horus_logo_black.svg",
     navbar: {
-      title: "HORUS SDK",
+      title: "",
       logo: {
-        alt: "HORUS SDK",
-        src: "img/horus-mark.svg"
+        alt: "Horus SDK Logo",
+        src: "img/horus_logo_black.svg",
+        srcDark: "img/horus_log_white.svg"
       },
       items: [
         { to: "/docs/intro", label: "Docs", position: "left" },
@@ -83,7 +84,7 @@ const config = {
           ]
         }
       ],
-      copyright: `Copyright ${new Date().getFullYear()} RICE Lab, University of Genoa`
+      copyright: `Copyright ${new Date().getFullYear()} RICE Lab, University of Genoa. Built with Docusaurus.`
     },
     prism: {
       theme: lightCodeTheme,
@@ -91,7 +92,7 @@ const config = {
       additionalLanguages: ["bash", "cpp", "rust", "json", "yaml"]
     },
     colorMode: {
-      defaultMode: "light",
+      defaultMode: "dark", // Switch to dark mode default for "modern" feel
       disableSwitch: false,
       respectPrefersColorScheme: true
     }
