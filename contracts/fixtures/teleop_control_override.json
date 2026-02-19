@@ -1,0 +1,30 @@
+{
+  "drive_topic": "/alpha/cmd_vel_custom",
+  "teleop": {
+    "enabled": true,
+    "command_topic": "/alpha/cmd_vel_custom",
+    "raw_input_topic": "/horus/teleop/alpha/joy_raw",
+    "head_pose_topic": "/horus/teleop/alpha/head_pose",
+    "robot_profile": "aerial",
+    "response_mode": "discrete",
+    "publish_rate_hz": 45.0,
+    "custom_passthrough_only": true,
+    "deadman": {
+      "policy": "right_index_trigger",
+      "timeout_ms": 450
+    },
+    "axes": {
+      "deadzone": 0.18,
+      "expo": 2.0,
+      "linear_xy_max_mps": 1.8,
+      "linear_z_max_mps": 1.2,
+      "angular_z_max_rps": 1.5
+    },
+    "discrete": {
+      "threshold": 0.55,
+      "linear_xy_step_mps": 0.9,
+      "linear_z_step_mps": 0.7,
+      "angular_z_step_rps": 1.1
+    }
+  }
+}

@@ -13,7 +13,7 @@
 
 ```bash
 cd rust
-cargo run --example sdk_registration_demo -- --robot-count 4 --with-camera true --with-occupancy-grid true
+cargo run --example sdk_registration_demo -- --robot-count 4 --with-occupancy-grid true
 ```
 
 ```bash
@@ -25,4 +25,3 @@ cargo run --example fake_tf_publisher -- --robot-name test_bot --rate-hz 10 --cy
 cd rust
 cargo run --example e2e_registration_check -- --robot-name SdkBot_E2E
 ```
-

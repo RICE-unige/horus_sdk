@@ -77,6 +77,64 @@ Occupancy payload:
 - `sections.teleop = true`
 - `sections.tasks = true`
 
+## Teleoperation Control Contract
+
+`control.drive_topic`:
+- Default: `/<robot>/cmd_vel`.
+- If `robot.metadata["teleop_config"]["command_topic"]` is set, `drive_topic` mirrors it.
+
+`control.teleop` defaults:
+- `enabled = true`
+- `command_topic = /<robot>/cmd_vel`
+- `raw_input_topic = /horus/teleop/<robot>/joy`
+- `head_pose_topic = /horus/teleop/<robot>/head_pose`
+- `robot_profile = robot_type` (`wheeled|legged|aerial|custom`, fallback `wheeled`)
+- `response_mode = analog` (`analog|discrete`)
+- `publish_rate_hz = 30.0` (clamped to `[5.0, 120.0]`)
+- `custom_passthrough_only = false`
+
+Deadman defaults:
+- `policy = either_grip_trigger` (`either_index_trigger|left_index_trigger|right_index_trigger|either_grip_trigger`)
+- `timeout_ms = 200` (clamped to `[50, 2000]`)
+
+Axis shaping defaults:
+- `deadzone = 0.15` (clamped to `[0.0, 0.5]`)
+- `expo = 1.7` (clamped to `[1.0, 3.0]`)
+- `linear_xy_max_mps = 1.0`
+- `linear_z_max_mps = 0.8`
+- `angular_z_max_rps = 1.2`
+
+Discrete response defaults:
+- `threshold = 0.6` (clamped to `[0.1, 1.0]`)
+- `linear_xy_step_mps = 0.6`
+- `linear_z_step_mps = 0.4`
+- `angular_z_step_rps = 0.9`
+
+## Task Control Contract
+
+`control.tasks.go_to_point` defaults:
+- `enabled = true`
+- `goal_topic = /<robot>/goal_pose` (`geometry_msgs/PoseStamped`)
+- `cancel_topic = /<robot>/goal_cancel` (`std_msgs/String`, payload: `"cancel"`)
+- `status_topic = /<robot>/goal_status` (`std_msgs/String`)
+- `frame_id = map`
+- `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
+- `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+
+`control.tasks.waypoint` defaults:
+- `enabled = true`
+- `path_topic = /<robot>/waypoint_path` (`nav_msgs/Path`)
+- `status_topic = /<robot>/waypoint_status` (`std_msgs/String` JSON status)
+- `frame_id = map`
+- `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
+- `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+
+Override source:
+- `robot.metadata["task_config"]["go_to_point"]`
+- `robot.metadata["task_config"]["waypoint"]`
+
+If provided values are missing/invalid, the serializer falls back to defaults and clamp ranges above.
+
 ## Workspace Scale
 
 `workspace_config.position_scale` is included only when all are true:
@@ -99,4 +157,3 @@ Normalized reason extraction:
 Expected reasons currently exercised:
 - `Waiting for Workspace`
 - `Waiting for TF`
-

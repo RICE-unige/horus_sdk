@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-02-13",
+  "updated_at": "2026-02-17",
   "repos": {
     "horus_sdk": "https://github.com/RICE-unige/horus_sdk.git",
     "horus_ros2": "https://github.com/RICE-unige/horus_ros2.git"
   },
   "channels": {
     "stable": {
-      "sdk_ref": "5b5c5965f289db4685b734ac98e2a6ec6c0fe7d0",
-      "ros2_ref": "b9cda6eb2c3891c5e8ab6fd03b2ef9b9e9c29629",
-      "notes": "Pinned stable baseline for installer reproducibility."
+      "sdk_ref": "7c682925a109b7b0eee772a5d5a125e209418846",
+      "ros2_ref": "c88f33e92bf2d9a6aec81b36e8ac85bc31fb4969",
+      "notes": "Pinned stable baseline refreshed with ops-suite and typical SDK demo examples."
     },
     "main": {
       "sdk_ref": "refs/heads/main",

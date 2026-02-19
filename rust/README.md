@@ -67,7 +67,7 @@ cargo bench --bench registration_scenario
 
 ```bash
 cd rust
-cargo run --example sdk_registration_demo -- --robot-count 4 --with-camera true --with-occupancy-grid true
+cargo run --example sdk_registration_demo -- --robot-count 4 --with-occupancy-grid true
 cargo run --example fake_tf_publisher -- --robot-name test_bot --rate-hz 10 --cycles 20
 cargo run --example e2e_registration_check -- --robot-name SdkBot_E2E
 ```
@@ -76,4 +76,3 @@ cargo run --example e2e_registration_check -- --robot-name SdkBot_E2E
 
 - ROS 2 runtime integration via `r2r` is feature-gated (`ros2`) and currently scaffolded.
 - Registration/ack/heartbeat transport behavior is modeled for parity tests; full live ROS graph behavior is still evolving.
-
