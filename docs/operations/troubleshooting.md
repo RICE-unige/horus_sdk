@@ -26,7 +26,9 @@ Validate sequence:
 
 ## Humble installer warnings
 
-If install reports backend-only mode, this is expected with current bridge header constraints.
+:::warning
+If install reports backend-only mode, this is expected with current bridge header constraints on ROS2 Humble.
+:::
 
 Use Jazzy for full bridge builds:
 
