@@ -135,10 +135,17 @@ Camera payloads support legacy and profile-based transport fields:
 - `minimap_streaming_type`
 - `teleop_streaming_type`
 - `startup_mode`
+- `minimap_topic`, `minimap_image_type`, `minimap_max_fps`
+- `teleop_topic`, `teleop_image_type`
+- `teleop_stereo_layout`, `teleop_right_topic` (for dual-topic stereo)
 
 Typical policy:
 - MiniMap -> ROS
 - Teleop -> WebRTC
+
+Dual-stream policy used by the stereo demos:
+- MiniMap topic is mono and capped at 30 FPS from source.
+- Teleop topic is high-rate (SBS via WebRTC, dual-topic via ROS).
 
 > [!TIP]
 > Keep legacy `streaming_type` populated for compatibility with older MR clients while using profile fields for new behavior.
@@ -264,6 +271,50 @@ python3 python/examples/fake_tf_go_to_point.py --robot-count 3 --robot-name test
 # Execution progress/status is emitted on /<robot>/waypoint_status.
 python3 python/examples/fake_tf_waypoint.py --robot-count 3 --robot-name test_bot --static-camera
 ```
+
+### Stereo camera immersive test (dual-stream minimap + teleop)
+
+```bash
+# Terminal A: fake TF + dual-stream camera generator
+python3 python/examples/fake_stereo_camera_multi.py \
+  --robot-count 4 \
+  --stereo-robot-count 4 \
+  --stereo-input-mode sbs \
+  --stereo-eye-resolution 960x540 \
+  --stereo-baseline 0.12 \
+  --image-rate 10 \
+  --highres-robot stereo_bot_1 \
+  --highres-eye-resolution 1920x1080 \
+  --highres-image-rate 90 \
+  --static-camera \
+  --publish-compressed-images
+
+# Terminal B: register matching mono/stereo camera metadata
+python3 python/examples/sdk_stereo_registration_demo.py \
+  --robot-count 4 \
+  --stereo-robot-count 4 \
+  --stereo-input-mode sbs \
+  --stereo-eye-resolution 960x540 \
+  --mono-resolution 960x540 \
+  --highres-robot stereo_bot_1 \
+  --highres-eye-resolution 1920x1080 \
+  --highres-camera-fps 90 \
+  --workspace-scale 0.1
+```
+
+Dual-topic stereo (left + right topics) is also supported by using `--stereo-input-mode dual_topic` in both commands.
+
+- Stereo depth rendering is applied in immersive teleop view.
+- MiniMap camera view stays mono by design.
+- `sbs` mode uses immersive teleop WebRTC transport.
+- `dual_topic` mode keeps immersive teleop on ROS transport (left/right topics).
+- Source topics are split by mode: `/camera/minimap/*` (mono) and `/camera/teleop/*` (teleop stream).
+- If `Stereo` is missing in CameraData dropdown, verify that robot camera registration sets `is_stereo=true`.
+- Stopping the registration demo with `Ctrl+C` in keep-alive mode is treated as user cancellation, not a registration failure.
+
+Troubleshooting:
+- If immersive SBS appears frozen, look for `WebRTC frame stall detected` in Unity logs; the client will auto-restart the session.
+- If dashboard camera transport/link status looks stale, wait one dashboard refresh cycle or confirm `/horus/teleop_runtime_state` is still publishing active updates.
 
 ## Known Constraints
 
