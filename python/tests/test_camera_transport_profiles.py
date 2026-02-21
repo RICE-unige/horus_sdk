@@ -75,6 +75,14 @@ def test_registration_payload_includes_profile_fields():
     assert camera_config["minimap_streaming_type"] == "ros"
     assert camera_config["teleop_streaming_type"] == "webrtc"
     assert camera_config["startup_mode"] == "minimap"
+    assert camera_config["minimap_topic"] == "/test_bot/camera/image_raw/compressed"
+    assert camera_config["teleop_topic"] == "/test_bot/camera/image_raw/compressed"
+    assert camera_config["minimap_max_fps"] == 30
+    assert camera_config["is_stereo"] is False
+    assert camera_config["stereo_layout"] == "mono"
+    assert camera_config["right_topic"] == ""
+    assert camera_config["teleop_stereo_layout"] == "mono"
+    assert camera_config["teleop_right_topic"] == ""
 
 
 def test_registration_payload_legacy_streaming_fallback():
@@ -99,3 +107,80 @@ def test_registration_payload_legacy_streaming_fallback():
     assert camera_config["minimap_streaming_type"] == "webrtc"
     assert camera_config["teleop_streaming_type"] == "webrtc"
     assert camera_config["startup_mode"] == "minimap"
+    assert camera_config["minimap_topic"] == "/legacy_bot/camera/image_raw/compressed"
+    assert camera_config["teleop_topic"] == "/legacy_bot/camera/image_raw/compressed"
+    assert camera_config["minimap_max_fps"] == 30
+    assert camera_config["is_stereo"] is False
+    assert camera_config["stereo_layout"] == "mono"
+    assert camera_config["right_topic"] == ""
+    assert camera_config["teleop_stereo_layout"] == "mono"
+    assert camera_config["teleop_right_topic"] == ""
+
+
+def test_registration_payload_includes_stereo_flag_when_enabled():
+    robot = Robot(name="stereo_bot", robot_type=RobotType.WHEELED)
+    camera = Camera(
+        name="front_camera",
+        frame_id="stereo_bot/camera_link",
+        topic="/stereo_bot/camera/image_raw/compressed",
+        is_stereo=True,
+    )
+    robot.add_sensor(camera)
+
+    config = _build_config(robot)
+    camera_config = config["sensors"][0]["camera_config"]
+
+    assert camera_config["is_stereo"] is True
+    assert camera_config["stereo_layout"] == "side_by_side"
+    assert camera_config["right_topic"] == ""
+
+
+def test_registration_payload_includes_dual_topic_stereo_config():
+    robot = Robot(name="stereo_bot", robot_type=RobotType.WHEELED)
+    camera = Camera(
+        name="front_camera",
+        frame_id="stereo_bot/camera_link",
+        topic="/stereo_bot/camera/image_raw/compressed",
+        is_stereo=True,
+        stereo_layout="dual_topic",
+        right_topic="/stereo_bot/camera/right/image_raw/compressed",
+    )
+    robot.add_sensor(camera)
+
+    config = _build_config(robot)
+    camera_config = config["sensors"][0]["camera_config"]
+
+    assert camera_config["is_stereo"] is True
+    assert camera_config["stereo_layout"] == "dual_topic"
+    assert camera_config["right_topic"] == "/stereo_bot/camera/right/image_raw/compressed"
+    assert camera_config["teleop_stereo_layout"] == "dual_topic"
+    assert camera_config["teleop_right_topic"] == "/stereo_bot/camera/right/image_raw/compressed"
+
+
+def test_registration_payload_includes_per_mode_source_overrides():
+    robot = Robot(name="stereo_bot", robot_type=RobotType.WHEELED)
+    camera = Camera(
+        name="front_camera",
+        frame_id="stereo_bot/camera_link",
+        topic="/stereo_bot/camera/minimap/image_raw/compressed",
+        is_stereo=True,
+        stereo_layout="side_by_side",
+        minimap_topic="/stereo_bot/camera/minimap/image_raw/compressed",
+        minimap_image_type="compressed",
+        minimap_max_fps=25,
+        teleop_topic="/stereo_bot/camera/teleop/image_raw/compressed",
+        teleop_image_type="compressed",
+        teleop_stereo_layout="side_by_side",
+    )
+    camera.add_metadata("minimap_max_fps", 22)
+    robot.add_sensor(camera)
+
+    config = _build_config(robot)
+    camera_config = config["sensors"][0]["camera_config"]
+
+    assert camera_config["minimap_topic"] == "/stereo_bot/camera/minimap/image_raw/compressed"
+    assert camera_config["teleop_topic"] == "/stereo_bot/camera/teleop/image_raw/compressed"
+    assert camera_config["minimap_image_type"] == "compressed"
+    assert camera_config["teleop_image_type"] == "compressed"
+    assert camera_config["minimap_max_fps"] == 22
+    assert camera_config["teleop_stereo_layout"] == "side_by_side"
