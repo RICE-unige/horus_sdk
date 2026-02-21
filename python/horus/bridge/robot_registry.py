@@ -63,6 +63,7 @@ class RobotRegistryClient:
         self._last_consumed_restart_seq = 0
         self._remote_ip = None
         self._teleop_runtime_by_topic: Dict[str, Dict[str, Any]] = {}
+        self._teleop_runtime_state_ttl_s = 3.5
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -391,6 +392,12 @@ class RobotRegistryClient:
         if not state:
             return None
 
+        now = time.time()
+        ts = float(state.get("ts", 0.0) or 0.0)
+        if (now - ts) > max(0.5, float(self._teleop_runtime_state_ttl_s)):
+            self._teleop_runtime_by_topic.pop(topic, None)
+            return None
+
         if not bool(state.get("active", False)):
             return None
 
@@ -402,6 +409,13 @@ class RobotRegistryClient:
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
             self._app_uptime_by_id.pop(ip, None)
+        stale_topics = [
+            topic
+            for topic, state in self._teleop_runtime_by_topic.items()
+            if (now - float(state.get("ts", 0.0) or 0.0)) > max(0.5, float(self._teleop_runtime_state_ttl_s))
+        ]
+        for topic in stale_topics:
+            self._teleop_runtime_by_topic.pop(topic, None)
         active_count = len(self._app_heartbeats)
         if active_count <= 0:
             self._teleop_runtime_by_topic.clear()
@@ -469,6 +483,37 @@ class RobotRegistryClient:
             _append_topic(teleop.get("command_topic"))
             _append_topic(teleop.get("raw_input_topic"))
             _append_topic(teleop.get("head_pose_topic"))
+
+        return topics
+
+    def _collect_camera_topics(self, config: Dict[str, Any]) -> list:
+        topics = []
+        if not isinstance(config, dict):
+            return topics
+
+        sensors = config.get("sensors")
+        if not isinstance(sensors, list):
+            return topics
+
+        def _append_topic(value: Any):
+            topic = str(value or "").strip()
+            if topic and topic not in topics:
+                topics.append(topic)
+
+        for sensor_cfg in sensors:
+            if not isinstance(sensor_cfg, dict):
+                continue
+            if str(sensor_cfg.get("type", "")).strip().lower() != "camera":
+                continue
+
+            _append_topic(sensor_cfg.get("topic"))
+            cam_cfg = sensor_cfg.get("camera_config") or {}
+            if not isinstance(cam_cfg, dict):
+                cam_cfg = {}
+            _append_topic(cam_cfg.get("right_topic"))
+            _append_topic(cam_cfg.get("minimap_topic"))
+            _append_topic(cam_cfg.get("teleop_topic"))
+            _append_topic(cam_cfg.get("teleop_right_topic"))
 
         return topics
 
@@ -574,9 +619,6 @@ class RobotRegistryClient:
         return None
 
     def _resolve_data_topic_link(self, topic: str) -> bool:
-        monitored_state = self._get_monitored_subscription_state(topic)
-        if monitored_state is not None:
-            return monitored_state
         return self._has_backend_subscriber(topic)
 
     def _has_backend_subscriber(self, topic: str) -> bool:
@@ -638,11 +680,41 @@ class RobotRegistryClient:
 
     def _extract_camera_topic_profiles(self, config: Dict) -> Dict[str, Dict[str, str]]:
         profiles: Dict[str, Dict[str, str]] = {}
+
+        def _normalize_transport(value: Any, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            return normalized if normalized in ("ros", "webrtc") else fallback
+
+        def _normalize_mode(value: Any, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            return normalized if normalized in ("minimap", "teleop", "both") else fallback
+
+        def _merge_profile(topic_name: str, source_mode: str, minimap_streaming: str, teleop_streaming: str, startup_mode: str):
+            if not topic_name:
+                return
+            existing = profiles.get(topic_name)
+            if existing is None:
+                profiles[topic_name] = {
+                    "minimap": minimap_streaming,
+                    "teleop": teleop_streaming,
+                    "startup": startup_mode,
+                    "source_mode": source_mode,
+                }
+                return
+
+            existing["minimap"] = _normalize_transport(existing.get("minimap"), minimap_streaming)
+            existing["teleop"] = _normalize_transport(existing.get("teleop"), teleop_streaming)
+            existing["startup"] = _normalize_mode(existing.get("startup"), startup_mode)
+            merged_mode = existing.get("source_mode", source_mode)
+            if merged_mode != source_mode:
+                merged_mode = "both"
+            existing["source_mode"] = _normalize_mode(merged_mode, "both")
+
         for sensor_cfg in config.get("sensors", []):
             if str(sensor_cfg.get("type", "")).strip().lower() != "camera":
                 continue
-            topic_name = str(sensor_cfg.get("topic", "")).strip()
-            if not topic_name:
+            base_topic = str(sensor_cfg.get("topic", "")).strip()
+            if not base_topic:
                 continue
 
             cam_cfg = sensor_cfg.get("camera_config") or {}
@@ -665,11 +737,12 @@ class RobotRegistryClient:
             if startup_mode not in ("minimap", "teleop"):
                 startup_mode = "minimap"
 
-            profiles[topic_name] = {
-                "minimap": minimap_streaming,
-                "teleop": teleop_streaming,
-                "startup": startup_mode,
-            }
+            minimap_topic = str(cam_cfg.get("minimap_topic") or "").strip() or base_topic
+            teleop_topic = str(cam_cfg.get("teleop_topic") or "").strip() or base_topic
+
+            _merge_profile(minimap_topic, "minimap", minimap_streaming, teleop_streaming, startup_mode)
+            _merge_profile(teleop_topic, "teleop", minimap_streaming, teleop_streaming, startup_mode)
+
         return profiles
 
     def _payload_coerce_bool(self, value: Any, default: bool) -> bool:
@@ -834,6 +907,17 @@ class RobotRegistryClient:
         for topic in monitored_topics:
             role = topic_roles.get(topic, "backend_sub")
             topic_kind = "core" if topic in core_topic_set else "data"
+            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
+            runtime_transport = self._get_runtime_transport_override(topic)
+            if runtime_transport:
+                camera_profile["active_transport"] = runtime_transport
+
+            camera_active_transport = self._normalize_transport(camera_profile.get("active_transport"))
+            if not camera_active_transport and camera_profile:
+                startup_mode = str(camera_profile.get("startup", "minimap")).strip().lower()
+                minimap_transport = self._normalize_transport(camera_profile.get("minimap")) or "ros"
+                teleop_transport = self._normalize_transport(camera_profile.get("teleop")) or "webrtc"
+                camera_active_transport = teleop_transport if startup_mode == "teleop" else minimap_transport
 
             if role == "sdk_pub":
                 role_label = "sdk->bridge"
@@ -883,20 +967,27 @@ class RobotRegistryClient:
                     subs = 0
                     data = "IDLE"
                 else:
-                    link_ok = self._resolve_data_topic_link(topic)
-                    link = "OK" if link_ok else "NO"
-                    subs = 1 if link_ok else 0
-                    if not link_ok:
-                        data = "IDLE"
-                    elif pubs > 0:
-                        data = "ACTIVE"
+                    if camera_active_transport == "webrtc":
+                        source_available = pubs > 0
+                        link_ok = source_available and is_connected
+                        link = "OK" if link_ok else "NO"
+                        subs = 1 if link_ok else 0
+                        if not source_available:
+                            data = "STALE"
+                        elif link_ok:
+                            data = "ACTIVE"
+                        else:
+                            data = "IDLE"
                     else:
-                        data = "STALE"
-
-            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
-            runtime_transport = self._get_runtime_transport_override(topic)
-            if runtime_transport:
-                camera_profile["active_transport"] = runtime_transport
+                        link_ok = self._resolve_data_topic_link(topic)
+                        link = "OK" if link_ok else "NO"
+                        subs = 1 if link_ok else 0
+                        if not link_ok:
+                            data = "IDLE"
+                        elif pubs > 0:
+                            data = "ACTIVE"
+                        else:
+                            data = "STALE"
 
             rows.append(
                 {
@@ -977,7 +1068,8 @@ class RobotRegistryClient:
             
             data_topics = self._collect_topics(dataviz)
             control_topics = self._collect_control_topics(config)
-            robot_topics = self._merge_topics(data_topics, control_topics)
+            camera_topics = self._collect_camera_topics(config)
+            robot_topics = self._merge_topics(data_topics, control_topics, camera_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
             core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
@@ -1272,6 +1364,7 @@ class RobotRegistryClient:
                 entry_by_name[robot.name] = (robot, dataviz, msg)
                 camera_topic_profiles.update(self._extract_camera_topic_profiles(config))
                 robot_topics = self._merge_topics(robot_topics, self._collect_topics(dataviz))
+                robot_topics = self._merge_topics(robot_topics, self._collect_camera_topics(config))
                 control_topics = self._merge_topics(control_topics, self._collect_control_topics(config))
 
             robot_topics = self._merge_topics(robot_topics, control_topics)
@@ -1677,6 +1770,22 @@ class RobotRegistryClient:
                     return normalized
                 return fallback
 
+            def _normalize_image_type(value, fallback):
+                normalized = str(value).strip().lower() if value is not None else ""
+                if normalized in ("raw", "compressed"):
+                    return normalized
+                return fallback
+
+            def _normalize_layout(value, fallback):
+                normalized = str(value).strip().lower() if value is not None else ""
+                if normalized in ("sbs", "side_by_side", "side-by-side"):
+                    return "side_by_side"
+                if normalized in ("dual_topic", "dual", "two_topics", "two_topic"):
+                    return "dual_topic"
+                if normalized in ("mono", ""):
+                    return "mono" if normalized == "mono" else fallback
+                return fallback
+
             legacy_streaming_type = _normalize_transport(
                 metadata.get("streaming_type"),
                 "",
@@ -1718,12 +1827,80 @@ class RobotRegistryClient:
             ).strip().lower()
             if startup_mode not in ("minimap", "teleop"):
                 startup_mode = "minimap"
+
+            is_stereo = bool(getattr(sensor, "is_stereo", False))
+            raw_stereo_layout = str(
+                metadata.get("stereo_layout", getattr(sensor, "stereo_layout", ""))
+            ).strip().lower()
+            if is_stereo:
+                if raw_stereo_layout in ("dual_topic", "dual", "two_topics", "two_topic"):
+                    stereo_layout = "dual_topic"
+                else:
+                    stereo_layout = "side_by_side"
+            else:
+                stereo_layout = "mono"
+
+            right_topic = str(
+                metadata.get("right_topic", getattr(sensor, "right_topic", ""))
+            ).strip()
+
+            minimap_topic = str(
+                metadata.get("minimap_topic", getattr(sensor, "minimap_topic", ""))
+            ).strip()
+            if not minimap_topic:
+                minimap_topic = str(getattr(sensor, "topic", "")).strip()
+
+            teleop_topic = str(
+                metadata.get("teleop_topic", getattr(sensor, "teleop_topic", ""))
+            ).strip()
+            if not teleop_topic:
+                teleop_topic = minimap_topic
+
+            image_type = _normalize_image_type(metadata.get("image_type"), "raw")
+            minimap_image_type = _normalize_image_type(
+                metadata.get("minimap_image_type", getattr(sensor, "minimap_image_type", "")),
+                image_type,
+            )
+            teleop_image_type = _normalize_image_type(
+                metadata.get("teleop_image_type", getattr(sensor, "teleop_image_type", "")),
+                image_type,
+            )
+
+            minimap_max_fps = _coerce_int(
+                metadata.get("minimap_max_fps", getattr(sensor, "minimap_max_fps", 30)),
+                30,
+            )
+            minimap_max_fps = max(1, min(30, minimap_max_fps))
+
+            teleop_stereo_layout = _normalize_layout(
+                metadata.get("teleop_stereo_layout", getattr(sensor, "teleop_stereo_layout", "")),
+                stereo_layout,
+            )
+            teleop_right_topic = str(
+                metadata.get("teleop_right_topic", getattr(sensor, "teleop_right_topic", ""))
+            ).strip()
+            if not teleop_right_topic:
+                teleop_right_topic = right_topic
+            if not is_stereo:
+                teleop_stereo_layout = "mono"
+                teleop_right_topic = ""
+
             return {
                 "streaming_type": legacy_streaming_type,
                 "minimap_streaming_type": minimap_streaming_type,
                 "teleop_streaming_type": teleop_streaming_type,
+                "minimap_topic": minimap_topic,
+                "teleop_topic": teleop_topic,
+                "minimap_image_type": minimap_image_type,
+                "teleop_image_type": teleop_image_type,
+                "minimap_max_fps": minimap_max_fps,
+                "teleop_stereo_layout": teleop_stereo_layout,
+                "teleop_right_topic": teleop_right_topic,
                 "startup_mode": startup_mode,
-                "image_type": str(metadata.get("image_type", "raw")).lower(),
+                "is_stereo": is_stereo,
+                "stereo_layout": stereo_layout,
+                "right_topic": right_topic,
+                "image_type": image_type,
                 "display_mode": str(metadata.get("display_mode", "projected")).lower(),
                 "use_tf": _coerce_bool(metadata.get("use_tf"), True),
                 "projection_target_frame": str(metadata.get("projection_target_frame", "")),
@@ -1739,7 +1916,7 @@ class RobotRegistryClient:
                 ),
                 "webrtc_framerate": _coerce_int(
                     metadata.get("webrtc_framerate"),
-                    getattr(sensor, "fps", 20),
+                    max(30, min(90, _coerce_int(getattr(sensor, "fps", None), 30))),
                 ),
                 "webrtc_stun_server_url": str(
                     metadata.get("webrtc_stun_server_url", "stun:stun.l.google.com:19302")

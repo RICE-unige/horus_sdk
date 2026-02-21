@@ -91,6 +91,15 @@ class Camera(BaseSensor):
     minimap_streaming_type: str = "ros"
     teleop_streaming_type: str = "webrtc"
     startup_mode: str = "minimap"
+    stereo_layout: str = "side_by_side"
+    right_topic: str = ""
+    minimap_topic: str = ""
+    minimap_image_type: str = ""
+    minimap_max_fps: int = 30
+    teleop_topic: str = ""
+    teleop_image_type: str = ""
+    teleop_right_topic: str = ""
+    teleop_stereo_layout: str = ""
 
     def __init__(
         self,
@@ -106,6 +115,15 @@ class Camera(BaseSensor):
         minimap_streaming_type: str = "ros",
         teleop_streaming_type: str = "webrtc",
         startup_mode: str = "minimap",
+        stereo_layout: str = "side_by_side",
+        right_topic: str = "",
+        minimap_topic: str = "",
+        minimap_image_type: str = "",
+        minimap_max_fps: int = 30,
+        teleop_topic: str = "",
+        teleop_image_type: str = "",
+        teleop_right_topic: str = "",
+        teleop_stereo_layout: str = "",
         **kwargs,
     ):
         super().__init__(name, SensorType.CAMERA, frame_id, topic, **kwargs)
@@ -133,6 +151,69 @@ class Camera(BaseSensor):
         if normalized_startup_mode not in ("minimap", "teleop"):
             raise ValueError("Camera startup_mode must be 'minimap' or 'teleop'")
         self.startup_mode = normalized_startup_mode
+
+        normalized_layout = str(stereo_layout).strip().lower()
+        if normalized_layout in ("sbs", "side_by_side", "side-by-side"):
+            normalized_layout = "side_by_side"
+        elif normalized_layout in ("dual", "dual_topic", "two_topics", "two-topic"):
+            normalized_layout = "dual_topic"
+        elif normalized_layout in ("mono", ""):
+            normalized_layout = "mono"
+        else:
+            raise ValueError("Camera stereo_layout must be 'side_by_side', 'dual_topic', or 'mono'")
+
+        if not self.is_stereo:
+            normalized_layout = "mono"
+            right_topic = ""
+        elif normalized_layout == "mono":
+            normalized_layout = "side_by_side"
+
+        self.stereo_layout = normalized_layout
+        self.right_topic = str(right_topic).strip()
+
+        def _normalize_image_type(value: str, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            if not normalized:
+                return fallback
+            if normalized in ("raw", "compressed"):
+                return normalized
+            raise ValueError("Camera image type must be 'raw' or 'compressed'")
+
+        def _normalize_layout(value: str, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            if not normalized:
+                return fallback
+            if normalized in ("sbs", "side_by_side", "side-by-side"):
+                return "side_by_side"
+            if normalized in ("dual", "dual_topic", "two_topics", "two-topic"):
+                return "dual_topic"
+            if normalized in ("mono",):
+                return "mono"
+            raise ValueError("Camera stereo layout must be 'side_by_side', 'dual_topic', or 'mono'")
+
+        self.minimap_topic = str(minimap_topic).strip()
+        self.teleop_topic = str(teleop_topic).strip()
+        self.minimap_image_type = _normalize_image_type(minimap_image_type, "")
+        self.teleop_image_type = _normalize_image_type(teleop_image_type, "")
+        try:
+            minimap_fps_value = int(minimap_max_fps)
+        except (TypeError, ValueError):
+            minimap_fps_value = 30
+        self.minimap_max_fps = max(1, min(30, minimap_fps_value))
+
+        normalized_teleop_layout = _normalize_layout(teleop_stereo_layout, self.stereo_layout)
+        resolved_teleop_right_topic = str(teleop_right_topic).strip()
+        if not resolved_teleop_right_topic:
+            resolved_teleop_right_topic = self.right_topic
+
+        if not self.is_stereo:
+            normalized_teleop_layout = "mono"
+            resolved_teleop_right_topic = ""
+        elif normalized_teleop_layout == "mono":
+            normalized_teleop_layout = "side_by_side"
+
+        self.teleop_stereo_layout = normalized_teleop_layout
+        self.teleop_right_topic = resolved_teleop_right_topic
 
     def get_camera_type(self) -> str:
         """Get camera type as string"""

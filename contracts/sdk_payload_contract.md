@@ -37,11 +37,23 @@ Defaults:
 - `minimap_streaming_type`: `ros`
 - `teleop_streaming_type`: `webrtc`
 - `startup_mode`: `minimap`
+- `minimap_topic`: sensor `topic`
+- `teleop_topic`: sensor `topic`
+- `minimap_image_type`: `image_type` (or `raw`)
+- `teleop_image_type`: `image_type` (or `raw`)
+- `minimap_max_fps`: `30`
+- `teleop_stereo_layout`: `stereo_layout`
+- `teleop_right_topic`: `right_topic`
 
 Fallback behavior:
 - `minimap_streaming_type` falls back to `streaming_type` when empty/invalid.
 - `teleop_streaming_type` falls back to `streaming_type` when empty/invalid.
 - `startup_mode` falls back to `minimap` when empty/invalid.
+- Per-mode source fields fall back to legacy camera fields when missing:
+  - `minimap_topic`/`teleop_topic` -> `topic`
+  - `minimap_image_type`/`teleop_image_type` -> `image_type`
+  - `teleop_right_topic` -> `right_topic`
+  - `teleop_stereo_layout` -> `stereo_layout`
 
 Allowed transport values:
 - `ros`, `webrtc`.
