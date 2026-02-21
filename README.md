@@ -135,6 +135,7 @@ Camera payloads support legacy and profile-based transport fields:
 - `minimap_streaming_type`
 - `teleop_streaming_type`
 - `startup_mode`
+- `is_stereo`, `stereo_layout`, `right_topic` (base stereo capability/source descriptors)
 - `minimap_topic`, `minimap_image_type`, `minimap_max_fps`
 - `teleop_topic`, `teleop_image_type`
 - `teleop_stereo_layout`, `teleop_right_topic` (for dual-topic stereo)
@@ -194,6 +195,12 @@ Link/Data interpretation:
 
 > [!WARNING]
 > Topic truth depends on both ROS graph state and app connection phase. Validate with full workflow (connect -> workspace accept -> register).
+
+Camera dashboard notes:
+- Camera transport badge is resolved from active runtime mode (`ROS` or `WEBRTC`) with profile fallback.
+- For camera rows on active `WEBRTC`, `Link` is app-session/runtime-state based (not ROS-subscriber based).
+- For camera rows on active `ROS`, `Link` follows backend subscriber presence.
+- Runtime transport overrides have expiry/refresh handling to reduce stale mode indicators.
 
 ## Practical Validation Workflows
 
