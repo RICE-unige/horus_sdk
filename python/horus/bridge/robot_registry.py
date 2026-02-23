@@ -59,11 +59,13 @@ class RobotRegistryClient:
         self._last_heartbeat_time = 0
         self._app_heartbeats = {}
         self._app_uptime_by_id = {}
+        self._app_presence_by_id: Dict[str, Dict[str, Any]] = {}
         self._app_restart_seq = 0
         self._last_consumed_restart_seq = 0
         self._remote_ip = None
         self._teleop_runtime_by_topic: Dict[str, Dict[str, Any]] = {}
         self._teleop_runtime_state_ttl_s = 3.5
+        self._multi_operator_presence_ttl_s = 5.0
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -174,6 +176,13 @@ class RobotRegistryClient:
                 String,
                 "/horus/teleop/runtime_state",
                 self._teleop_runtime_state_callback,
+                ack_qos,
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/multi_operator_presence",
+                self._multi_operator_presence_callback,
                 ack_qos,
             )
 
@@ -355,6 +364,176 @@ class RobotRegistryClient:
                 self._app_restart_seq += 1
             self._app_uptime_by_id[app_id] = heartbeat_uptime
 
+    def _multi_operator_presence_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        now = time.time()
+        app_id = str(payload.get("app_id") or payload.get("ip") or "unknown").strip() or "unknown"
+        role = str(payload.get("role") or "").strip().lower()
+        state = str(payload.get("state") or "").strip().lower()
+        ip = str(payload.get("ip") or "").strip()
+        session_id = str(payload.get("session_id") or "").strip()
+
+        self._app_presence_by_id[app_id] = {
+            "ts": now,
+            "role": role,
+            "state": state,
+            "ip": ip,
+            "session_id": session_id,
+            "workspace_active": bool(payload.get("workspace_active", False)),
+        }
+
+    def _prune_stale_app_presence(self, timeout_s: float):
+        now = time.time()
+        timeout = max(1.0, float(timeout_s))
+        stale = [
+            app_id
+            for app_id, data in self._app_presence_by_id.items()
+            if (now - float(data.get("ts", 0.0) or 0.0)) > timeout
+        ]
+        for app_id in stale:
+            self._app_presence_by_id.pop(app_id, None)
+
+    def _get_app_presence_summary(self, timeout_s: float = 5.0) -> Dict[str, Any]:
+        self._prune_stale_app_presence(timeout_s)
+        summary = {
+            "total": 0,
+            "host_count": 0,
+            "joiner_count": 0,
+            "single_count": 0,
+            "host_created_count": 0,
+            "joiner_joined_count": 0,
+            "alignment_pending_count": 0,
+            "alignment_ready_count": 0,
+            "workspace_ready_count": 0,
+            "registry_synced_count": 0,
+        }
+
+        for _, data in self._app_presence_by_id.items():
+            role = str(data.get("role") or "").strip().lower()
+            state = str(data.get("state") or "").strip().lower()
+            summary["total"] += 1
+            if role == "host":
+                summary["host_count"] += 1
+                if state in {
+                    "host_created",
+                    "alignment_pending",
+                    "alignment_ready",
+                    "colocation_ready",
+                    "workspace_ready_host",
+                    "workspace_synced",
+                    "registry_synced",
+                    "workspace_ready",
+                }:
+                    summary["host_created_count"] += 1
+            elif role == "joiner":
+                summary["joiner_count"] += 1
+                if state in {
+                    "joiner_discovered_host",
+                    "joiner_joined",
+                    "alignment_pending",
+                    "alignment_ready",
+                    "colocation_ready",
+                    "workspace_ready_joiner",
+                    "workspace_synced",
+                    "registry_synced",
+                    "workspace_ready",
+                }:
+                    summary["joiner_joined_count"] += 1
+            elif role == "single":
+                summary["single_count"] += 1
+
+            if state in {"alignment_pending", "joiner_discovered_host"}:
+                summary["alignment_pending_count"] += 1
+
+            if state in {"alignment_ready", "colocation_ready", "workspace_ready_host", "workspace_ready_joiner", "workspace_synced", "registry_synced"}:
+                summary["alignment_ready_count"] += 1
+
+            if state.startswith("workspace_ready") or state == "workspace_synced":
+                summary["workspace_ready_count"] += 1
+
+            if state == "registry_synced":
+                summary["registry_synced_count"] += 1
+
+        return summary
+
+    def _format_multi_operator_summary(self) -> str:
+        summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
+
+        if summary["total"] <= 0:
+            return "Single Operator / No presence"
+
+        host_count = int(summary.get("host_count", 0) or 0)
+        joiner_count = int(summary.get("joiner_count", 0) or 0)
+        alignment_pending = int(summary.get("alignment_pending_count", 0) or 0)
+        alignment_ready = int(summary.get("alignment_ready_count", 0) or 0)
+        workspace_ready = int(summary.get("workspace_ready_count", 0) or 0)
+        registry_synced = int(summary.get("registry_synced_count", 0) or 0)
+
+        if host_count <= 0 and joiner_count > 0:
+            base = f"Joiners only ({joiner_count})"
+        elif host_count > 0:
+            base = "Host Created" if int(summary.get("host_created_count", 0) or 0) > 0 else "Host Detected"
+            if joiner_count > 0:
+                base += f" + {joiner_count} Joiner" + ("" if joiner_count == 1 else "s")
+        else:
+            base = f"Operators: {summary['total']}"
+
+        if joiner_count > 0 and alignment_pending > 0 and alignment_ready <= 0:
+            base += " (Aligning)"
+        elif alignment_ready > 0:
+            base += f" | Alignment Ready: {alignment_ready}"
+
+        if workspace_ready > 0:
+            base += f" | Workspace Ready: {workspace_ready}"
+
+        if registry_synced > 0:
+            base += f" | Registry Synced: {registry_synced}"
+
+        return base
+
+    def _format_app_link_status(self, is_connected: bool, seen_heartbeat: bool) -> str:
+        summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
+
+        if is_connected:
+            details = []
+            if summary["host_count"] > 0:
+                if summary["host_created_count"] > 0:
+                    details.append("Host Created")
+                else:
+                    details.append("Host Detected")
+            if summary["joiner_count"] > 0:
+                if summary["joiner_joined_count"] > 0:
+                    details.append(f"Joiners Joined: {summary['joiner_joined_count']}")
+                else:
+                    details.append(f"Joiners: {summary['joiner_count']}")
+            if summary.get("alignment_ready_count", 0) > 0:
+                details.append(f"Alignment Ready: {summary['alignment_ready_count']}")
+            elif summary.get("alignment_pending_count", 0) > 0:
+                details.append(f"Aligning: {summary['alignment_pending_count']}")
+            if summary["workspace_ready_count"] > 0:
+                details.append(f"Workspace Ready: {summary['workspace_ready_count']}")
+
+            if details:
+                return "Connected (" + " | ".join(details) + ")"
+            return "Connected"
+
+        if seen_heartbeat:
+            if summary["joiner_count"] > 0:
+                return "Disconnected (Waiting for Host App...)"
+            return "Disconnected (Waiting for Horus App...)"
+        return "Waiting for Horus App..."
+
     @staticmethod
     def _normalize_transport(value: Any) -> Optional[str]:
         normalized = str(value or "").strip().lower()
@@ -409,6 +588,8 @@ class RobotRegistryClient:
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
             self._app_uptime_by_id.pop(ip, None)
+            self._app_presence_by_id.pop(ip, None)
+        self._prune_stale_app_presence(self._multi_operator_presence_ttl_s)
         stale_topics = [
             topic
             for topic, state in self._teleop_runtime_by_topic.items()
@@ -660,6 +841,7 @@ class RobotRegistryClient:
             "/horus/registration": "sdk_pub",
             "/horus/registration_ack": "sdk_sub",
             "/horus/heartbeat": "sdk_sub",
+            "/horus/multi_operator_presence": "sdk_sub",
         }
         control_topic_set = set(control_topics or [])
         for topic in robot_topics:
@@ -668,7 +850,7 @@ class RobotRegistryClient:
         return roles
 
     def _topic_group(self, topic: str, robot_names):
-        if topic in ("/horus/registration", "/horus/registration_ack", "/horus/heartbeat"):
+        if topic in ("/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"):
             return "sdk"
         if topic == "/tf":
             return "shared"
@@ -901,7 +1083,7 @@ class RobotRegistryClient:
         camera_topic_profiles: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> list:
         camera_topic_profiles = camera_topic_profiles or {}
-        core_topic_set = {"/horus/registration", "/horus/registration_ack", "/horus/heartbeat"}
+        core_topic_set = {"/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"}
         rows = []
 
         for topic in monitored_topics:
@@ -1071,7 +1253,7 @@ class RobotRegistryClient:
             camera_topics = self._collect_camera_topics(config)
             robot_topics = self._merge_topics(data_topics, control_topics, camera_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
-            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
+            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
             try:
@@ -1125,6 +1307,7 @@ class RobotRegistryClient:
             show_counts = bool(os.getenv("HORUS_DASHBOARD_SHOW_COUNTS"))
             with cli.ConnectionDashboard(local_ip, 10000, bridge_state, show_counts=show_counts) as dashboard:
                 dashboard.update_app_link("Waiting for Horus App...")
+                dashboard.update_multi_operator(self._format_multi_operator_summary())
                 dashboard.update_registration("Idle")
                 dashboard.update_status("")
                 last_stats_update = 0.0
@@ -1153,12 +1336,8 @@ class RobotRegistryClient:
                     if app_restarted:
                         had_connection_drop = True
 
-                    if is_connected:
-                        dashboard.update_app_link("Connected")
-                    elif seen_heartbeat:
-                        dashboard.update_app_link("Disconnected (Waiting for Horus App...)")
-                    else:
-                        dashboard.update_app_link("Waiting for Horus App...")
+                    dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
+                    dashboard.update_multi_operator(self._format_multi_operator_summary())
                     
                     # Update Topic Stats (every ~1s)
                     if (time.time() - last_stats_update) >= 1.0:
@@ -1346,7 +1525,7 @@ class RobotRegistryClient:
 
             entries = []
             entry_by_name = {}
-            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
+            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"]
             robot_topics = []
             control_topics = []
             camera_topic_profiles = {}
@@ -1483,6 +1662,7 @@ class RobotRegistryClient:
             show_counts = bool(os.getenv("HORUS_DASHBOARD_SHOW_COUNTS"))
             with cli.ConnectionDashboard(local_ip, 10000, bridge_state, show_counts=show_counts) as dashboard:
                 dashboard.update_app_link("Waiting for Horus App...")
+                dashboard.update_multi_operator(self._format_multi_operator_summary())
                 dashboard.update_registration("Idle")
                 dashboard.update_status("")
 
@@ -1510,12 +1690,8 @@ class RobotRegistryClient:
                     if app_restarted:
                         had_connection_drop = True
 
-                    if is_connected:
-                        dashboard.update_app_link("Connected")
-                    elif seen_heartbeat:
-                        dashboard.update_app_link("Disconnected (Waiting for Horus App...)")
-                    else:
-                        dashboard.update_app_link("Waiting for Horus App...")
+                    dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
+                    dashboard.update_multi_operator(self._format_multi_operator_summary())
 
                     if not is_connected:
                         if last_connection_state:

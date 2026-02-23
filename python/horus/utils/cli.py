@@ -153,6 +153,7 @@ def create_dashboard_table(
     port: int,
     bridge_status: str,
     app_link_state: str,
+    operators_state: str,
     registration_state: str,
     sub_status: str,
     spinner_frame,
@@ -179,6 +180,10 @@ def create_dashboard_table(
         table.add_row("App Link", spinner_frame if spinner_frame is not None else f"[dim]{app_state}[/dim]")
     else:
         table.add_row("App Link", f"[dim]{app_state}[/dim]")
+
+    operators_text = str(operators_state or "").strip()
+    if operators_text:
+        table.add_row("Operators", f"[dim]{operators_text}[/dim]")
 
     reg_text = str(registration_state or "").strip()
     if reg_text.startswith("Registered"):
@@ -227,6 +232,7 @@ class ConnectionDashboard:
         self.port = port
         self.bridge_status = bridge_status
         self.app_link_state = "Waiting"
+        self.operators_state = "-"
         self.registration_state = "Idle"
         self.sub_status = ""
         self.topic_rows = []
@@ -248,6 +254,7 @@ class ConnectionDashboard:
                 self.port,
                 self.bridge_status,
                 self.app_link_state,
+                self.operators_state,
                 self.registration_state,
                 self.sub_status,
                 status_line,
@@ -260,6 +267,7 @@ class ConnectionDashboard:
             self.port,
             self.bridge_status,
             self.app_link_state,
+            self.operators_state,
             self.registration_state,
             self.sub_status,
             None,
@@ -273,6 +281,10 @@ class ConnectionDashboard:
 
     def update_app_link(self, status):
         self.app_link_state = status
+        self.live.update(self.render(), refresh=True)
+
+    def update_multi_operator(self, status):
+        self.operators_state = status or "-"
         self.live.update(self.render(), refresh=True)
 
     def update_registration(self, status):
