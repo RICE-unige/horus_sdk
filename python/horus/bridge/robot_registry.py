@@ -1,16 +1,6 @@
 """
 Robot registry client for HORUS SDK
 
-Handles robot registration with the HORUS backend system
-"""
-
-import threading
-import time
-from typing import Any, Dict, Tuple
-
-"""
-Robot registry client for HORUS SDK
-
 Handles robot registration with the HORUS backend system via ROS 2 Topics.
 protocol:
   1. SDK publishes JSON config to /horus/registration
@@ -28,7 +18,8 @@ import signal
 import os
 import math
 import shutil
-from typing import Any, Dict, Tuple, Optional
+import shlex
+from typing import Any, Dict, Tuple, Optional, List
 
 try:
     import rclpy
@@ -202,11 +193,47 @@ class RobotRegistryClient:
             s.settimeout(0.5)
             return s.connect_ex(("localhost", port)) == 0
 
-    def _auto_start_bridge_with_horus_helper(self) -> bool:
-        """Try bridge startup using installer-generated horus-start helper."""
+    def _get_bridge_autostart_mode(self) -> str:
+        """Resolve bridge auto-start mode from environment."""
         from horus.utils import cli
 
-        candidate_paths = []
+        raw_mode = str(os.environ.get("HORUS_SDK_BRIDGE_AUTOSTART_MODE", "auto") or "auto").strip().lower()
+        valid_modes = {"auto", "ros2", "helper", "off"}
+        if raw_mode in valid_modes:
+            return raw_mode
+
+        cli.print_info(
+            f"Unknown HORUS_SDK_BRIDGE_AUTOSTART_MODE='{raw_mode}'. Using 'auto'."
+        )
+        return "auto"
+
+    def _get_bridge_startup_settle_delay_s(self) -> float:
+        """Optional delay after bridge port opens to allow internal startup to settle."""
+        raw_value = str(os.environ.get("HORUS_SDK_BRIDGE_STARTUP_SETTLE_MS", "750") or "750").strip()
+        try:
+            delay_ms = float(raw_value)
+        except Exception:
+            delay_ms = 750.0
+
+        if not math.isfinite(delay_ms) or delay_ms < 0:
+            delay_ms = 750.0
+
+        return delay_ms / 1000.0
+
+    def _sleep_after_bridge_startup_settle(self) -> None:
+        """Sleep briefly after bridge startup if configured."""
+        from horus.utils import cli
+
+        delay_s = self._get_bridge_startup_settle_delay_s()
+        if delay_s <= 0:
+            return
+
+        cli.print_info(f"Waiting {delay_s:.2f}s for bridge startup settle...")
+        time.sleep(delay_s)
+
+    def _get_horus_start_helper_candidates(self) -> List[str]:
+        """Collect possible horus-start helper paths, preserving priority order."""
+        candidate_paths: List[str] = []
         env_horus_home = os.environ.get("HORUS_HOME")
         if env_horus_home:
             candidate_paths.append(os.path.join(env_horus_home, "bin", "horus-start"))
@@ -217,15 +244,36 @@ class RobotRegistryClient:
         if horus_start_in_path:
             candidate_paths.append(horus_start_in_path)
 
-        # Deduplicate while preserving order.
-        deduped_paths = []
+        deduped_paths: List[str] = []
         seen = set()
         for path in candidate_paths:
             if path not in seen:
                 deduped_paths.append(path)
                 seen.add(path)
 
-        for helper_path in deduped_paths:
+        command = (
+            f"source {shlex.quote(env_script)} >/dev/null 2>&1 && "
+            f"ros2 pkg prefix {shlex.quote(package_name)}"
+        )
+        try:
+            check_pkg = subprocess.run(
+                [bash_path, "-lc", command],
+                capture_output=True,
+                text=True,
+                timeout=8.0,
+            )
+        except Exception:
+            return None
+
+        if check_pkg.returncode != 0:
+            return None
+
+        prefix = str(check_pkg.stdout or "").strip()
+        return prefix or None
+
+    def _get_first_helper_bridge_prefix(self) -> Optional[str]:
+        """Inspect the first available helper environment and return bridge package prefix."""
+        for helper_path in self._get_horus_start_helper_candidates():
             if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
                 continue
 
@@ -256,26 +304,80 @@ class RobotRegistryClient:
 
     def _auto_start_bridge_with_ros2_launch(self) -> bool:
         """Fallback bridge startup using direct ros2 launch command."""
+        return deduped_paths
+
+    def _get_horus_helper_env_path(self, helper_path: str) -> Optional[str]:
+        """Resolve sibling horus-env for an installer helper path if present."""
+        helper_dir = os.path.dirname(os.path.abspath(helper_path))
+        env_path = os.path.join(helper_dir, "horus-env")
+        if os.path.isfile(env_path):
+            return env_path
+        return None
+
+    def _get_ros2_pkg_prefix_current_shell(self, package_name: str) -> Optional[str]:
+        """Resolve a ROS package prefix using the current shell environment."""
+        if shutil.which("ros2") is None:
+            return None
+
+        try:
+            check_pkg = subprocess.run(
+                ["ros2", "pkg", "prefix", package_name],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+        except Exception:
+            return None
+
+        if check_pkg.returncode != 0:
+            return None
+
+        prefix = str(check_pkg.stdout or "").strip()
+        return prefix or None
+
+    def _get_ros2_pkg_prefix_from_helper_env(self, helper_path: str, package_name: str) -> Optional[str]:
+        """Resolve a ROS package prefix by sourcing the helper's horus-env script."""
+        env_script = self._get_horus_helper_env_path(helper_path)
+        if not env_script:
+            return None
+
+        bash_path = shutil.which("bash")
+        if not bash_path and os.path.isfile("/bin/bash"):
+            bash_path = "/bin/bash"
+        if not bash_path:
+            return None
         from horus.utils import cli
 
         if shutil.which("ros2") is None:
             cli.print_error("'ros2' command not found.")
+            prefix = self._get_ros2_pkg_prefix_from_helper_env(helper_path, "horus_unity_bridge")
+            if prefix:
+                return prefix
+        return None
+
+    def _auto_start_bridge_with_horus_helper(self) -> bool:
+        """Try bridge startup using installer-generated horus-start helper."""
+        from horus.utils import cli
+
+        for helper_path in self._get_horus_start_helper_candidates():
+            if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
+                continue
+
+            helper_bridge_prefix = self._get_ros2_pkg_prefix_from_helper_env(helper_path, "horus_unity_bridge")
+            if helper_bridge_prefix:
+                cli.print_info(f"Helper env horus_unity_bridge prefix: {helper_bridge_prefix}")
             return False
 
         try:
-            check_pkg = subprocess.run(
-                ["ros2", "pkg", "prefix", "horus_unity_bridge"],
-                capture_output=True,
-            )
-            if check_pkg.returncode != 0:
+            bridge_prefix = self._get_ros2_pkg_prefix_current_shell("horus_unity_bridge")
+            if not bridge_prefix:
                 return False
 
-            bridge_prefix = check_pkg.stdout.decode().strip()
-            if bridge_prefix:
-                cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
+            cli.print_info(f"Using horus_unity_bridge from current shell: {bridge_prefix}")
 
             self.bridge_process = subprocess.Popen(
                 ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"],
+                        self._sleep_after_bridge_startup_settle()
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -306,17 +408,39 @@ class RobotRegistryClient:
 
         cli.print_info("No Bridge on port 10000. Attempting auto-start...")
 
-        if self._auto_start_bridge_with_horus_helper():
-            return True
+        if mode == "off":
+            cli.print_error("Bridge auto-start disabled (HORUS_SDK_BRIDGE_AUTOSTART_MODE=off).")
+            return False
 
-        if self._auto_start_bridge_with_ros2_launch():
-            return True
+        if mode == "auto":
+            current_shell_prefix = self._get_ros2_pkg_prefix_current_shell("horus_unity_bridge")
+            helper_prefix = self._get_first_helper_bridge_prefix()
+            if current_shell_prefix and helper_prefix and current_shell_prefix != helper_prefix:
+                cli.print_info(
+                    "Warning: Current shell ROS workspace differs from helper workspace for horus_unity_bridge."
+                )
+                cli.print_info(f"Current shell prefix: {current_shell_prefix}")
+                cli.print_info(f"Helper workspace prefix: {helper_prefix}")
+                cli.print_info("Auto mode will try current-shell ros2 launch first.")
+
+            if self._auto_start_bridge_with_ros2_launch():
+                return True
+
+            if self._auto_start_bridge_with_horus_helper():
+                return True
+        elif mode == "ros2":
+            if self._auto_start_bridge_with_ros2_launch():
+                return True
+        elif mode == "helper":
+            if self._auto_start_bridge_with_horus_helper():
+                return True
 
         cli.print_error("Failed to auto-launch bridge.")
         return False
 
     def _ack_callback(self, msg):
         """Handle registration acknowledgement"""
+                        self._sleep_after_bridge_startup_settle()
         try:
             data = json.loads(msg.data)
             self._last_ack_data = data
@@ -336,7 +460,9 @@ class RobotRegistryClient:
 
         if "Heartbeat:" in msg.data:
             try:
+        mode = self._get_bridge_autostart_mode()
                 heartbeat_part = msg.data.split("Heartbeat:", 1)[1]
+        cli.print_info(f"Bridge auto-start mode: {mode}")
                 heartbeat_value = heartbeat_part.split("|", 1)[0].strip()
                 heartbeat_uptime = float(heartbeat_value)
             except Exception:
