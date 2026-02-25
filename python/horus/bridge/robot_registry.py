@@ -39,6 +39,9 @@ class RobotRegistryClient:
         """Initialize robot registry client"""
         self.node = None
         self.publisher = None
+        self.sdk_replay_begin_publisher = None
+        self.sdk_replay_item_publisher = None
+        self.sdk_replay_end_publisher = None
         self.subscriber = None
         self.ros_initialized = False
         self._registration_lock = threading.Lock()
@@ -57,6 +60,12 @@ class RobotRegistryClient:
         self._teleop_runtime_by_topic: Dict[str, Dict[str, Any]] = {}
         self._teleop_runtime_state_ttl_s = 3.5
         self._multi_operator_presence_ttl_s = 5.0
+        self._registration_replay_request_seq = 0
+        self._last_consumed_registration_replay_request_seq = 0
+        self._last_registration_replay_request: Dict[str, Any] = {}
+        self._sdk_replay_burst_attempts = 3
+        self._sdk_replay_burst_initial_delay_s = 0.15
+        self._sdk_replay_burst_inter_attempt_delay_s = 0.25
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -145,6 +154,22 @@ class RobotRegistryClient:
                 depth=10
             )
 
+            sdk_replay_qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=256,
+            )
+
+            self.sdk_replay_begin_publisher = self.node.create_publisher(
+                String, "/horus/multi_operator/sdk_registry_replay_begin", sdk_replay_qos
+            )
+            self.sdk_replay_item_publisher = self.node.create_publisher(
+                String, "/horus/multi_operator/sdk_registry_replay_item", sdk_replay_qos
+            )
+            self.sdk_replay_end_publisher = self.node.create_publisher(
+                String, "/horus/multi_operator/sdk_registry_replay_end", sdk_replay_qos
+            )
+
             self.subscriber = self.node.create_subscription(
                 String, "/horus/registration_ack", self._ack_callback, ack_qos
             )
@@ -174,6 +199,13 @@ class RobotRegistryClient:
                 String,
                 "/horus/multi_operator_presence",
                 self._multi_operator_presence_callback,
+                ack_qos,
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/multi_operator/sdk_registration_replay_request",
+                self._multi_operator_registration_replay_request_callback,
                 ack_qos,
             )
 
@@ -250,60 +282,6 @@ class RobotRegistryClient:
             if path not in seen:
                 deduped_paths.append(path)
                 seen.add(path)
-
-        command = (
-            f"source {shlex.quote(env_script)} >/dev/null 2>&1 && "
-            f"ros2 pkg prefix {shlex.quote(package_name)}"
-        )
-        try:
-            check_pkg = subprocess.run(
-                [bash_path, "-lc", command],
-                capture_output=True,
-                text=True,
-                timeout=8.0,
-            )
-        except Exception:
-            return None
-
-        if check_pkg.returncode != 0:
-            return None
-
-        prefix = str(check_pkg.stdout or "").strip()
-        return prefix or None
-
-    def _get_first_helper_bridge_prefix(self) -> Optional[str]:
-        """Inspect the first available helper environment and return bridge package prefix."""
-        for helper_path in self._get_horus_start_helper_candidates():
-            if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
-                continue
-
-            cli.print_info(f"Trying helper auto-start: {helper_path}")
-            try:
-                self.bridge_process = subprocess.Popen(
-                    [helper_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            except Exception:
-                continue
-
-            atexit.register(self._cleanup_bridge)
-            with cli.status("Launching Horus Bridge...", spinner="dots"):
-                for _ in range(20):
-                    if self._is_port_open(10000):
-                        cli.print_success("Horus Bridge launched successfully.")
-                        return True
-                    if self.bridge_process and self.bridge_process.poll() is not None:
-                        break
-                    time.sleep(1.0)
-
-            self._cleanup_bridge()
-
-        return False
-
-    def _auto_start_bridge_with_ros2_launch(self) -> bool:
-        """Fallback bridge startup using direct ros2 launch command."""
         return deduped_paths
 
     def _get_horus_helper_env_path(self, helper_path: str) -> Optional[str]:
@@ -346,10 +324,32 @@ class RobotRegistryClient:
             bash_path = "/bin/bash"
         if not bash_path:
             return None
-        from horus.utils import cli
 
-        if shutil.which("ros2") is None:
-            cli.print_error("'ros2' command not found.")
+        command = (
+            f"source {shlex.quote(env_script)} >/dev/null 2>&1 && "
+            f"ros2 pkg prefix {shlex.quote(package_name)}"
+        )
+        try:
+            check_pkg = subprocess.run(
+                [bash_path, "-lc", command],
+                capture_output=True,
+                text=True,
+                timeout=8.0,
+            )
+        except Exception:
+            return None
+
+        if check_pkg.returncode != 0:
+            return None
+
+        prefix = str(check_pkg.stdout or "").strip()
+        return prefix or None
+
+    def _get_first_helper_bridge_prefix(self) -> Optional[str]:
+        """Inspect the first available helper environment and return bridge package prefix."""
+        for helper_path in self._get_horus_start_helper_candidates():
+            if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
+                continue
             prefix = self._get_ros2_pkg_prefix_from_helper_env(helper_path, "horus_unity_bridge")
             if prefix:
                 return prefix
@@ -366,6 +366,39 @@ class RobotRegistryClient:
             helper_bridge_prefix = self._get_ros2_pkg_prefix_from_helper_env(helper_path, "horus_unity_bridge")
             if helper_bridge_prefix:
                 cli.print_info(f"Helper env horus_unity_bridge prefix: {helper_bridge_prefix}")
+
+            cli.print_info(f"Trying helper auto-start: {helper_path}")
+            try:
+                self.bridge_process = subprocess.Popen(
+                    [helper_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:
+                continue
+
+            atexit.register(self._cleanup_bridge)
+            with cli.status("Launching Horus Bridge...", spinner="dots"):
+                for _ in range(20):
+                    if self._is_port_open(10000):
+                        self._sleep_after_bridge_startup_settle()
+                        cli.print_success("Horus Bridge launched successfully.")
+                        return True
+                    if self.bridge_process and self.bridge_process.poll() is not None:
+                        break
+                    time.sleep(1.0)
+
+            self._cleanup_bridge()
+
+        return False
+
+    def _auto_start_bridge_with_ros2_launch(self) -> bool:
+        """Fallback bridge startup using direct ros2 launch command."""
+        from horus.utils import cli
+
+        if shutil.which("ros2") is None:
+            cli.print_error("'ros2' command not found.")
             return False
 
         try:
@@ -377,7 +410,6 @@ class RobotRegistryClient:
 
             self.bridge_process = subprocess.Popen(
                 ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"],
-                        self._sleep_after_bridge_startup_settle()
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -387,6 +419,7 @@ class RobotRegistryClient:
             with cli.status("Launching Horus Bridge...", spinner="dots"):
                 for _ in range(15):
                     if self._is_port_open(10000):
+                        self._sleep_after_bridge_startup_settle()
                         cli.print_success("Horus Bridge launched successfully.")
                         return True
                     if self.bridge_process and self.bridge_process.poll() is not None:
@@ -406,7 +439,9 @@ class RobotRegistryClient:
             cli.print_info("Horus Bridge detected on port 10000.")
             return True
 
+        mode = self._get_bridge_autostart_mode()
         cli.print_info("No Bridge on port 10000. Attempting auto-start...")
+        cli.print_info(f"Bridge auto-start mode: {mode}")
 
         if mode == "off":
             cli.print_error("Bridge auto-start disabled (HORUS_SDK_BRIDGE_AUTOSTART_MODE=off).")
@@ -440,7 +475,6 @@ class RobotRegistryClient:
 
     def _ack_callback(self, msg):
         """Handle registration acknowledgement"""
-                        self._sleep_after_bridge_startup_settle()
         try:
             data = json.loads(msg.data)
             self._last_ack_data = data
@@ -460,9 +494,7 @@ class RobotRegistryClient:
 
         if "Heartbeat:" in msg.data:
             try:
-        mode = self._get_bridge_autostart_mode()
                 heartbeat_part = msg.data.split("Heartbeat:", 1)[1]
-        cli.print_info(f"Bridge auto-start mode: {mode}")
                 heartbeat_value = heartbeat_part.split("|", 1)[0].strip()
                 heartbeat_uptime = float(heartbeat_value)
             except Exception:
@@ -518,6 +550,127 @@ class RobotRegistryClient:
             "session_id": session_id,
             "workspace_active": bool(payload.get("workspace_active", False)),
         }
+
+    def _multi_operator_registration_replay_request_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        payload: Dict[str, Any] = {}
+        if payload_raw:
+            try:
+                parsed = json.loads(payload_raw)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except Exception:
+                payload = {}
+
+        self._last_registration_replay_request = payload
+        self._registration_replay_request_seq += 1
+
+    def _consume_registration_replay_request(self) -> Optional[Dict[str, Any]]:
+        if self._registration_replay_request_seq == self._last_consumed_registration_replay_request_seq:
+            return None
+        self._last_consumed_registration_replay_request_seq = self._registration_replay_request_seq
+        return dict(self._last_registration_replay_request or {})
+
+    def _publish_sdk_registry_replay_once(self, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
+        if not self.ros_initialized or self.node is None:
+            return False, {"error": "ROS2 not initialized"}
+        if self.sdk_replay_begin_publisher is None or self.sdk_replay_item_publisher is None or self.sdk_replay_end_publisher is None:
+            return False, {"error": "SDK replay publishers unavailable"}
+
+        replay_request = dict(replay_request or {})
+        request_id = str(replay_request.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        join_attempt_id = str(replay_request.get("join_attempt_id") or "").strip()
+        requester_app_id = str(replay_request.get("requester_app_id") or replay_request.get("app_id") or "unknown").strip() or "unknown"
+        now_ms = int(time.time() * 1000)
+
+        payloads = []
+        for _, _, msg in (entries or []):
+            json_payload = str(getattr(msg, "data", "") or "")
+            if json_payload:
+                payloads.append(json_payload)
+
+        expected_count = len(payloads)
+
+        begin_msg = String()
+        begin_msg.data = json.dumps(
+            {
+                "request_id": request_id,
+                "join_attempt_id": join_attempt_id,
+                "expected_count": expected_count,
+                "ts_unix_ms": now_ms,
+            }
+        )
+        self.sdk_replay_begin_publisher.publish(begin_msg)
+
+        published_count = 0
+        for idx, registration_json in enumerate(payloads):
+            item_msg = String()
+            item_msg.data = json.dumps(
+                {
+                    "request_id": request_id,
+                    "join_attempt_id": join_attempt_id,
+                    "index": idx,
+                    "registration_json": registration_json,
+                }
+            )
+            self.sdk_replay_item_publisher.publish(item_msg)
+            published_count += 1
+
+        end_msg = String()
+        end_msg.data = json.dumps(
+            {
+                "request_id": request_id,
+                "join_attempt_id": join_attempt_id,
+                "expected_count": expected_count,
+                "published_count": published_count,
+                "ts_unix_ms": int(time.time() * 1000),
+            }
+        )
+        self.sdk_replay_end_publisher.publish(end_msg)
+
+        return True, {
+            "request_id": request_id,
+            "join_attempt_id": join_attempt_id,
+            "requester_app_id": requester_app_id,
+            "expected_count": expected_count,
+            "published_count": published_count,
+        }
+
+    def _publish_sdk_registry_replay(self, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
+        if not self.ros_initialized or self.node is None:
+            return False, {"error": "ROS2 not initialized"}
+        if self.sdk_replay_begin_publisher is None or self.sdk_replay_item_publisher is None or self.sdk_replay_end_publisher is None:
+            return False, {"error": "SDK replay publishers unavailable"}
+
+        base_request = dict(replay_request or {})
+        request_id = str(base_request.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        base_request["request_id"] = request_id
+
+        # Replay settings are configurable via internal attributes. The Unity
+        # coordinator also retries requests, so keep this path simple/synchronous.
+        attempt_count = max(1, int(getattr(self, "_sdk_replay_burst_attempts", 1) or 1))
+        initial_delay_s = max(0.0, float(getattr(self, "_sdk_replay_burst_initial_delay_s", 0.0) or 0.0))
+        inter_attempt_delay_s = max(0.0, float(getattr(self, "_sdk_replay_burst_inter_attempt_delay_s", 0.0) or 0.0))
+
+        if initial_delay_s > 0.0:
+            time.sleep(initial_delay_s)
+
+        per_attempt_published_count: List[int] = []
+        last_result: Dict[str, Any] = {}
+
+        for attempt_idx in range(attempt_count):
+            ok, result = self._publish_sdk_registry_replay_once(entries, base_request)
+            if not ok:
+                return False, result
+            last_result = dict(result or {})
+            per_attempt_published_count.append(int(last_result.get("published_count") or 0))
+            if attempt_idx < (attempt_count - 1) and inter_attempt_delay_s > 0.0:
+                time.sleep(inter_attempt_delay_s)
+
+        last_result["attempt_count"] = attempt_count
+        last_result["per_attempt_published_count"] = per_attempt_published_count
+        last_result["total_published_count"] = int(sum(per_attempt_published_count))
+        return True, last_result
 
     def _prune_stale_app_presence(self, timeout_s: float):
         now = time.time()
@@ -968,6 +1121,10 @@ class RobotRegistryClient:
             "/horus/registration_ack": "sdk_sub",
             "/horus/heartbeat": "sdk_sub",
             "/horus/multi_operator_presence": "sdk_sub",
+            "/horus/multi_operator/sdk_registration_replay_request": "sdk_sub",
+            "/horus/multi_operator/sdk_registry_replay_begin": "sdk_pub",
+            "/horus/multi_operator/sdk_registry_replay_item": "sdk_pub",
+            "/horus/multi_operator/sdk_registry_replay_end": "sdk_pub",
         }
         control_topic_set = set(control_topics or [])
         for topic in robot_topics:
@@ -976,7 +1133,16 @@ class RobotRegistryClient:
         return roles
 
     def _topic_group(self, topic: str, robot_names):
-        if topic in ("/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"):
+        if topic in (
+            "/horus/registration",
+            "/horus/registration_ack",
+            "/horus/heartbeat",
+            "/horus/multi_operator_presence",
+            "/horus/multi_operator/sdk_registration_replay_request",
+            "/horus/multi_operator/sdk_registry_replay_begin",
+            "/horus/multi_operator/sdk_registry_replay_item",
+            "/horus/multi_operator/sdk_registry_replay_end",
+        ):
             return "sdk"
         if topic == "/tf":
             return "shared"
@@ -1209,7 +1375,16 @@ class RobotRegistryClient:
         camera_topic_profiles: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> list:
         camera_topic_profiles = camera_topic_profiles or {}
-        core_topic_set = {"/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"}
+        core_topic_set = {
+            "/horus/registration",
+            "/horus/registration_ack",
+            "/horus/heartbeat",
+            "/horus/multi_operator_presence",
+            "/horus/multi_operator/sdk_registration_replay_request",
+            "/horus/multi_operator/sdk_registry_replay_begin",
+            "/horus/multi_operator/sdk_registry_replay_item",
+            "/horus/multi_operator/sdk_registry_replay_end",
+        }
         rows = []
 
         for topic in monitored_topics:
@@ -1379,7 +1554,16 @@ class RobotRegistryClient:
             camera_topics = self._collect_camera_topics(config)
             robot_topics = self._merge_topics(data_topics, control_topics, camera_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
-            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"]
+            core_topics = [
+                "/horus/registration",
+                "/horus/registration_ack",
+                "/horus/heartbeat",
+                "/horus/multi_operator_presence",
+                "/horus/multi_operator/sdk_registration_replay_request",
+                "/horus/multi_operator/sdk_registry_replay_begin",
+                "/horus/multi_operator/sdk_registry_replay_item",
+                "/horus/multi_operator/sdk_registry_replay_end",
+            ]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
             try:
@@ -1651,7 +1835,16 @@ class RobotRegistryClient:
 
             entries = []
             entry_by_name = {}
-            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat", "/horus/multi_operator_presence"]
+            core_topics = [
+                "/horus/registration",
+                "/horus/registration_ack",
+                "/horus/heartbeat",
+                "/horus/multi_operator_presence",
+                "/horus/multi_operator/sdk_registration_replay_request",
+                "/horus/multi_operator/sdk_registry_replay_begin",
+                "/horus/multi_operator/sdk_registry_replay_item",
+                "/horus/multi_operator/sdk_registry_replay_end",
+            ]
             robot_topics = []
             control_topics = []
             camera_topic_profiles = {}
@@ -1779,9 +1972,18 @@ class RobotRegistryClient:
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
                     app_restarted = self._consume_app_restart_signal()
+                    replay_request = self._consume_registration_replay_request()
                     if is_connected and (not last_connection_state or app_restarted):
                         for robot, dataviz, msg in entries:
                             publish_and_wait(robot, dataviz, msg)
+                    elif is_connected and replay_request:
+                        # Re-publish registrations to /horus/registration directly.
+                        # The joiner now also processes this topic, so this uses the
+                        # same proven channel as host registration instead of relying
+                        # on the separate replay topic assembly mechanism.
+                        for _, _, msg in entries:
+                            self.publisher.publish(msg)
+                        self._publish_sdk_registry_replay(entries, replay_request)
                     last_connection_state = is_connected
                     time.sleep(0.2)
 
@@ -1813,11 +2015,29 @@ class RobotRegistryClient:
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
                     app_restarted = self._consume_app_restart_signal()
+                    replay_request = self._consume_registration_replay_request()
                     if app_restarted:
                         had_connection_drop = True
 
                     dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
                     dashboard.update_multi_operator(self._format_multi_operator_summary())
+
+                    if replay_request and is_connected:
+                        dashboard.update_registration("Re-registering")
+                        dashboard.update_status("Replaying robot registrations for joiner...")
+                        # Re-publish to /horus/registration directly so the joiner
+                        # receives registrations through the same channel as the host.
+                        for _, _, reg_msg in entries:
+                            self.publisher.publish(reg_msg)
+                        ok, result = self._publish_sdk_registry_replay(entries, replay_request)
+                        if not ok:
+                            dashboard.update_registration("Failed")
+                            dashboard.update_status((result or {}).get("error") or "Registration replay failed")
+                        else:
+                            dashboard.update_registration("Registered")
+                            published = int((result or {}).get("published_count") or 0)
+                            attempts = int((result or {}).get("attempt_count") or 1)
+                            dashboard.update_status(f"Replay complete ({published} robots, {attempts} attempts)")
 
                     if not is_connected:
                         if last_connection_state:
