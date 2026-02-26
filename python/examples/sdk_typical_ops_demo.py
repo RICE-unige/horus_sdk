@@ -70,7 +70,8 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description=(
             "Typical HORUS SDK registration flow: 10 named robots with camera, teleop, "
-            "go-to-point, and waypoint metadata."
+            "go-to-point, and waypoint metadata (also used as the host-authority registration "
+            "demo for multi-operator join tests)."
         )
     )
     parser.add_argument(
@@ -200,6 +201,10 @@ def main():
     camera_resolution = parse_resolution(args.camera_resolution)
 
     cli.print_step("Defining typical multi-robot operations configuration...")
+    cli.print_info(
+        "Multi-operator v1 test: run this SDK demo once (host authority). "
+        "In the HORUS app, use one headset as Host and additional headsets as Join."
+    )
 
     robots: List[Robot] = []
     for index, name in enumerate(robot_names):
