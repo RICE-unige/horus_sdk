@@ -37,7 +37,7 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | Path | Description |
 |---|---|
 | `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
-| `python/examples/` | Operational demos (`sdk_registration_demo.py`, `sdk_typical_ops_demo.py`, fake publishers, e2e checks) |
+| `python/examples/` | Operational demos (`sdk_registration_demo.py`, `sdk_typical_ops_demo.py`, `sdk_multi_operator_host_demo.py`, fake publishers, e2e checks) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
 | `cpp/` | C++ SDK parity track (paused) |
 | `rust/` | Rust SDK parity track (paused) |
@@ -128,6 +128,15 @@ cd ~/horus/sdk
 python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
 ```
 
+### 4) Multi-operator host/join validation (SDK host-side)
+
+```bash
+cd ~/horus/sdk
+python3 python/examples/sdk_multi_operator_host_demo.py --robot-count 10 --workspace-scale 0.1
+```
+
+Use this together with the MR runtime host/join workflow to validate dashboard operator visibility and joiner registry replay behavior.
+
 ## Camera Registration Model
 
 Camera payloads support legacy and profile-based transport fields:
@@ -201,6 +210,21 @@ Camera dashboard notes:
 - For camera rows on active `WEBRTC`, `Link` is app-session/runtime-state based (not ROS-subscriber based).
 - For camera rows on active `ROS`, `Link` follows backend subscriber presence.
 - Runtime transport overrides have expiry/refresh handling to reduce stale mode indicators.
+
+## Multi-Operator SDK Baseline
+
+Current SDK support for the multi-operator runtime includes:
+- dashboard `Operators` summary and presence-stage visibility for host/joiner alignment/workspace progression,
+- dedicated host-side test flow via `python/examples/sdk_multi_operator_host_demo.py`,
+- SDK registry replay protocol publishing for joiner baseline reconstruction:
+  - `/horus/multi_operator/sdk_registration_replay_request`
+  - `/horus/multi_operator/sdk_registry_replay_begin`
+  - `/horus/multi_operator/sdk_registry_replay_item`
+  - `/horus/multi_operator/sdk_registry_replay_end`
+- bridge auto-start strategy hardening that prefers the current shell ROS 2 workspace before helper fallback (with mismatch diagnostics).
+
+> [!NOTE]
+> The SDK is not the source of truth for host-authored workspace geometry. Workspace baseline still comes from the MR runtime (`horus`).
 
 ## Practical Validation Workflows
 
@@ -336,6 +360,9 @@ Current Unity MR baseline relevant to SDK integration:
 - Camera runtime follows MiniMap/Teleop transport profiles (MiniMap-first startup policy).
 - Occupancy map is consumed from global visualization payload and remains hidden until workspace accept.
 - Registration-path batching/deduping exists on MR side to reduce workspace-accept stalls.
+- Multi-operator host/join workspace baseline is active in MR (`Join Workspace` gating after alignment).
+- Joiner robot baseline reconstruction uses SDK replay begin/item/end topics (workspace baseline remains MR-owned).
+- Per-robot lease-based multi-operator control foundation is integrated on the MR/bridge path (SDK currently provides observability and replay support, not arbitration).
 
 > [!NOTE]
 > When validating SDK changes, always test against the full MR flow:
@@ -374,7 +401,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
 | Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
-| Copilot and Multi-Operator | :white_circle: Planned | Single-operator path is primary baseline. | Add operator identity/session ownership metadata and copilot action-scoping contracts. |
+| Copilot and Multi-Operator | :large_orange_diamond: In progress | SDK dashboard presence visibility, multi-operator host demo workflow, bridge auto-start hardening, and SDK registry replay protocol publishing are integrated. | Add operator identity/lease observability summaries, explicit ownership metadata schemas, and copilot action-scoping contracts. |
 
 ## 📖 Citation
 
