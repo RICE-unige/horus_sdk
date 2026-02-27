@@ -1297,6 +1297,34 @@ class RobotRegistryClient:
         if color not in (None, ""):
             payload["color"] = str(color)
 
+        if viz_type_value == "path":
+            path_payload: Dict[str, Any] = {}
+            source_type = getattr(data_source, "source_type", None)
+            source_type_value = str(getattr(source_type, "value", source_type) or "").strip()
+            role = None
+            if source_type_value == "robot_global_path":
+                role = "global"
+            elif source_type_value == "robot_local_path":
+                role = "local"
+            elif source_type_value == "robot_trajectory":
+                role = "trajectory"
+
+            if role:
+                path_payload["role"] = role
+
+            if "line_width" in render_options:
+                path_payload["line_width"] = self._payload_coerce_float(
+                    render_options.get("line_width"),
+                    1.0,
+                )
+
+            line_style = render_options.get("line_style")
+            if line_style not in (None, ""):
+                path_payload["line_style"] = str(line_style)
+
+            if path_payload:
+                payload["path"] = path_payload
+
         if viz_type_value == "occupancy_grid":
             occupancy_payload: Dict[str, Any] = {}
             if "show_unknown_space" in render_options:
