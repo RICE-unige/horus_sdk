@@ -207,6 +207,7 @@ def main():
     )
 
     robots: List[Robot] = []
+    datavizs = []
     for index, name in enumerate(robot_names):
         robot = Robot(
             name=name,
@@ -271,11 +272,19 @@ def main():
         )
 
         robot.add_sensor(build_camera(name, args, camera_resolution))
+        dataviz = robot.create_dataviz()
+        robot.add_path_planning_to_dataviz(
+            dataviz,
+            global_path_topic=f"/{name}/global_path",
+            local_path_topic=f"/{name}/local_path",
+        )
         robots.append(robot)
+        datavizs.append(dataviz)
 
     cli.print_step(f"Registering {len(robots)} robot(s)...")
     success, result = register_robots(
         robots,
+        datavizs=datavizs,
         keep_alive=args.keep_alive,
         show_dashboard=True,
         workspace_scale=args.workspace_scale,
