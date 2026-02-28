@@ -19,7 +19,7 @@ try:
     from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from geometry_msgs.msg import PoseStamped, TransformStamped
-    from nav_msgs.msg import Path
+    from nav_msgs.msg import Odometry, Path
     from std_msgs.msg import String
     from tf2_msgs.msg import TFMessage
 except Exception as exc:
@@ -84,6 +84,9 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         waypoint_yaw_tolerance_deg: float,
         max_turn_rate_rps: float,
         task_path_publish_rate_hz: float,
+        publish_collision_risk: bool,
+        collision_threshold_m: float,
+        collision_risk_rate_hz: float,
         status_frame_id: str,
         *args,
         **kwargs,
@@ -97,8 +100,14 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         self.max_turn_rate_rps = max(0.1, float(max_turn_rate_rps))
         self.task_path_publish_rate_hz = max(0.2, float(task_path_publish_rate_hz))
         self._task_path_publish_period_s = 1.0 / self.task_path_publish_rate_hz
+        self.publish_collision_risk = bool(publish_collision_risk)
+        self.collision_threshold_m = max(0.1, float(collision_threshold_m))
+        self.collision_risk_rate_hz = max(0.2, float(collision_risk_rate_hz))
+        self._collision_risk_publish_period_s = 1.0 / self.collision_risk_rate_hz
         self.status_frame_id = status_frame_id.strip() if status_frame_id else "map"
         self._map_scale = self.scale if abs(self.scale) > 1e-6 else 1.0
+        # Approximate robot footprint radius in published map meters.
+        self._collision_body_radius_m = 0.18 * abs(self._map_scale)
 
         self._goals: Dict[str, Optional[GoalState]] = {robot.name: None for robot in self.robots}
         self._path_queues: Dict[str, List[WaypointGoal]] = {robot.name: [] for robot in self.robots}
@@ -107,7 +116,10 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         self._waypoint_status_publishers = {}
         self._global_path_publishers = {}
         self._local_path_publishers = {}
+        self._odom_publishers = {}
+        self._collision_risk_publishers = {}
         self._last_task_path_publish_time: Dict[str, float] = {robot.name: 0.0 for robot in self.robots}
+        self._last_collision_risk_publish_time: Dict[str, float] = {robot.name: 0.0 for robot in self.robots}
         self._goal_subscriptions = []
         self._cancel_subscriptions = []
         self._path_subscriptions = []
@@ -122,6 +134,11 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         path_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        odom_qos = QoSProfile(
+            depth=10,
+            durability=DurabilityPolicy.VOLATILE,
             reliability=ReliabilityPolicy.RELIABLE,
         )
 
@@ -163,6 +180,13 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
             self._local_path_publishers[name] = self.create_publisher(
                 Path, f"/{name}/local_path", path_qos
             )
+            self._odom_publishers[name] = self.create_publisher(
+                Odometry, f"/{name}/odom", odom_qos
+            )
+            if self.publish_collision_risk:
+                self._collision_risk_publishers[name] = self.create_publisher(
+                    String, f"/{name}/collision_risk", command_qos
+                )
             robot.vx = 0.0
             robot.vy = 0.0
             robot.target_x = robot.x
@@ -171,8 +195,14 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         self.get_logger().info(
             "Ops suite mode active. Robots stay static until cmd_vel, goal_pose, or waypoint_path is received. "
             "Teleop cmd_vel overrides and cancels active tasks. "
-            "Fake nav paths are published on /<robot>/global_path and /<robot>/local_path."
+            "Fake nav paths are published on /<robot>/global_path and /<robot>/local_path. "
+            "Odometry is published on /<robot>/odom."
         )
+        if self.publish_collision_risk:
+            self.get_logger().info(
+                f"Fake collision risk is published on /<robot>/collision_risk at "
+                f"{self.collision_risk_rate_hz:.1f}Hz (threshold={self.collision_threshold_m:.2f}m)."
+            )
 
     def _make_goal_callback(self, robot_name):
         def _callback(msg: PoseStamped):
@@ -710,6 +740,195 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         self._resolve_collisions(dt)
         self._apply_bounds()
 
+    def _publish_robot_odometry(self, robot, stamp_msg):
+        publisher = self._odom_publishers.get(robot.name)
+        if publisher is None:
+            return
+
+        msg = Odometry()
+        msg.header.stamp = stamp_msg
+        msg.header.frame_id = self.map_frame
+        msg.child_frame_id = f"{robot.name}/{self.base_frame}"
+        msg.pose.pose.position.x = robot.x * self.scale
+        msg.pose.pose.position.y = robot.y * self.scale
+        msg.pose.pose.position.z = self._robot_altitudes.get(robot.name, self.height) * self.scale
+        qx, qy, qz, qw = self._quat_from_yaw(robot.yaw)
+        msg.pose.pose.orientation.x = qx
+        msg.pose.pose.orientation.y = qy
+        msg.pose.pose.orientation.z = qz
+        msg.pose.pose.orientation.w = qw
+        msg.twist.twist.linear.x = robot.vx * self.scale
+        msg.twist.twist.linear.y = robot.vy * self.scale
+        msg.twist.twist.linear.z = 0.0
+        msg.twist.twist.angular.x = 0.0
+        msg.twist.twist.angular.y = 0.0
+        msg.twist.twist.angular.z = 0.0
+        publisher.publish(msg)
+
+    def _publish_all_odometry(self, stamp_msg):
+        for robot in self.robots:
+            self._publish_robot_odometry(robot, stamp_msg)
+
+    @staticmethod
+    def _normalize_direction(dx: float, dy: float) -> Tuple[float, float, float]:
+        norm = math.hypot(dx, dy)
+        if norm <= 1e-6:
+            return (0.0, 0.0, 0.0)
+        return (dx / norm, dy / norm, 0.0)
+
+    @staticmethod
+    def _world_direction_to_base_link(
+        direction_world: Tuple[float, float, float],
+        robot_yaw: float,
+    ) -> Tuple[float, float, float]:
+        dx_world = float(direction_world[0])
+        dy_world = float(direction_world[1])
+        cos_yaw = math.cos(robot_yaw)
+        sin_yaw = math.sin(robot_yaw)
+        # Rotate world direction into robot base_link (x forward, y left).
+        local_x = (cos_yaw * dx_world) + (sin_yaw * dy_world)
+        local_y = (-sin_yaw * dx_world) + (cos_yaw * dy_world)
+        return OpsSuiteFakeTFPublisher._normalize_direction(local_x, local_y)
+
+    def _nearest_boundary_obstacle(self, robot) -> Tuple[float, Tuple[float, float, float]]:
+        candidates = [
+            (self.area_size - robot.x, (1.0, 0.0, 0.0)),
+            (self.area_size + robot.x, (-1.0, 0.0, 0.0)),
+            (self.area_size - robot.y, (0.0, 1.0, 0.0)),
+            (self.area_size + robot.y, (0.0, -1.0, 0.0)),
+        ]
+        best_distance = math.inf
+        best_direction = (0.0, 0.0, 0.0)
+        for distance, direction in candidates:
+            if distance < best_distance:
+                best_distance = float(distance)
+                best_direction = direction
+        return best_distance, best_direction
+
+    def _nearest_robot_obstacle(self, robot) -> Tuple[float, Tuple[float, float, float]]:
+        best_distance = math.inf
+        best_direction = (0.0, 0.0, 0.0)
+        for other in self.robots:
+            if other is robot:
+                continue
+            dx = other.x - robot.x
+            dy = other.y - robot.y
+            distance = math.hypot(dx, dy)
+            if distance < best_distance:
+                best_distance = distance
+                best_direction = self._normalize_direction(dx, dy)
+        return best_distance, best_direction
+
+    def _nearest_occupancy_obstacle(self, robot) -> Tuple[float, Tuple[float, float, float]]:
+        if self.occupancy_data is None:
+            return math.inf, (0.0, 0.0, 0.0)
+
+        origin = self._world_to_grid(robot.x, robot.y)
+        if origin is None:
+            return math.inf, (0.0, 0.0, 0.0)
+
+        gx, gy = origin
+        cell_size_world = max(self._occupancy_cell_size_world(), 1e-6)
+        max_search_radius = max(1, int(math.ceil((self.collision_threshold_m * 1.5) / cell_size_world)))
+
+        best_distance = math.inf
+        best_direction = (0.0, 0.0, 0.0)
+
+        for radius in range(1, max_search_radius + 1):
+            min_x = max(0, gx - radius)
+            max_x = min(self.occupancy_width - 1, gx + radius)
+            min_y = max(0, gy - radius)
+            max_y = min(self.occupancy_height - 1, gy + radius)
+
+            for sx in range(min_x, max_x + 1):
+                for sy in (min_y, max_y):
+                    if not self._is_grid_blocked(sx, sy):
+                        continue
+                    wx, wy = self._grid_to_world(sx, sy)
+                    dx = wx - robot.x
+                    dy = wy - robot.y
+                    distance = math.hypot(dx, dy)
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_direction = self._normalize_direction(dx, dy)
+
+            for sy in range(min_y + 1, max_y):
+                for sx in (min_x, max_x):
+                    if not self._is_grid_blocked(sx, sy):
+                        continue
+                    wx, wy = self._grid_to_world(sx, sy)
+                    dx = wx - robot.x
+                    dy = wy - robot.y
+                    distance = math.hypot(dx, dy)
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_direction = self._normalize_direction(dx, dy)
+
+            if math.isfinite(best_distance):
+                break
+
+        return best_distance, best_direction
+
+    def _compute_collision_risk(self, robot) -> Tuple[float, float, Tuple[float, float, float]]:
+        boundary_distance, boundary_direction = self._nearest_boundary_obstacle(robot)
+        robot_distance, robot_direction = self._nearest_robot_obstacle(robot)
+        occupancy_distance, occupancy_direction = self._nearest_occupancy_obstacle(robot)
+
+        best_distance = boundary_distance
+        best_direction = boundary_direction
+        if robot_distance < best_distance:
+            best_distance = robot_distance
+            best_direction = robot_direction
+        if occupancy_distance < best_distance:
+            best_distance = occupancy_distance
+            best_direction = occupancy_direction
+
+        # Distances are tracked in simulator world units; convert to published map meters.
+        distance_map = best_distance * abs(self._map_scale)
+        # Convert center-to-center distance to approximate free-space clearance around the robot body.
+        clearance_map = max(0.0, distance_map - (2.0 * self._collision_body_radius_m))
+
+        threshold = max(self.collision_threshold_m, 1e-6)
+        normalized = max(0.0, min(1.0, (threshold - clearance_map) / threshold))
+        # Slight easing for clearer visual progression in MR.
+        risk = normalized ** 0.85
+        return risk, clearance_map, best_direction
+
+    def _publish_collision_risk_if_due(self, now_sec: float):
+        if not self.publish_collision_risk:
+            return
+
+        for robot in self.robots:
+            robot_name = robot.name
+            publisher = self._collision_risk_publishers.get(robot_name)
+            if publisher is None:
+                continue
+
+            last_time = float(self._last_collision_risk_publish_time.get(robot_name, 0.0))
+            if (now_sec - last_time) < self._collision_risk_publish_period_s:
+                continue
+
+            risk, min_distance, direction = self._compute_collision_risk(robot)
+            base_link_direction = self._world_direction_to_base_link(direction, robot.yaw)
+            payload = {
+                "robot": robot_name,
+                "frame": f"{robot_name}/{self.base_frame}",
+                "stamp_ms": int(now_sec * 1000.0),
+                "source": "fake_sim",
+                "threshold_m": round(self.collision_threshold_m, 4),
+                "min_distance_m": round(float(min_distance), 4) if math.isfinite(min_distance) else None,
+                "risk": round(float(risk), 4),
+                "direction": {
+                    "x": round(float(base_link_direction[0]), 4),
+                    "y": round(float(base_link_direction[1]), 4),
+                    "z": round(float(base_link_direction[2]), 4),
+                },
+            }
+            msg = String()
+            msg.data = json.dumps(payload, separators=(",", ":"))
+            publisher.publish(msg)
+            self._last_collision_risk_publish_time[robot_name] = now_sec
+
     def _on_timer(self):
         now = self.get_clock().now().to_msg()
         current_time = time.time()
@@ -721,6 +940,8 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
 
         self._update_robot_motion(dt, current_time)
         self._enforce_free_space()
+        self._publish_all_odometry(now)
+        self._publish_collision_risk_if_due(current_time)
 
         transforms = []
         for robot in self.robots:
@@ -801,6 +1022,31 @@ def build_ops_suite_parser():
         help="Publish rate (Hz) for fake /<robot>/global_path and /<robot>/local_path while tasks are active.",
     )
     parser.add_argument(
+        "--publish-collision-risk",
+        dest="publish_collision_risk",
+        action="store_true",
+        default=True,
+        help="Publish fake collision risk JSON on /<robot>/collision_risk (default: on).",
+    )
+    parser.add_argument(
+        "--no-publish-collision-risk",
+        dest="publish_collision_risk",
+        action="store_false",
+        help="Disable fake collision risk publishing.",
+    )
+    parser.add_argument(
+        "--collision-threshold-m",
+        type=float,
+        default=1.2,
+        help="Collision risk threshold (meters) used by fake risk output.",
+    )
+    parser.add_argument(
+        "--collision-risk-rate",
+        type=float,
+        default=10.0,
+        help="Publish rate (Hz) for fake /<robot>/collision_risk.",
+    )
+    parser.add_argument(
         "--status-frame-id",
         default="map",
         help="Frame id used in goal_status and waypoint_status payload metadata.",
@@ -845,6 +1091,9 @@ def run_from_args(args):
         waypoint_yaw_tolerance_deg=args.waypoint_yaw_tolerance_deg,
         max_turn_rate_rps=args.max_turn_rate,
         task_path_publish_rate_hz=args.task_path_publish_rate,
+        publish_collision_risk=args.publish_collision_risk,
+        collision_threshold_m=args.collision_threshold_m,
+        collision_risk_rate_hz=args.collision_risk_rate,
         status_frame_id=args.status_frame_id,
         robot_names=robot_names,
         map_frame=args.map_frame,
