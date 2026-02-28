@@ -70,3 +70,34 @@ def test_path_payload_preserves_line_style_and_width_when_explicitly_set():
     assert entry["path"]["role"] == "global"
     assert entry["path"]["line_width"] == 7.0
     assert entry["path"]["line_style"] == "solid"
+
+
+def test_default_nav_path_colors_are_robot_unique_and_role_distinct():
+    client = _build_client()
+
+    atlas = Robot(name="atlas", robot_type=RobotType.WHEELED)
+    atlas_viz = atlas.create_dataviz()
+    atlas.add_path_planning_to_dataviz(
+        atlas_viz,
+        global_path_topic="/atlas/global_path",
+        local_path_topic="/atlas/local_path",
+    )
+    atlas_config = client._build_robot_config_dict(atlas, atlas_viz)
+    atlas_by_topic = {entry["topic"]: entry for entry in _find_path_entries(atlas_config)}
+
+    nova = Robot(name="nova", robot_type=RobotType.WHEELED)
+    nova_viz = nova.create_dataviz()
+    nova.add_path_planning_to_dataviz(
+        nova_viz,
+        global_path_topic="/nova/global_path",
+        local_path_topic="/nova/local_path",
+    )
+    nova_config = client._build_robot_config_dict(nova, nova_viz)
+    nova_by_topic = {entry["topic"]: entry for entry in _find_path_entries(nova_config)}
+
+    atlas_global = atlas_by_topic["/atlas/global_path"]["color"]
+    atlas_local = atlas_by_topic["/atlas/local_path"]["color"]
+    nova_global = nova_by_topic["/nova/global_path"]["color"]
+
+    assert atlas_global != atlas_local
+    assert atlas_global != nova_global

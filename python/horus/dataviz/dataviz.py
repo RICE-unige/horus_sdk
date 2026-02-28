@@ -2,6 +2,7 @@
 Data visualization system for robot sensors and environmental data in HORUS SDK
 """
 
+import colorsys
 import hashlib
 from abc import ABC
 from dataclasses import dataclass, field
@@ -219,6 +220,29 @@ class DataViz:
         b = 64 + (int(digest[4:6], 16) // 2)
         return f"#{r:02x}{g:02x}{b:02x}"
 
+    @staticmethod
+    def _deterministic_robot_nav_path_hex_color(robot_name: str, role: str) -> str:
+        """
+        Generate a stable robot-specific nav-path color with global/local gradient variants.
+        """
+        normalized_name = str(robot_name or "").strip().lower().encode("utf-8")
+        digest = hashlib.sha256(normalized_name).digest()
+        hue = (digest[0] / 255.0 + (digest[1] / 255.0) * 0.12) % 1.0
+
+        if str(role).strip().lower() == "local":
+            saturation = 0.54
+            value = 0.97
+        else:
+            saturation = 0.82
+            value = 0.90
+
+        red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
+        return "#{:02x}{:02x}{:02x}".format(
+            int(round(red * 255.0)),
+            int(round(green * 255.0)),
+            int(round(blue * 255.0)),
+        )
+
     # Sensor-based visualizations
     def add_sensor_visualization(
         self,
@@ -301,9 +325,10 @@ class DataViz:
 
         # Auto-assign color for global path
         if "color" not in render_options:
-            color = self.color_manager.get_path_color(robot_name, "global")
-            render_options["color"] = color.to_hex()
-            render_options["alpha"] = color.a
+            render_options["color"] = self._deterministic_robot_nav_path_hex_color(
+                robot_name, "global"
+            )
+            render_options["alpha"] = 0.9
             render_options["line_width"] = render_options.get("line_width", 3)
 
         data_source = RobotDataSource(
@@ -337,9 +362,10 @@ class DataViz:
 
         # Auto-assign color for local path (lighter than global)
         if "color" not in render_options:
-            color = self.color_manager.get_path_color(robot_name, "local")
-            render_options["color"] = color.to_hex()
-            render_options["alpha"] = color.a
+            render_options["color"] = self._deterministic_robot_nav_path_hex_color(
+                robot_name, "local"
+            )
+            render_options["alpha"] = 0.72
             render_options["line_width"] = render_options.get("line_width", 2)
             render_options["line_style"] = render_options.get("line_style", "dashed")
 
