@@ -118,7 +118,7 @@ ros2 launch horus_unity_bridge unity_bridge.launch.py
 
 ```bash
 cd ~/horus/sdk
-python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images
+python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5 --publish-collision-risk --collision-threshold-m 1.2
 ```
 
 ### 3) Run typical SDK registration demo
@@ -136,6 +136,10 @@ python3 python/examples/sdk_multi_operator_host_demo.py --robot-count 10 --works
 ```
 
 Use this together with the MR runtime host/join workflow to validate dashboard operator visibility and joiner registry replay behavior.
+
+Navigation DataViz quick notes:
+- `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
+- `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
 
 ## Camera Registration Model
 
