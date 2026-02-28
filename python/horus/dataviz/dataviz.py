@@ -2,6 +2,7 @@
 Data visualization system for robot sensors and environmental data in HORUS SDK
 """
 
+import hashlib
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
@@ -22,6 +23,8 @@ class DataSourceType(Enum):
     ROBOT_GLOBAL_PATH = "robot_global_path"
     ROBOT_LOCAL_PATH = "robot_local_path"
     ROBOT_TRAJECTORY = "robot_trajectory"
+    ROBOT_ODOMETRY = "robot_odometry"
+    ROBOT_COLLISION_RISK = "robot_collision_risk"
 
     # Environmental/World data (robot-independent)
     OCCUPANCY_GRID = "occupancy_grid"
@@ -44,6 +47,9 @@ class VisualizationType(Enum):
     OCCUPANCY_GRID = "occupancy_grid"
     TRAJECTORY = "trajectory"
     PATH = "path"
+    VELOCITY_DATA = "velocity_data"
+    ODOMETRY_TRAIL = "odometry_trail"
+    COLLISION_RISK = "collision_risk"
     MARKERS = "markers"
     TRANSFORM_TREE = "transform_tree"
     COORDINATE_AXES = "coordinate_axes"
@@ -199,6 +205,19 @@ class DataViz:
             from ..color.color_manager import ColorManager
 
             self.color_manager = ColorManager()
+
+    @staticmethod
+    def _deterministic_robot_hex_color(robot_name: str) -> str:
+        """
+        Generate a stable, robot-unique color independent of DataViz instance state.
+        """
+        normalized_name = str(robot_name or "").strip().lower().encode("utf-8")
+        digest = hashlib.sha256(normalized_name).hexdigest()
+        # Lift channel floor so colors remain visible in MR overlays.
+        r = 64 + (int(digest[0:2], 16) // 2)
+        g = 64 + (int(digest[2:4], 16) // 2)
+        b = 64 + (int(digest[4:6], 16) // 2)
+        return f"#{r:02x}{g:02x}{b:02x}"
 
     # Sensor-based visualizations
     def add_sensor_visualization(
@@ -372,6 +391,114 @@ class DataViz:
             data_source=data_source,
             render_options=render_options,
             layer_priority=1,  # Trajectories in background
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_robot_velocity_data(
+        self,
+        robot_name: str,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add robot planar velocity text visualization backed by odometry."""
+        if render_options is None:
+            render_options = {}
+
+        if "color" not in render_options:
+            color = self.color_manager.get_robot_color(robot_name)
+            render_options["color"] = color.to_hex()
+        render_options.setdefault("units", "m/s")
+        render_options.setdefault("text_back_offset_m", 0.36)
+        render_options.setdefault("floor_offset_m", 0.01)
+        render_options.setdefault("update_hz", 10.0)
+
+        data_source = RobotDataSource(
+            name=f"{robot_name}_velocity_data",
+            source_type=DataSourceType.ROBOT_ODOMETRY,
+            topic=topic,
+            robot_name=robot_name,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.VELOCITY_DATA,
+            data_source=data_source,
+            render_options=render_options,
+            layer_priority=6,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_robot_odometry_trail(
+        self,
+        robot_name: str,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add short decimated odometry trail visualization."""
+        if render_options is None:
+            render_options = {}
+
+        if "color" not in render_options:
+            render_options["color"] = self._deterministic_robot_hex_color(robot_name)
+        render_options.setdefault("max_points", 48)
+        render_options.setdefault("history_seconds", 3.2)
+        render_options.setdefault("min_spacing_m", 0.07)
+        render_options.setdefault("line_width_m", 0.0096)
+        render_options.setdefault("trail_back_offset_m", 0.44)
+
+        data_source = RobotDataSource(
+            name=f"{robot_name}_odometry_trail",
+            source_type=DataSourceType.ROBOT_ODOMETRY,
+            topic=topic,
+            robot_name=robot_name,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.ODOMETRY_TRAIL,
+            data_source=data_source,
+            render_options=render_options,
+            layer_priority=2,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_robot_collision_risk(
+        self,
+        robot_name: str,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add collision risk visualization driven by SDK-published risk signal."""
+        if render_options is None:
+            render_options = {}
+
+        if "color" not in render_options:
+            render_options["color"] = "#FF6A00"
+        render_options.setdefault("threshold_m", 1.2)
+        render_options.setdefault("radius_m", 1.2)
+        render_options.setdefault("source", "laser_scan")
+        render_options.setdefault("alpha_min", 0.0)
+        render_options.setdefault("alpha_max", 0.55)
+
+        data_source = RobotDataSource(
+            name=f"{robot_name}_collision_risk",
+            source_type=DataSourceType.ROBOT_COLLISION_RISK,
+            topic=topic,
+            robot_name=robot_name,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.COLLISION_RISK,
+            data_source=data_source,
+            render_options=render_options,
+            layer_priority=7,
         )
 
         self._add_or_update_visualization(viz_config)
