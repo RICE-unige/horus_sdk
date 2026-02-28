@@ -13,6 +13,7 @@ if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
 try:
+    from horus.dataviz import VisualizationType
     from horus.robot import Robot, RobotDimensions, RobotType, register_robots
     from horus.sensors import Camera
     from horus.utils import cli
@@ -143,6 +144,51 @@ def build_parser():
         "--teleop-passthrough-only",
         action="store_true",
         help="Set teleop custom_passthrough_only=true in metadata.",
+    )
+    parser.add_argument(
+        "--enable-velocity-dataviz",
+        dest="enable_velocity_dataviz",
+        action="store_true",
+        default=True,
+        help="Register velocity text DataViz entry per robot (default: on).",
+    )
+    parser.add_argument(
+        "--no-enable-velocity-dataviz",
+        dest="enable_velocity_dataviz",
+        action="store_false",
+        help="Disable velocity text DataViz registration.",
+    )
+    parser.add_argument(
+        "--enable-odometry-trail-dataviz",
+        dest="enable_odometry_trail_dataviz",
+        action="store_true",
+        default=True,
+        help="Register odometry trail DataViz entry per robot (default: on).",
+    )
+    parser.add_argument(
+        "--no-enable-odometry-trail-dataviz",
+        dest="enable_odometry_trail_dataviz",
+        action="store_false",
+        help="Disable odometry trail DataViz registration.",
+    )
+    parser.add_argument(
+        "--enable-collision-risk-dataviz",
+        dest="enable_collision_risk_dataviz",
+        action="store_true",
+        default=True,
+        help="Register collision risk DataViz entry per robot (default: on).",
+    )
+    parser.add_argument(
+        "--no-enable-collision-risk-dataviz",
+        dest="enable_collision_risk_dataviz",
+        action="store_false",
+        help="Disable collision risk DataViz registration.",
+    )
+    parser.add_argument(
+        "--collision-threshold-m",
+        type=float,
+        default=1.2,
+        help="Collision risk threshold in meters used by risk visualization metadata (default: 1.2).",
     )
     return parser
 
@@ -278,6 +324,39 @@ def main():
             global_path_topic=f"/{name}/global_path",
             local_path_topic=f"/{name}/local_path",
         )
+        robot.add_navigation_safety_to_dataviz(
+            dataviz,
+            odom_topic=f"/{name}/odom",
+            collision_risk_topic=f"/{name}/collision_risk",
+            include_velocity=bool(args.enable_velocity_dataviz),
+            include_trail=bool(args.enable_odometry_trail_dataviz),
+            include_collision=False,
+        )
+        if args.enable_collision_risk_dataviz:
+            threshold_m = max(0.1, float(args.collision_threshold_m))
+            dataviz.add_robot_collision_risk(
+                robot_name=name,
+                topic=f"/{name}/collision_risk",
+                frame_id=f"{name}/base_link",
+                render_options={
+                    "threshold_m": threshold_m,
+                    "radius_m": threshold_m,
+                    "source": "laser_scan",
+                    "alpha_min": 0.0,
+                    "alpha_max": 0.55,
+                },
+            )
+
+        # Navigation DataViz defaults ON; other channels stay OFF by default.
+        nav_default_on_types = {
+            VisualizationType.PATH,
+            VisualizationType.VELOCITY_DATA,
+            VisualizationType.ODOMETRY_TRAIL,
+            VisualizationType.COLLISION_RISK,
+        }
+        for viz in dataviz.visualizations:
+            viz.enabled = getattr(viz, "viz_type", None) in nav_default_on_types
+
         robots.append(robot)
         datavizs.append(dataviz)
 
