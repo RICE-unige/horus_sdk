@@ -220,6 +220,50 @@ class Robot:
                 robot_name=self.name, topic=trajectory_topic, frame_id="map"
             )
 
+    def add_navigation_safety_to_dataviz(
+        self,
+        dataviz: "DataViz",
+        odom_topic: Optional[str] = None,
+        collision_risk_topic: Optional[str] = None,
+        include_velocity: bool = True,
+        include_trail: bool = True,
+        include_collision: bool = True,
+    ) -> None:
+        """
+        Add navigation safety visualizations (velocity/trail/collision risk).
+
+        Args:
+            dataviz: DataViz instance to add visualizations to.
+            odom_topic: Topic for nav_msgs/Odometry input.
+            collision_risk_topic: Topic for SDK-published collision risk JSON.
+            include_velocity: Include floor velocity text visualization.
+            include_trail: Include short odometry trail visualization.
+            include_collision: Include collision risk halo visualization.
+        """
+        resolved_odom_topic = odom_topic or f"/{self.name}/odom"
+        resolved_collision_topic = collision_risk_topic or f"/{self.name}/collision_risk"
+
+        if include_velocity:
+            dataviz.add_robot_velocity_data(
+                robot_name=self.name,
+                topic=resolved_odom_topic,
+                frame_id="map",
+            )
+
+        if include_trail:
+            dataviz.add_robot_odometry_trail(
+                robot_name=self.name,
+                topic=resolved_odom_topic,
+                frame_id="map",
+            )
+
+        if include_collision:
+            dataviz.add_robot_collision_risk(
+                robot_name=self.name,
+                topic=resolved_collision_topic,
+                frame_id=f"{self.name}/base_link",
+            )
+
     def create_full_dataviz(
         self,
         dataviz_name: Optional[str] = None,
