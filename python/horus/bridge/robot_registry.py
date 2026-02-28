@@ -1325,6 +1325,95 @@ class RobotRegistryClient:
             if path_payload:
                 payload["path"] = path_payload
 
+        if viz_type_value == "velocity_data":
+            velocity_payload: Dict[str, Any] = {}
+            units = render_options.get("units")
+            if units not in (None, ""):
+                velocity_payload["units"] = str(units)
+
+            if "text_back_offset_m" in render_options:
+                velocity_payload["text_back_offset_m"] = self._payload_coerce_float(
+                    render_options.get("text_back_offset_m"),
+                    0.36,
+                )
+            if "floor_offset_m" in render_options:
+                velocity_payload["floor_offset_m"] = self._payload_coerce_float(
+                    render_options.get("floor_offset_m"),
+                    0.01,
+                )
+            if "update_hz" in render_options:
+                velocity_payload["update_hz"] = self._payload_coerce_float(
+                    render_options.get("update_hz"),
+                    10.0,
+                )
+
+            if velocity_payload:
+                payload["velocity"] = velocity_payload
+
+        if viz_type_value == "odometry_trail":
+            trail_payload: Dict[str, Any] = {}
+            if "max_points" in render_options:
+                trail_payload["max_points"] = int(
+                    round(
+                        self._payload_coerce_float(
+                            render_options.get("max_points"),
+                            48.0,
+                        )
+                    )
+                )
+            if "history_seconds" in render_options:
+                trail_payload["history_seconds"] = self._payload_coerce_float(
+                    render_options.get("history_seconds"),
+                    3.2,
+                )
+            if "min_spacing_m" in render_options:
+                trail_payload["min_spacing_m"] = self._payload_coerce_float(
+                    render_options.get("min_spacing_m"),
+                    0.07,
+                )
+            if "line_width_m" in render_options:
+                trail_payload["line_width_m"] = self._payload_coerce_float(
+                    render_options.get("line_width_m"),
+                    0.0048,
+                )
+            if "trail_back_offset_m" in render_options:
+                trail_payload["trail_back_offset_m"] = self._payload_coerce_float(
+                    render_options.get("trail_back_offset_m"),
+                    0.44,
+                )
+
+            if trail_payload:
+                payload["trail"] = trail_payload
+
+        if viz_type_value == "collision_risk":
+            collision_payload: Dict[str, Any] = {}
+            if "threshold_m" in render_options:
+                collision_payload["threshold_m"] = self._payload_coerce_float(
+                    render_options.get("threshold_m"),
+                    1.2,
+                )
+            if "radius_m" in render_options:
+                collision_payload["radius_m"] = self._payload_coerce_float(
+                    render_options.get("radius_m"),
+                    1.2,
+                )
+            source = render_options.get("source")
+            if source not in (None, ""):
+                collision_payload["source"] = str(source)
+            if "alpha_min" in render_options:
+                collision_payload["alpha_min"] = self._payload_coerce_float(
+                    render_options.get("alpha_min"),
+                    0.0,
+                )
+            if "alpha_max" in render_options:
+                collision_payload["alpha_max"] = self._payload_coerce_float(
+                    render_options.get("alpha_max"),
+                    0.55,
+                )
+
+            if collision_payload:
+                payload["collision"] = collision_payload
+
         if viz_type_value == "occupancy_grid":
             occupancy_payload: Dict[str, Any] = {}
             if "show_unknown_space" in render_options:
