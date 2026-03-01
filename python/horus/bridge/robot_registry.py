@@ -20,6 +20,7 @@ import math
 import shutil
 import shlex
 from typing import Any, Dict, Tuple, Optional, List
+from horus.description import RobotDescriptionResolver
 
 try:
     import rclpy
@@ -42,6 +43,9 @@ class RobotRegistryClient:
         self.sdk_replay_begin_publisher = None
         self.sdk_replay_item_publisher = None
         self.sdk_replay_end_publisher = None
+        self.robot_description_chunk_begin_publisher = None
+        self.robot_description_chunk_item_publisher = None
+        self.robot_description_chunk_end_publisher = None
         self.subscriber = None
         self.ros_initialized = False
         self._registration_lock = threading.Lock()
@@ -66,6 +70,9 @@ class RobotRegistryClient:
         self._sdk_replay_burst_attempts = 3
         self._sdk_replay_burst_initial_delay_s = 0.15
         self._sdk_replay_burst_inter_attempt_delay_s = 0.25
+        self._robot_description_resolver = RobotDescriptionResolver()
+        self._robot_description_by_robot: Dict[str, Dict[str, Any]] = {}
+        self._robot_description_by_id: Dict[str, Dict[str, Any]] = {}
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -169,6 +176,15 @@ class RobotRegistryClient:
             self.sdk_replay_end_publisher = self.node.create_publisher(
                 String, "/horus/multi_operator/sdk_registry_replay_end", sdk_replay_qos
             )
+            self.robot_description_chunk_begin_publisher = self.node.create_publisher(
+                String, "/horus/robot_description/chunk_begin", sdk_replay_qos
+            )
+            self.robot_description_chunk_item_publisher = self.node.create_publisher(
+                String, "/horus/robot_description/chunk_item", sdk_replay_qos
+            )
+            self.robot_description_chunk_end_publisher = self.node.create_publisher(
+                String, "/horus/robot_description/chunk_end", sdk_replay_qos
+            )
 
             self.subscriber = self.node.create_subscription(
                 String, "/horus/registration_ack", self._ack_callback, ack_qos
@@ -206,6 +222,13 @@ class RobotRegistryClient:
                 String,
                 "/horus/multi_operator/sdk_registration_replay_request",
                 self._multi_operator_registration_replay_request_callback,
+                ack_qos,
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/robot_description/request",
+                self._robot_description_request_callback,
                 ack_qos,
             )
 
@@ -570,6 +593,94 @@ class RobotRegistryClient:
             return None
         self._last_consumed_registration_replay_request_seq = self._registration_replay_request_seq
         return dict(self._last_registration_replay_request or {})
+
+    def _robot_description_request_callback(self, msg):
+        if (
+            self.robot_description_chunk_begin_publisher is None
+            or self.robot_description_chunk_item_publisher is None
+            or self.robot_description_chunk_end_publisher is None
+        ):
+            return
+
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        request_id = str(payload.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        robot_name = str(payload.get("robot_name") or "").strip()
+        description_id = str(payload.get("description_id") or "").strip()
+        session_id = str(payload.get("session_id") or "").strip()
+        app_id = str(payload.get("app_id") or "").strip()
+
+        artifact_container: Optional[Dict[str, Any]] = None
+        if description_id:
+            artifact_container = self._robot_description_by_id.get(description_id)
+        if artifact_container is None and robot_name:
+            artifact_container = self._robot_description_by_robot.get(robot_name)
+
+        if artifact_container is None:
+            return
+
+        artifact = artifact_container.get("artifact")
+        if artifact is None:
+            return
+
+        resolved_description_id = str(artifact.manifest.description_id)
+        if description_id and description_id != resolved_description_id:
+            return
+
+        chunks = list(artifact.chunks or [])
+        expected_chunks = len(chunks)
+        now_ms = int(time.time() * 1000)
+
+        begin = String()
+        begin.data = json.dumps(
+            {
+                "request_id": request_id,
+                "robot_name": robot_name,
+                "description_id": resolved_description_id,
+                "session_id": session_id,
+                "app_id": app_id,
+                "expected_chunks": expected_chunks,
+                "encoding": artifact.manifest.encoding,
+                "ts_unix_ms": now_ms,
+            }
+        )
+        self.robot_description_chunk_begin_publisher.publish(begin)
+
+        for index, chunk_data in enumerate(chunks):
+            item = String()
+            item.data = json.dumps(
+                {
+                    "request_id": request_id,
+                    "robot_name": robot_name,
+                    "description_id": resolved_description_id,
+                    "chunk_index": index,
+                    "total_chunks": expected_chunks,
+                    "chunk_data": chunk_data,
+                }
+            )
+            self.robot_description_chunk_item_publisher.publish(item)
+
+        end = String()
+        end.data = json.dumps(
+            {
+                "request_id": request_id,
+                "robot_name": robot_name,
+                "description_id": resolved_description_id,
+                "received_count": expected_chunks,
+                "ts_unix_ms": int(time.time() * 1000),
+            }
+        )
+        self.robot_description_chunk_end_publisher.publish(end)
 
     def _publish_sdk_registry_replay_once(self, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
         if not self.ros_initialized or self.node is None:
@@ -1125,6 +1236,10 @@ class RobotRegistryClient:
             "/horus/multi_operator/sdk_registry_replay_begin": "sdk_pub",
             "/horus/multi_operator/sdk_registry_replay_item": "sdk_pub",
             "/horus/multi_operator/sdk_registry_replay_end": "sdk_pub",
+            "/horus/robot_description/request": "sdk_sub",
+            "/horus/robot_description/chunk_begin": "sdk_pub",
+            "/horus/robot_description/chunk_item": "sdk_pub",
+            "/horus/robot_description/chunk_end": "sdk_pub",
         }
         control_topic_set = set(control_topics or [])
         for topic in robot_topics:
@@ -1142,6 +1257,10 @@ class RobotRegistryClient:
             "/horus/multi_operator/sdk_registry_replay_begin",
             "/horus/multi_operator/sdk_registry_replay_item",
             "/horus/multi_operator/sdk_registry_replay_end",
+            "/horus/robot_description/request",
+            "/horus/robot_description/chunk_begin",
+            "/horus/robot_description/chunk_item",
+            "/horus/robot_description/chunk_end",
         ):
             return "sdk"
         if topic == "/tf":
@@ -1501,6 +1620,10 @@ class RobotRegistryClient:
             "/horus/multi_operator/sdk_registry_replay_begin",
             "/horus/multi_operator/sdk_registry_replay_item",
             "/horus/multi_operator/sdk_registry_replay_end",
+            "/horus/robot_description/request",
+            "/horus/robot_description/chunk_begin",
+            "/horus/robot_description/chunk_item",
+            "/horus/robot_description/chunk_end",
         }
         rows = []
 
@@ -1680,6 +1803,10 @@ class RobotRegistryClient:
                 "/horus/multi_operator/sdk_registry_replay_begin",
                 "/horus/multi_operator/sdk_registry_replay_item",
                 "/horus/multi_operator/sdk_registry_replay_end",
+                "/horus/robot_description/request",
+                "/horus/robot_description/chunk_begin",
+                "/horus/robot_description/chunk_item",
+                "/horus/robot_description/chunk_end",
             ]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
@@ -1961,6 +2088,10 @@ class RobotRegistryClient:
                 "/horus/multi_operator/sdk_registry_replay_begin",
                 "/horus/multi_operator/sdk_registry_replay_item",
                 "/horus/multi_operator/sdk_registry_replay_end",
+                "/horus/robot_description/request",
+                "/horus/robot_description/chunk_begin",
+                "/horus/robot_description/chunk_item",
+                "/horus/robot_description/chunk_end",
             ]
             robot_topics = []
             control_topics = []
@@ -2327,10 +2458,79 @@ class RobotRegistryClient:
         """
         Unregister robot from HORUS backend
         """
+        self._remove_robot_description_cache(str(robot_id or ""))
         # For unregistration, we can send a config with "action": "unregister"
         # Or just empty config with name.
         # Implementation simplified for now.
         return True, {"message": "Unregistered (Local cleanup only)"}
+
+    def _resolve_robot_description_artifact(self, robot) -> Optional[Dict[str, Any]]:
+        if robot is None:
+            return None
+
+        from horus.utils import cli
+
+        metadata = getattr(robot, "metadata", None)
+        description_config = metadata.get("robot_description_config") if isinstance(metadata, dict) else None
+        has_description_config = isinstance(description_config, dict) and bool(description_config.get("enabled", True))
+
+        if not hasattr(self, "_robot_description_resolver") or self._robot_description_resolver is None:
+            self._robot_description_resolver = RobotDescriptionResolver()
+        if not hasattr(self, "_robot_description_by_robot") or self._robot_description_by_robot is None:
+            self._robot_description_by_robot = {}
+        if not hasattr(self, "_robot_description_by_id") or self._robot_description_by_id is None:
+            self._robot_description_by_id = {}
+
+        artifact = self._robot_description_resolver.resolve_for_robot(robot)
+        if artifact is None:
+            reason = ""
+            try:
+                reason = str(self._robot_description_resolver.last_error or "").strip()
+            except Exception:
+                reason = ""
+            if not has_description_config and not reason:
+                return None
+            robot_name = str(getattr(robot, "name", "") or "").strip() or "unknown"
+            if reason:
+                cli.print_info(
+                    f"Robot description unavailable for '{robot_name}': {reason}"
+                )
+            else:
+                cli.print_info(
+                    f"Robot description unavailable for '{robot_name}': unresolved source."
+                )
+            return None
+
+        robot_name = str(getattr(robot, "name", "") or "").strip()
+        container = {
+            "robot_name": robot_name,
+            "artifact": artifact,
+        }
+        if robot_name:
+            self._robot_description_by_robot[robot_name] = container
+        self._robot_description_by_id[artifact.manifest.description_id] = container
+        return container
+
+    def _remove_robot_description_cache(self, robot_name: str) -> None:
+        normalized = str(robot_name or "").strip()
+        if not normalized:
+            return
+        cache_by_robot = getattr(self, "_robot_description_by_robot", None)
+        cache_by_id = getattr(self, "_robot_description_by_id", None)
+        if not isinstance(cache_by_robot, dict) or not isinstance(cache_by_id, dict):
+            return
+
+        container = cache_by_robot.pop(normalized, None)
+        if container is None:
+            return
+        artifact = container.get("artifact")
+        if artifact is None:
+            return
+        description_id = str(artifact.manifest.description_id or "").strip()
+        if description_id:
+            existing = cache_by_id.get(description_id)
+            if existing is container:
+                cache_by_id.pop(description_id, None)
 
     def _build_robot_config_dict(
         self,
@@ -2850,6 +3050,9 @@ class RobotRegistryClient:
             if command_override:
                 drive_topic = command_override
 
+        self._remove_robot_description_cache(str(getattr(robot, "name", "") or ""))
+        description_container = self._resolve_robot_description_artifact(robot)
+
         config = {
             "action": "register",
             "robot_name": robot.name,
@@ -2865,6 +3068,14 @@ class RobotRegistryClient:
             "robot_manager_config": _build_robot_manager_config(),
             "timestamp": time.time()
         }
+
+        if description_container is not None:
+            artifact = description_container.get("artifact")
+            if artifact is not None:
+                config["robot_description_manifest"] = artifact.to_manifest_payload()
+                # Inline payload fallback so MR can render descriptions even when
+                # chunk transport is unavailable in a given runtime setup.
+                config["robot_description_payload_json"] = artifact.payload_json
 
         if dimensions is not None:
             config["dimensions"] = dimensions
