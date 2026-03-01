@@ -141,6 +141,34 @@ Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
 - `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
 
+Robot Description V1 (collision + joints) demo quick start:
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/tools/fetch_robot_description_assets.py
+python3 python/examples/fake_tf_robot_description_suite.py
+python3 python/examples/sdk_robot_description_demo.py --workspace-scale 0.1
+```
+
+Notes:
+- `fake_tf_robot_description_suite.py` runs with fixed TF scale `1.0`; MR `workspace_scale` remains the only global shrink.
+- Local demo URDF assets are stored under `python/examples/.local_assets/robot_descriptions/` and are gitignored.
+- Use `--wheeled-urdf` / `--legged-urdf` to override the resolved Jackal/Go1 paths.
+
+RViz-first TF validation (robot_state_publisher from real URDF):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/tools/fetch_robot_description_assets.py
+python3 python/examples/robot_description_rviz_validation_demo.py
+```
+
+This publishes:
+- `/<robot>/joint_states` (zeroed joint states),
+- `/<robot>/robot_description` (URDF text),
+- TF tree from `robot_state_publisher` using URDF joints/collisions (with `frame_prefix=<robot>/`),
+- optional `map -> <robot>/<base_frame>` placement transforms.
+
 ## Camera Registration Model
 
 Camera payloads support legacy and profile-based transport fields:
