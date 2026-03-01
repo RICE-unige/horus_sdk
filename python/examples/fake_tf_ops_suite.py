@@ -26,7 +26,7 @@ except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
     sys.exit(1)
 
-from fake_tf_publisher import parse_resolution_list
+from fake_tf_publisher import parse_resolution_list, parse_robot_base_frames
 from fake_tf_teleop_common import TeleopDrivenFakeTFPublisher, build_teleop_parser
 
 
@@ -91,6 +91,8 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         *args,
         **kwargs,
     ):
+        self.strict_single_tf_publisher = bool(kwargs.pop("strict_single_tf_publisher", False))
+        self._tf_conflict_warned = False
         super().__init__(command_timeout_s=command_timeout_s, *args, **kwargs)
         self.mode = "ops_suite"
         self.goal_position_tolerance_m = max(0.01, float(goal_position_tolerance_m))
@@ -203,6 +205,43 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
                 f"Fake collision risk is published on /<robot>/collision_risk at "
                 f"{self.collision_risk_rate_hz:.1f}Hz (threshold={self.collision_threshold_m:.2f}m)."
             )
+        if self.strict_single_tf_publisher:
+            self.get_logger().info(
+                "Strict TF source mode enabled: this node will stop if multiple /tf publishers are detected."
+            )
+
+    def _enforce_single_tf_publisher(self) -> bool:
+        if not self.strict_single_tf_publisher:
+            return True
+
+        infos = self.get_publishers_info_by_topic("/tf")
+        if len(infos) <= 1:
+            return True
+
+        if not self._tf_conflict_warned:
+            publishers = []
+            for info in infos:
+                namespace = str(getattr(info, "node_namespace", "") or "")
+                node_name = str(getattr(info, "node_name", "") or "unknown")
+                publishers.append(f"{namespace}/{node_name}".replace("//", "/"))
+            self.get_logger().error(
+                "Detected multiple /tf publishers; this causes frame jumping. "
+                f"Publishers={publishers}. "
+                "Stop other TF publishers and restart this demo."
+            )
+            self._tf_conflict_warned = True
+
+        # Stop this demo node so the operator can resolve the conflicting source.
+        try:
+            self.destroy_timer(self.timer)
+        except Exception:
+            pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
+        return False
 
     def _make_goal_callback(self, robot_name):
         def _callback(msg: PoseStamped):
@@ -586,6 +625,15 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         linear_z = float(state.get("linear_z", 0.0))
         angular_z = float(state.get("angular_z", 0.0))
 
+        if abs(linear_x) < self.linear_deadband_mps:
+            linear_x = 0.0
+        if abs(linear_y) < self.linear_deadband_mps:
+            linear_y = 0.0
+        if abs(linear_z) < self.linear_deadband_mps:
+            linear_z = 0.0
+        if abs(angular_z) < self.angular_deadband_rps:
+            angular_z = 0.0
+
         planar_speed = math.hypot(linear_x, linear_y)
         if planar_speed > self.max_speed and planar_speed > 1e-6:
             ratio = self.max_speed / planar_speed
@@ -748,7 +796,7 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         msg = Odometry()
         msg.header.stamp = stamp_msg
         msg.header.frame_id = self.map_frame
-        msg.child_frame_id = f"{robot.name}/{self.base_frame}"
+        msg.child_frame_id = f"{robot.name}/{self._base_frame_for(robot.name)}"
         msg.pose.pose.position.x = robot.x * self.scale
         msg.pose.pose.position.y = robot.y * self.scale
         msg.pose.pose.position.z = self._robot_altitudes.get(robot.name, self.height) * self.scale
@@ -912,7 +960,7 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
             base_link_direction = self._world_direction_to_base_link(direction, robot.yaw)
             payload = {
                 "robot": robot_name,
-                "frame": f"{robot_name}/{self.base_frame}",
+                "frame": f"{robot_name}/{self._base_frame_for(robot_name)}",
                 "stamp_ms": int(now_sec * 1000.0),
                 "source": "fake_sim",
                 "threshold_m": round(self.collision_threshold_m, 4),
@@ -930,6 +978,9 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
             self._last_collision_risk_publish_time[robot_name] = now_sec
 
     def _on_timer(self):
+        if not self._enforce_single_tf_publisher():
+            return
+
         now = self.get_clock().now().to_msg()
         current_time = time.time()
         dt = current_time - self.last_update_time
@@ -948,7 +999,7 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
             tf = TransformStamped()
             tf.header.stamp = now
             tf.header.frame_id = self.map_frame
-            tf.child_frame_id = f"{robot.name}/{self.base_frame}"
+            tf.child_frame_id = f"{robot.name}/{self._base_frame_for(robot.name)}"
             tf.transform.translation.x = robot.x * self.scale
             tf.transform.translation.y = robot.y * self.scale
             tf.transform.translation.z = self._robot_altitudes.get(robot.name, self.height) * self.scale
@@ -1051,6 +1102,19 @@ def build_ops_suite_parser():
         default="map",
         help="Frame id used in goal_status and waypoint_status payload metadata.",
     )
+    parser.add_argument(
+        "--strict-single-tf-publisher",
+        dest="strict_single_tf_publisher",
+        action="store_true",
+        default=False,
+        help="Stop this node if multiple /tf publishers are detected.",
+    )
+    parser.add_argument(
+        "--allow-multiple-tf-publishers",
+        dest="strict_single_tf_publisher",
+        action="store_false",
+        help="Disable strict /tf publisher conflict guard.",
+    )
     return parser
 
 
@@ -1095,9 +1159,11 @@ def run_from_args(args):
         collision_threshold_m=args.collision_threshold_m,
         collision_risk_rate_hz=args.collision_risk_rate,
         status_frame_id=args.status_frame_id,
+        strict_single_tf_publisher=args.strict_single_tf_publisher,
         robot_names=robot_names,
         map_frame=args.map_frame,
         base_frame=args.base_frame,
+        robot_base_frames=parse_robot_base_frames(args.robot_base_frames),
         rate_hz=args.rate,
         height=args.height,
         scale=args.scale,
@@ -1143,7 +1209,12 @@ def run_from_args(args):
         if executor is not None:
             executor.remove_node(node)
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            # Ctrl+C paths may already shutdown context in some environments.
+            pass
 
 
 def main():
