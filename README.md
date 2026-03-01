@@ -140,6 +140,7 @@ Use this together with the MR runtime host/join workflow to validate dashboard o
 Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
 - `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
+- Robot-description DataViz channels are exposed separately in MR (`CollisionMeshData`, `JointAxesData`) and use manifest support flags.
 
 Robot Description V1 (collision + joints) demo quick start:
 
@@ -147,13 +148,14 @@ Robot Description V1 (collision + joints) demo quick start:
 cd ~/horus_sdk
 python3 python/examples/tools/fetch_robot_description_assets.py
 python3 python/examples/fake_tf_robot_description_suite.py
-python3 python/examples/sdk_robot_description_demo.py --workspace-scale 0.1
+python3 python/examples/sdk_robot_description_demo.py --workspace-scale 0.1 --collision-opaque
 ```
 
 Notes:
 - `fake_tf_robot_description_suite.py` runs with fixed TF scale `1.0`; MR `workspace_scale` remains the only global shrink.
 - Local demo URDF assets are stored under `python/examples/.local_assets/robot_descriptions/` and are gitignored.
 - Use `--wheeled-urdf` / `--legged-urdf` to override the resolved Jackal/Go1 paths.
+- Collision-body transparency is SDK-driven for V1 (`is_transparent` in manifest). Demo defaults to opaque; use `--collision-transparent` to switch.
 
 RViz-first TF validation (robot_state_publisher from real URDF):
 
@@ -405,6 +407,7 @@ Current Unity MR baseline relevant to SDK integration:
 The MR roadmap introduces upcoming requirements that depend on SDK payload and orchestration maturity:
 - 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-lead teleop).
 - Expanded sensor visualization requirements (battery, velocity, LaserScan, PointCloud).
+- Robot description evolution from collision/joint V1 to visual-mesh workflows with known-robot catalogs.
 - Session recording + after-action replay data contracts.
 - Resource-aware streaming policy signals (quality tiers, priority, stream caps).
 - Persistent mission objects (pins/annotations/evidence/task assignment).
@@ -424,6 +427,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. | Add follow-leader/advanced handoff metadata and manipulator-capability descriptors. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
+| Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
 | Tasking (2D/3D) | :large_orange_diamond: In progress | Typed schemas for Go-To Point and Waypoint are integrated, with fake TF validation scripts and fixtures/tests. | Add Path Drawing + Go-To Label + Multi-Robot Go-To Point contracts and validation presets. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
 | After-Action Replay | :white_circle: Planned | - | Add replay manifest schema and deterministic timeline reconstruction inputs. |
