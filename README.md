@@ -437,7 +437,8 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
 | Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
-| Copilot and Multi-Operator | :large_orange_diamond: In progress | SDK dashboard presence visibility, multi-operator host demo workflow, bridge auto-start hardening, and SDK registry replay protocol publishing are integrated. | Add operator identity/lease observability summaries, explicit ownership metadata schemas, and copilot action-scoping contracts. |
+| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility, multi-operator host demo workflow, bridge auto-start hardening, and SDK registry replay protocol publishing are integrated. | Add operator identity/lease observability summaries, explicit ownership metadata schemas, and stronger rejoin/replay validation suites. |
+| AI Copilot Orchestration | :white_circle: Planned | - | Define copilot action-scoping contracts, approval/guardrail metadata, and operator-visible intervention traces. |
 
 ## 📖 Citation
 
