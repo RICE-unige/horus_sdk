@@ -154,8 +154,19 @@ python3 python/examples/sdk_robot_description_demo.py --workspace-scale 0.1 --co
 Notes:
 - `fake_tf_robot_description_suite.py` runs with fixed TF scale `1.0`; MR `workspace_scale` remains the only global shrink.
 - Local demo URDF assets are stored under `python/examples/.local_assets/robot_descriptions/` and are gitignored.
+- Current fetched assets include `go1.urdf`, `jackal.urdf(.xacro)`, `anymal_c.urdf`, and `h1.urdf`.
 - Use `--wheeled-urdf` / `--legged-urdf` to override the resolved Jackal/Go1 paths.
+- Use `--robot-profile real_models` with `--anymal-urdf` / `--h1-urdf` (plus existing `--wheeled-urdf` / `--legged-urdf`) for real-model profile overrides.
 - Collision-body transparency is SDK-driven for V1 (`is_transparent` in manifest). Demo defaults to opaque; use `--collision-transparent` to switch.
+
+Real-model profile demo (Anymal C + Jackal + Go1 + Unitree H1):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/tools/fetch_robot_description_assets.py --force
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models
+python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque
+```
 
 RViz-first TF validation (robot_state_publisher from real URDF):
 

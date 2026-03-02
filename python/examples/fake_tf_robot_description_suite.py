@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Run fake TF ops suite with one wheeled + one legged robot defaults."""
+"""Run fake TF ops suite with profile-based robot-description demo defaults."""
+
+import argparse
 
 from fake_tf_ops_suite import build_ops_suite_parser, run_from_args
 
@@ -20,7 +22,8 @@ def _remove_option(parser, option_name: str) -> None:
 def build_parser():
     parser = build_ops_suite_parser()
     parser.description = (
-        "Robot-description demo fake runtime (wheeled + legged) with teleop/go-to/waypoint topics."
+        "Robot-description demo fake runtime with profile-based robot sets "
+        "(classic=jackal+go1, real_models=anymal_c+jackal+go1+h1)."
     )
     # Keep workspace scaling authority in MR only for this demo and avoid exposing a TF scale knob.
     _remove_option(parser, "--scale")
@@ -35,12 +38,31 @@ def build_parser():
         publish_occupancy_grid=False,
         strict_single_tf_publisher=True,
     )
+    parser.add_argument(
+        "--robot-profile",
+        choices=["classic", "real_models"],
+        default="classic",
+        help="Robot profile preset for names/base frames (default: classic).",
+    )
     return parser
+
+
+def _apply_profile_defaults(args: argparse.Namespace) -> None:
+    profile = str(getattr(args, "robot_profile", "classic") or "classic").strip().lower()
+    if profile == "real_models":
+        args.robot_count = 4
+        args.robot_names = "anymal_c,jackal,go1,h1"
+        args.robot_base_frames = "anymal_c:base,jackal:base_link,go1:base,h1:pelvis"
+    else:
+        args.robot_count = 2
+        args.robot_names = "jackal,go1"
+        args.robot_base_frames = "jackal:base_link,go1:base"
 
 
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    _apply_profile_defaults(args)
     args.scale = 1.0
     # Robot-description suite should not publish occupancy grid data.
     args.publish_occupancy_grid = False

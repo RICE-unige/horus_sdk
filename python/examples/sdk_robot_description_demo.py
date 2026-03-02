@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register one wheeled + one legged robot with Robot Description V1 enabled."""
+"""Register robot-description demo profiles with Robot Description V1 enabled."""
 
 import argparse
 import os
@@ -66,6 +66,26 @@ def _resolve_legged_urdf(explicit: str) -> str:
             "/mnt/c/Users/adeko/newton/newton/examples/assets/quadruped.urdf",
             "C:/Users/adeko/newton/newton/examples/assets/quadruped.urdf",
         ),
+    )
+
+
+def _resolve_anymal_urdf(explicit: str) -> str:
+    return _resolve_demo_urdf(
+        explicit=explicit,
+        local_candidates=(
+            _local_asset_path("anymal_c.urdf"),
+        ),
+        fallback_candidates=(),
+    )
+
+
+def _resolve_h1_urdf(explicit: str) -> str:
+    return _resolve_demo_urdf(
+        explicit=explicit,
+        local_candidates=(
+            _local_asset_path("h1.urdf"),
+        ),
+        fallback_candidates=(),
     )
 
 
@@ -204,12 +224,92 @@ def _build_robot(
     return {"robot": robot, "dataviz": dataviz}
 
 
+def _build_robot_profile_entries(args) -> List[Dict]:
+    profile = str(args.robot_profile or "classic").strip().lower()
+    if profile == "real_models":
+        anymal_urdf = _resolve_anymal_urdf(args.anymal_urdf)
+        wheeled_urdf = _resolve_wheeled_urdf(args.wheeled_urdf)
+        legged_urdf = _resolve_legged_urdf(args.legged_urdf)
+        h1_urdf = _resolve_h1_urdf(args.h1_urdf)
+        return [
+            {
+                "name": "anymal_c",
+                "robot_type": RobotType.LEGGED,
+                "dimensions": RobotDimensions(length=0.85, width=0.52, height=0.76),
+                "urdf_path": anymal_urdf,
+                "base_frame": "base",
+                "arg_label": "--anymal-urdf",
+                "arg_raw": args.anymal_urdf,
+            },
+            {
+                "name": "jackal",
+                "robot_type": RobotType.WHEELED,
+                "dimensions": RobotDimensions(length=0.50, width=0.38, height=0.32),
+                "urdf_path": wheeled_urdf,
+                "base_frame": "base_link",
+                "arg_label": "--wheeled-urdf",
+                "arg_raw": args.wheeled_urdf,
+            },
+            {
+                "name": "go1",
+                "robot_type": RobotType.LEGGED,
+                "dimensions": RobotDimensions(length=0.68, width=0.31, height=0.48),
+                "urdf_path": legged_urdf,
+                "base_frame": "base",
+                "arg_label": "--legged-urdf",
+                "arg_raw": args.legged_urdf,
+            },
+            {
+                "name": "h1",
+                "robot_type": RobotType.LEGGED,
+                # Conservative dimensions so mesh-proxy fallback does not overinflate joint links.
+                "dimensions": RobotDimensions(length=0.42, width=0.20, height=0.28),
+                "urdf_path": h1_urdf,
+                "base_frame": "pelvis",
+                "arg_label": "--h1-urdf",
+                "arg_raw": args.h1_urdf,
+            },
+        ]
+
+    wheeled_urdf = _resolve_wheeled_urdf(args.wheeled_urdf)
+    legged_urdf = _resolve_legged_urdf(args.legged_urdf)
+    return [
+        {
+            "name": "jackal",
+            "robot_type": RobotType.WHEELED,
+            "dimensions": RobotDimensions(length=0.50, width=0.38, height=0.32),
+            "urdf_path": wheeled_urdf,
+            "base_frame": "base_link",
+            "arg_label": "--wheeled-urdf",
+            "arg_raw": args.wheeled_urdf,
+        },
+        {
+            "name": "go1",
+            "robot_type": RobotType.LEGGED,
+            "dimensions": RobotDimensions(length=0.68, width=0.31, height=0.48),
+            "urdf_path": legged_urdf,
+            "base_frame": "base",
+            "arg_label": "--legged-urdf",
+            "arg_raw": args.legged_urdf,
+        },
+    ]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Register one wheeled + one legged robot with Robot Description V1 "
+            "Register robot-description demo profiles with Robot Description V1 "
             "(collision mesh + joint axes) and standard nav/task topics."
         )
+    )
+    parser.add_argument(
+        "--robot-profile",
+        choices=["classic", "real_models"],
+        default="classic",
+        help=(
+            "Robot profile selection. classic=jackal+go1 (default), "
+            "real_models=anymal_c+jackal+go1+h1."
+        ),
     )
     parser.add_argument(
         "--wheeled-urdf",
@@ -220,6 +320,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--legged-urdf",
         default="",
         help="Path to legged robot URDF/xacro. If omitted, resolves local fetched Go1 asset first.",
+    )
+    parser.add_argument(
+        "--anymal-urdf",
+        default="",
+        help="Path to Anymal C URDF/xacro. Used by --robot-profile real_models.",
+    )
+    parser.add_argument(
+        "--h1-urdf",
+        default="",
+        help="Path to Unitree H1 URDF/xacro. Used by --robot-profile real_models.",
     )
     parser.add_argument(
         "--enable-robot-description",
@@ -284,15 +394,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = build_parser().parse_args()
-    wheeled_urdf = _resolve_wheeled_urdf(args.wheeled_urdf)
-    legged_urdf = _resolve_legged_urdf(args.legged_urdf)
+    setup_entries = _build_robot_profile_entries(args)
 
     if args.enable_robot_description:
         missing = []
-        if not wheeled_urdf or not os.path.isfile(wheeled_urdf):
-            missing.append(f"--wheeled-urdf ({args.wheeled_urdf or 'unresolved'})")
-        if not legged_urdf or not os.path.isfile(legged_urdf):
-            missing.append(f"--legged-urdf ({args.legged_urdf or 'unresolved'})")
+        for entry in setup_entries:
+            urdf_path = str(entry.get("urdf_path", "") or "")
+            if not urdf_path or not os.path.isfile(urdf_path):
+                raw_value = str(entry.get("arg_raw", "") or "").strip() or "unresolved"
+                missing.append(f"{entry['arg_label']} ({raw_value})")
         if missing:
             cli.print_error("Robot description URDF path missing/unreadable:")
             for item in missing:
@@ -301,8 +411,9 @@ def main():
             cli.print_info("  python3 python/examples/tools/fetch_robot_description_assets.py")
             cli.print_info("Provide explicit paths or disable with --no-enable-robot-description.")
             return
-        cli.print_info(f"Wheeled URDF: {wheeled_urdf}")
-        cli.print_info(f"Legged URDF: {legged_urdf}")
+        cli.print_info(f"Robot profile: {args.robot_profile}")
+        for entry in setup_entries:
+            cli.print_info(f"{entry['name']} URDF: {entry['urdf_path']}")
     cli.print_info(
         f"Camera metadata -> image_scale={args.camera_image_scale:.3f}, overhead_size={args.camera_overhead_size:.3f}"
     )
@@ -310,30 +421,21 @@ def main():
         f"Robot-description collision transparency -> is_transparent={bool(args.collision_transparent)}"
     )
 
-    setup = [
-        _build_robot(
-            name="jackal",
-            robot_type=RobotType.WHEELED,
-            dimensions=RobotDimensions(length=0.50, width=0.38, height=0.32),
-            urdf_path=wheeled_urdf,
-            description_base_frame="base_link",
-            enable_robot_description=bool(args.enable_robot_description),
-            collision_transparent=bool(args.collision_transparent),
-            camera_image_scale=float(args.camera_image_scale),
-            camera_overhead_size=float(args.camera_overhead_size),
-        ),
-        _build_robot(
-            name="go1",
-            robot_type=RobotType.LEGGED,
-            dimensions=RobotDimensions(length=0.68, width=0.31, height=0.48),
-            urdf_path=legged_urdf,
-            description_base_frame="base",
-            enable_robot_description=bool(args.enable_robot_description),
-            collision_transparent=bool(args.collision_transparent),
-            camera_image_scale=float(args.camera_image_scale),
-            camera_overhead_size=float(args.camera_overhead_size),
-        ),
-    ]
+    setup = []
+    for entry in setup_entries:
+        setup.append(
+            _build_robot(
+                name=str(entry["name"]),
+                robot_type=entry["robot_type"],
+                dimensions=entry["dimensions"],
+                urdf_path=str(entry["urdf_path"] or ""),
+                description_base_frame=str(entry["base_frame"]),
+                enable_robot_description=bool(args.enable_robot_description),
+                collision_transparent=bool(args.collision_transparent),
+                camera_image_scale=float(args.camera_image_scale),
+                camera_overhead_size=float(args.camera_overhead_size),
+            )
+        )
     robots = [entry["robot"] for entry in setup]
     datavizs = [entry["dataviz"] for entry in setup]
 
