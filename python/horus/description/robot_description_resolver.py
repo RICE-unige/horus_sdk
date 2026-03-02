@@ -640,7 +640,7 @@ class RobotDescriptionResolver:
         mesh_el = geometry_el.find("mesh")
         if mesh_el is not None:
             mesh_uri = str(mesh_el.attrib.get("filename", "")).strip()
-            mesh_scale = _parse_vec3(mesh_el.attrib.get("scale"), fallback_mesh_proxy)
+            mesh_scale = _parse_vec3(mesh_el.attrib.get("scale"), (1.0, 1.0, 1.0))
             proxy_size = [
                 max(0.03, abs(fallback_mesh_proxy[0] * mesh_scale[0])),
                 max(0.03, abs(fallback_mesh_proxy[1] * mesh_scale[1])),
@@ -664,9 +664,9 @@ class RobotDescriptionResolver:
                 width = float(getattr(dimensions, "width", 0.2))
                 height = float(getattr(dimensions, "height", 0.2))
                 return (
-                    max(0.05, min(length, 2.0)),
-                    max(0.05, min(width, 2.0)),
-                    max(0.05, min(height if height > 0 else 0.2, 2.0)),
+                    max(0.05, min(length * 0.35, 0.35)),
+                    max(0.05, min(width * 0.35, 0.30)),
+                    max(0.05, min((height if height > 0 else 0.2) * 0.25, 0.30)),
                 )
             except (TypeError, ValueError):
                 pass

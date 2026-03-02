@@ -138,3 +138,79 @@ def test_xacro_failure_surfaces_actionable_error(monkeypatch):
         if os.path.isfile(xacro_path):
             os.remove(xacro_path)
 
+
+def test_representative_anymal_style_urdf_compiles():
+    urdf = """
+<robot name="anymal_style">
+  <link name="base">
+    <collision><geometry><box size="0.58 0.14 0.18"/></geometry></collision>
+  </link>
+  <link name="LF_HAA">
+    <collision><geometry><cylinder radius="0.05" length="0.12"/></geometry></collision>
+  </link>
+  <link name="LF_HFE">
+    <collision><geometry><sphere radius="0.04"/></geometry></collision>
+  </link>
+  <joint name="LF_HAA_joint" type="revolute">
+    <parent link="base"/>
+    <child link="LF_HAA"/>
+    <origin xyz="0.22 0.10 0.0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+  </joint>
+  <joint name="LF_HFE_joint" type="revolute">
+    <parent link="LF_HAA"/>
+    <child link="LF_HFE"/>
+    <origin xyz="0.0 0.0 -0.2" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+</robot>
+    """
+    urdf_path = _write_temp_file(urdf, ".urdf")
+    try:
+        resolver = RobotDescriptionResolver()
+        robot = _build_robot("anymal_style", urdf_path, base_frame="base")
+        artifact = resolver.resolve_for_robot(robot)
+        assert artifact is not None
+        assert artifact.payload_dict["base_frame"] == "base"
+        assert artifact.manifest.joint_count == 2
+        assert artifact.manifest.collision_count >= 3
+    finally:
+        if os.path.isfile(urdf_path):
+            os.remove(urdf_path)
+
+
+def test_representative_h1_style_urdf_compiles():
+    urdf = """
+<robot name="h1_style">
+  <link name="pelvis">
+    <collision>
+      <geometry>
+        <mesh filename="package://h1_description/meshes/pelvis.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="left_hip_link">
+    <collision><geometry><box size="0.09 0.08 0.14"/></geometry></collision>
+  </link>
+  <joint name="left_hip_yaw_joint" type="revolute">
+    <parent link="pelvis"/>
+    <child link="left_hip_link"/>
+    <origin xyz="0.0 0.10 -0.08" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+</robot>
+    """
+    urdf_path = _write_temp_file(urdf, ".urdf")
+    try:
+        resolver = RobotDescriptionResolver()
+        robot = _build_robot("h1_style", urdf_path, base_frame="pelvis")
+        artifact = resolver.resolve_for_robot(robot)
+        assert artifact is not None
+        assert artifact.payload_dict["base_frame"] == "pelvis"
+        assert artifact.manifest.collision_count >= 2
+        collisions = artifact.payload_dict["links"][0]["collisions"]
+        assert any(entry.get("type") == "mesh_proxy" for entry in collisions)
+    finally:
+        if os.path.isfile(urdf_path):
+            os.remove(urdf_path)
+
