@@ -19,9 +19,17 @@ GO1_URDF_URL = (
     "https://raw.githubusercontent.com/unitreerobotics/unitree_ros/"
     "4590b76ec8fb2412cdbe21c82044a07131e181e3/robots/go1_description/urdf/go1.urdf"
 )
+ANYMAL_C_URDF_URL = (
+    "https://raw.githubusercontent.com/ANYbotics/anymal_c_simple_description/"
+    "f67f50e152ae7a1d381fc4a3ee279edbc9b21984/urdf/anymal.urdf"
+)
 JACKAL_XACRO_URL = (
     "https://raw.githubusercontent.com/jackal/jackal/"
     "9978ac0c7ebf9d730879aca4d9ade1c67ff1f3b1/jackal_description/urdf/jackal.urdf.xacro"
+)
+H1_URDF_URL = (
+    "https://raw.githubusercontent.com/unitreerobotics/unitree_ros/"
+    "34e7506c5333666f7c6dad6bfeeca2176cace70b/robots/h1_description/urdf/h1.urdf"
 )
 
 
@@ -91,7 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
     default_output = script_dir.parent / ".local_assets" / "robot_descriptions"
     parser = argparse.ArgumentParser(
         description=(
-            "Download pinned Go1 + Jackal robot-description sources into local-only demo assets. "
+            "Download pinned robot-description sources into local-only demo assets "
+            "(Go1, Jackal, Anymal C, Unitree H1). "
             "Attempts to expand Jackal xacro to URDF when xacro tooling is available."
         )
     )
@@ -114,21 +123,47 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     go1_path = output_dir / "go1.urdf"
+    anymal_c_path = output_dir / "anymal_c.urdf"
     jackal_xacro_path = output_dir / "jackal.urdf.xacro"
     jackal_urdf_path = output_dir / "jackal.urdf"
+    h1_path = output_dir / "h1.urdf"
+    legacy_spot_paths = [
+        output_dir / "spot.urdf",
+        output_dir / "spot.urdf.xacro",
+    ]
     sources_path = output_dir / "SOURCES.json"
 
-    if not args.force and go1_path.exists() and jackal_xacro_path.exists() and sources_path.exists():
+    if (
+        not args.force
+        and go1_path.exists()
+        and anymal_c_path.exists()
+        and jackal_xacro_path.exists()
+        and h1_path.exists()
+        and sources_path.exists()
+    ):
         print(f"[robot-description-assets] already present: {output_dir}")
         return 0
+
+    for legacy_path in legacy_spot_paths:
+        if legacy_path.exists():
+            legacy_path.unlink(missing_ok=True)
+            print(f"[robot-description-assets] removed legacy asset {legacy_path}")
 
     go1_payload = _download_text(GO1_URDF_URL)
     _write_text(go1_path, go1_payload)
     print(f"[robot-description-assets] wrote {go1_path}")
 
+    anymal_c_payload = _download_text(ANYMAL_C_URDF_URL)
+    _write_text(anymal_c_path, anymal_c_payload)
+    print(f"[robot-description-assets] wrote {anymal_c_path}")
+
     jackal_xacro_payload = _sanitize_jackal_xacro(_download_text(JACKAL_XACRO_URL))
     _write_text(jackal_xacro_path, jackal_xacro_payload)
     print(f"[robot-description-assets] wrote {jackal_xacro_path}")
+
+    h1_payload = _download_text(H1_URDF_URL)
+    _write_text(h1_path, h1_payload)
+    print(f"[robot-description-assets] wrote {h1_path}")
 
     expanded_urdf, xacro_error = _try_expand_xacro(jackal_xacro_path)
     if expanded_urdf:
@@ -150,12 +185,26 @@ def main() -> int:
                 "license_hint": "See upstream unitreerobotics/unitree_ros LICENSE.",
             },
             {
+                "robot": "anymal_c",
+                "type": "urdf",
+                "path": str(anymal_c_path),
+                "source_url": ANYMAL_C_URDF_URL,
+                "license_hint": "See upstream ANYbotics/anymal_c_simple_description LICENSE.",
+            },
+            {
                 "robot": "jackal",
                 "type": "xacro",
                 "path": str(jackal_xacro_path),
                 "source_url": JACKAL_XACRO_URL,
                 "license_hint": "See upstream jackal/jackal LICENSE.",
                 "notes": "Includes sanitized for local-only Robot Description V1 demo use.",
+            },
+            {
+                "robot": "h1",
+                "type": "urdf",
+                "path": str(h1_path),
+                "source_url": H1_URDF_URL,
+                "license_hint": "See upstream unitreerobotics/unitree_ros LICENSE.",
             },
         ],
     }
