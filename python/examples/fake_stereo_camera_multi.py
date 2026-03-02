@@ -13,6 +13,7 @@ from sensor_msgs.msg import CompressedImage, Image
 from fake_tf_teleop_common import (
     TeleopDrivenFakeTFPublisher,
     build_teleop_parser,
+    parse_robot_base_frames,
     parse_resolution_list,
     resolve_robot_names,
 )
@@ -693,6 +694,7 @@ def main():
         robot_names=robot_names,
         map_frame=args.map_frame,
         base_frame=args.base_frame,
+        robot_base_frames=parse_robot_base_frames(args.robot_base_frames),
         rate_hz=args.rate,
         height=args.height,
         scale=args.scale,
@@ -745,7 +747,11 @@ def main():
         if executor is not None:
             executor.remove_node(node)
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
