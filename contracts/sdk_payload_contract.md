@@ -132,6 +132,8 @@ Discrete response defaults:
 - `frame_id = map`
 - `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
 - `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+- `min_altitude_m = 0.0` (clamped to `[0.0, 100.0]`)
+- `max_altitude_m = 10.0` (clamped to `[min_altitude_m + 0.1, 100.0]`)
 
 `control.tasks.waypoint` defaults:
 - `enabled = true`

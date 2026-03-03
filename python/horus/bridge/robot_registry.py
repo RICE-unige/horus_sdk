@@ -2979,6 +2979,10 @@ class RobotRegistryClient:
             position_tolerance_m = max(0.01, min(10.0, position_tolerance_m))
             yaw_tolerance_deg = _coerce_float(go_to_point_metadata.get("yaw_tolerance_deg"), 12.0)
             yaw_tolerance_deg = max(0.1, min(180.0, yaw_tolerance_deg))
+            min_altitude_m = _coerce_float(go_to_point_metadata.get("min_altitude_m"), 0.0)
+            min_altitude_m = max(0.0, min(100.0, min_altitude_m))
+            max_altitude_m = _coerce_float(go_to_point_metadata.get("max_altitude_m"), 10.0)
+            max_altitude_m = max(min_altitude_m + 0.1, min(100.0, max_altitude_m))
 
             waypoint_metadata = task_metadata.get("waypoint")
             if not isinstance(waypoint_metadata, dict):
@@ -3004,6 +3008,8 @@ class RobotRegistryClient:
                     "frame_id": frame_id,
                     "position_tolerance_m": position_tolerance_m,
                     "yaw_tolerance_deg": yaw_tolerance_deg,
+                    "min_altitude_m": min_altitude_m,
+                    "max_altitude_m": max_altitude_m,
                 },
                 "waypoint": {
                     "enabled": _coerce_bool(waypoint_metadata.get("enabled"), True),
