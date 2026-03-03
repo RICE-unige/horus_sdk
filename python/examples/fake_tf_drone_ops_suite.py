@@ -884,13 +884,13 @@ def build_drone_ops_parser():
     parser.add_argument(
         "--min-altitude",
         type=float,
-        default=0.25,
+        default=0.0,
         help="Minimum altitude in map meters for drone motion and setpoints.",
     )
     parser.add_argument(
         "--max-altitude",
         type=float,
-        default=3.5,
+        default=10.0,
         help="Maximum altitude in map meters for drone motion and setpoints.",
     )
     parser.add_argument(
