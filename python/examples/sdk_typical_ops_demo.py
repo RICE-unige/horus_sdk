@@ -93,6 +93,18 @@ def build_parser():
         help="Global workspace position scale forwarded in registration payload (default: 0.1).",
     )
     parser.add_argument(
+        "--go-to-min-altitude",
+        type=float,
+        default=0.0,
+        help="Go-to/waypoint minimum altitude metadata in map meters (default: 0.0).",
+    )
+    parser.add_argument(
+        "--go-to-max-altitude",
+        type=float,
+        default=10.0,
+        help="Go-to/waypoint maximum altitude metadata in map meters (default: 10.0).",
+    )
+    parser.add_argument(
         "--keep-alive",
         dest="keep_alive",
         action="store_true",
@@ -245,11 +257,16 @@ def main():
     args = build_parser().parse_args()
     robot_names = resolve_robot_names(args)
     camera_resolution = parse_resolution(args.camera_resolution)
+    min_altitude_m = max(0.0, float(args.go_to_min_altitude))
+    max_altitude_m = max(min_altitude_m + 0.1, float(args.go_to_max_altitude))
 
     cli.print_step("Defining typical multi-robot operations configuration...")
     cli.print_info(
         "Multi-operator v1 test: run this SDK demo once (host authority). "
         "In the HORUS app, use one headset as Host and additional headsets as Join."
+    )
+    cli.print_info(
+        f"Task altitude bounds metadata: min={min_altitude_m:.2f}m max={max_altitude_m:.2f}m"
     )
 
     robots: List[Robot] = []
@@ -305,6 +322,8 @@ def main():
                     "frame_id": "map",
                     "position_tolerance_m": 0.20,
                     "yaw_tolerance_deg": 12.0,
+                    "min_altitude_m": min_altitude_m,
+                    "max_altitude_m": max_altitude_m,
                 },
                 "waypoint": {
                     "enabled": True,
