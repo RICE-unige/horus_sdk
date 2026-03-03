@@ -102,12 +102,16 @@ pip install -e ".[dev]"
 
 ## End-to-End Quick Start
 
+> [!NOTE]
+> Commands below use repository-clone paths (`~/horus_sdk`, `~/horus_ws/src/horus_ros2`).
+> If you installed with `install.sh`, adapt paths to `~/horus/sdk` and `~/horus/ros2`.
+
 ### 1) Start bridge (`horus_ros2`)
 
 Follow the setup/install instructions in the [`horus_ros2` README](https://github.com/RICE-unige/horus_ros2), then run:
 
 ```bash
-cd ~/horus/ros2
+cd ~/horus_ws
 source /opt/ros/humble/setup.bash  # or jazzy
 colcon build --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
 source install/setup.bash
@@ -117,21 +121,21 @@ ros2 launch horus_unity_bridge unity_bridge.launch.py
 ### 2) Start unified fake ops runtime (TF + camera + teleop + tasks)
 
 ```bash
-cd ~/horus/sdk
+cd ~/horus_sdk
 python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5 --publish-collision-risk --collision-threshold-m 1.2
 ```
 
 ### 3) Run typical SDK registration demo
 
 ```bash
-cd ~/horus/sdk
+cd ~/horus_sdk
 python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
 ```
 
 ### 4) Multi-operator host/join validation (SDK host-side)
 
 ```bash
-cd ~/horus/sdk
+cd ~/horus_sdk
 python3 python/examples/sdk_multi_operator_host_demo.py --robot-count 10 --workspace-scale 0.1
 ```
 
@@ -216,13 +220,14 @@ Current SDK-side teleoperation support includes:
 ## Robot Task Contract Baseline
 
 Current SDK-side robot task support includes:
-- `control.tasks.go_to_point` payload serialization (`goal_topic`, `cancel_topic`, `status_topic`, `frame_id`, tolerances),
+- `control.tasks.go_to_point` payload serialization (`goal_topic`, `cancel_topic`, `status_topic`, `frame_id`, tolerances, `min_altitude_m`, `max_altitude_m`),
 - `control.tasks.waypoint` payload serialization (`path_topic`, `status_topic`, `frame_id`, tolerances),
 - metadata override source `robot.metadata["task_config"]["go_to_point"]`,
 - metadata override source `robot.metadata["task_config"]["waypoint"]`,
 - go-to-point cancel contract on `/<robot>/goal_cancel` using `std_msgs/String` payload `"cancel"`,
 - fake goal-navigation simulator `python/examples/fake_tf_go_to_point.py` for send/cancel/reached cycle tests,
-- fake waypoint simulator `python/examples/fake_tf_waypoint.py` for ordered path/status cycle tests.
+- fake waypoint simulator `python/examples/fake_tf_waypoint.py` for ordered path/status cycle tests,
+- fake aerial ops simulator `python/examples/fake_tf_drone_ops_suite.py` for drone takeoff/land + 3D go-to/waypoint validation.
 
 ## Global Visualization and Workspace Config Model
 
@@ -348,6 +353,31 @@ python3 python/examples/fake_tf_go_to_point.py --robot-count 3 --robot-name test
 python3 python/examples/fake_tf_waypoint.py --robot-count 3 --robot-name test_bot --static-camera
 ```
 
+### Drone task flow test (takeoff/land + 3D go-to/waypoint)
+
+```bash
+# Terminal A: drone fake runtime (3 robots, extended altitude envelope)
+python3 python/examples/fake_tf_drone_ops_suite.py \
+  --robot-count 3 \
+  --robot-names drone_1,drone_2,drone_3 \
+  --min-altitude 0.0 \
+  --max-altitude 25.0 \
+  --takeoff-altitude 1.2
+
+# Terminal B: SDK registration metadata with aerial profile + matching altitude bounds
+python3 python/examples/sdk_typical_ops_demo.py \
+  --robot-names drone_1,drone_2,drone_3 \
+  --teleop-profile aerial \
+  --go-to-min-altitude 0.0 \
+  --go-to-max-altitude 25.0 \
+  --workspace-scale 0.1
+```
+
+Expected MR behavior for this scenario:
+- Drone `TakeOffButton` / `LandButton` commands are active.
+- Drone go-to, waypoint, and draw-path use 3D authoring with altitude gating.
+- Multi-robot go-to-point V1 can dispatch to all active aerial robots from one authored anchor.
+
 ### Stereo camera immersive test (dual-stream minimap + teleop)
 
 ```bash
@@ -439,7 +469,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
 | Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
-| Tasking (2D/3D) | :large_orange_diamond: In progress | Typed schemas for Go-To Point and Waypoint are integrated, with fake TF validation scripts and fixtures/tests. | Add Path Drawing + Go-To Label + Multi-Robot Go-To Point contracts and validation presets. |
+| Tasking (2D/3D) | :large_orange_diamond: In progress | Typed Go-To/Waypoint schemas are integrated with altitude-bounds support for aerial robots, plus fake TF validation scripts for ground and drone ops suites. | Add explicit payload contracts for Draw Path, Go-To Label, and subset-based Multi-Robot Go-To policies. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
 | After-Action Replay | :white_circle: Planned | - | Add replay manifest schema and deterministic timeline reconstruction inputs. |
 | Adaptive Streaming Policies | :white_circle: Planned | Static transport profiles exist, but no load-aware policy orchestration. | Add policy payload for per-robot FPS/resolution tiers, priority (teleop-first), transport fallback, and dynamic max-stream guardrails. |
