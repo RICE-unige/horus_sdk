@@ -446,7 +446,7 @@ Current Unity MR baseline relevant to SDK integration:
 ## Cross-Repo Alignment Priorities
 
 The MR roadmap introduces upcoming requirements that depend on SDK payload and orchestration maturity:
-- 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-lead teleop).
+- 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-leader teleop).
 - Expanded sensor visualization requirements (battery, velocity, LaserScan, PointCloud).
 - Robot description evolution from collision/joint V1 to visual-mesh workflows with known-robot catalogs.
 - Session recording + after-action replay data contracts.
@@ -465,7 +465,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
 | Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
-| Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. | Add follow-leader/advanced handoff metadata and manipulator-capability descriptors. |
+| Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. Follow-leader teleop V1 in MR reuses this contract with no schema change. | Add subset/handoff metadata and manipulator-capability descriptors. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
 | Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
