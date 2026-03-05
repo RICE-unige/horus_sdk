@@ -180,6 +180,14 @@ python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_
 python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode mesh
 ```
 
+High-detail mesh stress test (snapshot-first, no periodic keepalive):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-detailed --map-3d-mesh-update-policy snapshot --map-3d-mesh-republish-interval 0
+python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode mesh
+```
+
 Enable 3D map in octomap mode (Quest-first hybrid source):
 
 ```bash
@@ -188,10 +196,20 @@ python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_
 python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode octomap
 ```
 
+High-detail octomap stress test (100k voxel/triangle caps):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode octomap --map-3d-detailed --map-3d-octomap-max-voxels 100000 --map-3d-octomap-max-triangles 100000 --map-3d-octomap-republish-interval 0
+python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode octomap
+```
+
 3D map CLI notes:
 - `--map-3d-mode {off,pointcloud,mesh,octomap}` is the primary switch for this real-model demo pair.
 - Topic/frame overrides are available via `--map-3d-topic`, `--map-3d-frame`, `--map-3d-mesh-topic`, and `--map-3d-mesh-frame`.
-- Mesh transport controls: `--map-3d-mesh-transport {marker,marker_array}`, `--map-3d-mesh-array-topic`, and `--map-3d-mesh-chunk-max-triangles`.
+- Marker-only rollback is active for mesh transport in this branch:
+  - `--map-3d-mesh-transport`, `--map-3d-mesh-array-topic`, and `--map-3d-mesh-chunk-max-triangles` are accepted as compatibility aliases but ignored with warning logs.
+  - Effective mesh topic is always marker-based (`/map_3d_mesh`).
 - Octomap controls are exposed through: `--map-3d-octomap-topic`, `--map-3d-octomap-mesh-topic`, `--map-3d-octomap-frame`, `--map-3d-octomap-max-voxels`, `--map-3d-octomap-max-triangles`, and `--map-3d-octomap-republish-interval`.
 - Legacy aliases `--with-3d-map` and `--with-3d-mesh` are retained for compatibility and print deprecation warnings.
 - In mesh mode, the fake runtime auto-starts both the fake pointcloud publisher and pointcloud-to-mesh converter pipeline.
@@ -199,6 +217,7 @@ python3 python/examples/sdk_robot_description_demo.py --robot-profile real_model
 - Mesh converter controls are exposed through: `--map-3d-mesh-voxel-size`, `--map-3d-mesh-max-voxels`, `--map-3d-mesh-max-triangles`, `--map-3d-mesh-update-policy {snapshot,periodic,continuous}`, and `--map-3d-mesh-republish-interval`.
 - Real-model mesh flow is currently marker-only (`/map_3d_mesh`) for runtime stability.
 - Quest-focused default is snapshot-first mesh conversion (`snapshot` policy with no periodic republish) to avoid repeated heavy marker rebuilds.
+- Replay-time bounded republish bursts are enabled for map publishers/converters so late joiners reliably receive cached map data during SDK replay windows.
 
 > [!WARNING]
 > Pointcloud mode is retained for diagnostics but is not recommended for regular Meta Quest 3 operation. Use mesh mode for stable runtime behavior.
@@ -491,14 +510,14 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 ## Roadmap
 
 > [!NOTE]
-> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features.
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes marker-only mesh stability flow and octomap mode integration.
 
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
 | Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
 | Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. Follow-leader teleop V1 in MR reuses this contract with no schema change. | Add subset/handoff metadata and manipulator-capability descriptors. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
-| 3D Map Contracts | :large_orange_diamond: In progress | Shared `--map-3d-mode` workflow is integrated in the real-model demo pair with pointcloud, mesh, and octomap global visualization payload wiring, greedy voxel meshing, and snapshot-first orchestration for Quest-focused runtime stability. | Expand native octomap interoperability beyond metadata-only publish path and add renderer policy hints (decimation/quality tiers) for runtime tuning. |
+| 3D Map Contracts | :large_orange_diamond: In progress | Shared `--map-3d-mode` workflow is integrated in the real-model demo pair with pointcloud, mesh, and octomap global visualization payload wiring, greedy voxel meshing, snapshot-first Quest defaults, marker-only mesh transport coercion for runtime stability, and replay-time bounded republish bursts for deterministic late-join map delivery. | Expand native octomap interoperability beyond metadata-only publish path and add renderer policy hints (decimation/quality tiers) for runtime tuning. |
 | Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
 | Tasking (2D/3D) | :large_orange_diamond: In progress | Typed Go-To/Waypoint schemas are integrated with altitude-bounds support for aerial robots, plus fake TF validation scripts for ground and drone ops suites. | Add explicit payload contracts for Draw Path, Go-To Label, and subset-based Multi-Robot Go-To policies. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
@@ -509,7 +528,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
 | Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
-| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility, multi-operator host demo workflow, bridge auto-start hardening, and SDK registry replay protocol publishing are integrated. | Add operator identity/lease observability summaries, explicit ownership metadata schemas, and stronger rejoin/replay validation suites. |
+| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility, multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, and replay-triggered map republish burst hooks for joiner map reliability are integrated. | Add operator identity/lease observability summaries, explicit ownership metadata schemas, and stronger rejoin/replay validation suites. |
 | AI Copilot Orchestration | :white_circle: Planned | - | Define copilot action-scoping contracts, approval/guardrail metadata, and operator-visible intervention traces. |
 
 ## 📖 Citation
