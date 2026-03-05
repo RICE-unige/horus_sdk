@@ -521,8 +521,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--on-change-republish-interval",
         type=float,
-        default=2.0,
-        help="Safety republish interval in seconds for on_change mode (default: 2.0, set 0 to disable).",
+        default=0.0,
+        help="Safety republish interval in seconds for on_change mode (default: 0.0, disabled).",
     )
     parser.add_argument(
         "--max-points",
