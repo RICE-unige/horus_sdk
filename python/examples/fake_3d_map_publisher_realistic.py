@@ -415,9 +415,10 @@ class Fake3DMapPublisherRealistic(Node):
         except Exception:
             sub_count = 0
 
-        if sub_count != self._last_subscriber_count:
+        previous_sub_count = self._last_subscriber_count
+        if sub_count != previous_sub_count:
             self._last_subscriber_count = sub_count
-            if sub_count > 0:
+            if sub_count > 0 and previous_sub_count <= 0:
                 self._publish()
                 self.get_logger().info(
                     f"Subscriber count changed to {sub_count}; republished map snapshot."

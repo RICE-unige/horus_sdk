@@ -306,9 +306,10 @@ class PointCloudToVoxelMeshNode(Node):
         should_publish = False
         reason = ""
 
-        if sub_count != self._last_mesh_subscriber_count:
+        previous_sub_count = self._last_mesh_subscriber_count
+        if sub_count != previous_sub_count:
             self._last_mesh_subscriber_count = sub_count
-            if sub_count > 0:
+            if sub_count > 0 and previous_sub_count <= 0:
                 should_publish = True
                 reason = "subscriber_change"
 
