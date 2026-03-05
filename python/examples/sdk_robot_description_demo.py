@@ -16,9 +16,19 @@ try:
     from horus.robot import Robot, RobotDimensions, RobotType, register_robots
     from horus.sensors import Camera
     from horus.utils import cli
+    from horus.utils.map_3d_workflow import (
+        Map3DMode,
+        MeshTransport,
+        add_map_3d_mode_arguments,
+        coerce_mesh_transport_to_marker,
+        resolve_map_3d_mode,
+    )
 except ImportError:
     print(f"Failed to import horus from {PACKAGE_ROOT}")
     raise
+
+DETAILED_MESH_MAX_TRIANGLES_DEFAULT = 100000
+DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT = 100000
 
 
 def _first_existing_path(candidates: List[str]) -> str:
@@ -224,6 +234,151 @@ def _build_robot(
     return {"robot": robot, "dataviz": dataviz}
 
 
+def _add_map_3d_visualization(dataviz, args, mode: Map3DMode) -> None:
+    if dataviz is None or mode == Map3DMode.OFF:
+        return
+
+    if mode == Map3DMode.POINTCLOUD:
+        dataviz.add_3d_map(
+            topic=str(args.map_3d_topic or "/map_3d").strip() or "/map_3d",
+            frame_id=str(args.map_3d_frame or "map").strip() or "map",
+            render_options={
+                "point_size": 0.05,
+                "max_points_per_frame": 0,
+                "base_sample_stride": 1,
+                "min_update_interval": 0.0,
+                "enable_adaptive_quality": False,
+                "target_framerate": 72.0,
+                "min_quality_multiplier": 0.6,
+                "min_distance": 0.0,
+                "max_distance": 0.0,
+                "replace_latest": True,
+                "render_all_points": True,
+                "auto_point_size_by_workspace_scale": True,
+                "min_point_size": 0.002,
+                "max_point_size": 0.04,
+                "render_mode": "opaque_fast",
+                "enable_view_frustum_culling": True,
+                "frustum_padding": 0.03,
+                "enable_subpixel_culling": True,
+                "min_screen_radius_px": 0.8,
+                "visible_points_budget": 120000,
+                "max_visible_points_budget": 200000,
+                "map_static_mode": True,
+            },
+        )
+        return
+
+    if mode == Map3DMode.OCTOMAP:
+        dataviz.add_3d_octomap(
+            topic=str(args.map_3d_octomap_mesh_topic or "/map_3d_octomap_mesh").strip() or "/map_3d_octomap_mesh",
+            frame_id=str(args.map_3d_octomap_frame or "map").strip() or "map",
+            render_options={
+                "render_mode": "surface_mesh",
+                "use_vertex_colors": True,
+                "alpha": 1.0,
+                "double_sided": False,
+                "max_triangles": max(1000, int(getattr(args, "map_3d_octomap_max_triangles", 60000))),
+                "source_coordinate_space": "enu",
+                "native_topic": str(args.map_3d_octomap_topic or "/map_3d_octomap").strip() or "/map_3d_octomap",
+                "native_frame": str(args.map_3d_octomap_frame or "map").strip() or "map",
+                "native_binary_only": True,
+            },
+        )
+        return
+
+    marker_topic = "/map_3d_mesh"
+    dataviz.add_3d_mesh(
+        topic=marker_topic,
+        frame_id=str(args.map_3d_mesh_frame or "map").strip() or "map",
+        render_options={
+            "use_vertex_colors": True,
+            "alpha": 1.0,
+            "double_sided": False,
+            "max_triangles": max(1000, int(getattr(args, "map_3d_mesh_max_triangles", 60000))),
+            "source_coordinate_space": "enu",
+        },
+    )
+
+
+def _flag_was_provided(flag: str) -> bool:
+    prefix = f"{flag}="
+    return any(arg == flag or arg.startswith(prefix) for arg in sys.argv[1:])
+
+
+def _resolve_mesh_transport(args) -> MeshTransport:
+    transport, _ = coerce_mesh_transport_to_marker(
+        str(getattr(args, "map_3d_mesh_transport", MeshTransport.MARKER.value) or "")
+    )
+    return MeshTransport(transport)
+
+
+def _apply_mesh_transport_defaults(args, mode: Map3DMode) -> MeshTransport:
+    requested_topic = str(getattr(args, "map_3d_mesh_topic", "/map_3d_mesh") or "/map_3d_mesh").strip() or "/map_3d_mesh"
+    args.map_3d_mesh_topic = "/map_3d_mesh"
+    transport_raw = str(getattr(args, "map_3d_mesh_transport", MeshTransport.MARKER.value) or "")
+    _, requested_marker_array = coerce_mesh_transport_to_marker(transport_raw)
+    transport = MeshTransport.MARKER
+    args.map_3d_mesh_transport = MeshTransport.MARKER.value
+    if mode != Map3DMode.MESH:
+        return transport
+
+    if requested_marker_array or _flag_was_provided("--map-3d-mesh-transport"):
+        cli.print_warning(
+            "[3D-MAP] Marker-only rollback active. Ignoring --map-3d-mesh-transport and forcing marker transport."
+        )
+    if _flag_was_provided("--map-3d-mesh-array-topic"):
+        cli.print_warning(
+            "[3D-MAP] Marker-only rollback active. Ignoring --map-3d-mesh-array-topic."
+        )
+    if _flag_was_provided("--map-3d-mesh-chunk-max-triangles"):
+        cli.print_warning(
+            "[3D-MAP] Marker-only rollback active. Ignoring --map-3d-mesh-chunk-max-triangles."
+        )
+    if requested_topic != "/map_3d_mesh":
+        cli.print_warning(
+            "[3D-MAP] Marker-only rollback active. Forcing mesh topic to /map_3d_mesh."
+        )
+
+    return transport
+
+
+def _apply_high_detail_mesh_registration_defaults(args, mode: Map3DMode) -> None:
+    if mode != Map3DMode.MESH or not bool(getattr(args, "map_3d_detailed", False)):
+        return
+
+    if _flag_was_provided("--map-3d-mesh-max-triangles"):
+        return
+
+    current = int(getattr(args, "map_3d_mesh_max_triangles", 0))
+    if current >= DETAILED_MESH_MAX_TRIANGLES_DEFAULT:
+        return
+
+    args.map_3d_mesh_max_triangles = DETAILED_MESH_MAX_TRIANGLES_DEFAULT
+    cli.print_info(
+        "[3D-MAP] Detailed mesh mode auto-set registration --map-3d-mesh-max-triangles=100000 "
+        "(override with --map-3d-mesh-max-triangles)."
+    )
+
+
+def _apply_high_detail_octomap_registration_defaults(args, mode: Map3DMode) -> None:
+    if mode != Map3DMode.OCTOMAP or not bool(getattr(args, "map_3d_detailed", False)):
+        return
+
+    if _flag_was_provided("--map-3d-octomap-max-triangles"):
+        return
+
+    current = int(getattr(args, "map_3d_octomap_max_triangles", 0))
+    if current >= DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT:
+        return
+
+    args.map_3d_octomap_max_triangles = DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT
+    cli.print_info(
+        "[3D-MAP] Detailed octomap mode auto-set registration --map-3d-octomap-max-triangles=100000 "
+        "(override with --map-3d-octomap-max-triangles)."
+    )
+
+
 def _build_robot_profile_entries(args) -> List[Dict]:
     profile = str(args.robot_profile or "classic").strip().lower()
     if profile == "real_models":
@@ -376,6 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Render robot-description collision body as opaque (default).",
     )
+    add_map_3d_mode_arguments(parser)
     parser.add_argument(
         "--keep-alive",
         dest="keep_alive",
@@ -394,6 +550,33 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main():
     args = build_parser().parse_args()
+    map_3d_mode, map_mode_warnings = resolve_map_3d_mode(
+        args.map_3d_mode,
+        with_3d_map=bool(args.with_3d_map),
+        with_3d_mesh=bool(args.with_3d_mesh),
+    )
+    mesh_transport = _apply_mesh_transport_defaults(args, map_3d_mode)
+    _apply_high_detail_mesh_registration_defaults(args, map_3d_mode)
+    _apply_high_detail_octomap_registration_defaults(args, map_3d_mode)
+
+    for warning in map_mode_warnings:
+        cli.print_warning(f"[3D-MAP] {warning}")
+
+    cli.print_info(f"[3D-MAP] Registration mode -> {map_3d_mode.value}")
+    if map_3d_mode == Map3DMode.MESH:
+        cli.print_info(
+            f"[3D-MAP] Mesh transport -> {mesh_transport.value} (topic={args.map_3d_mesh_topic})"
+        )
+    if map_3d_mode == Map3DMode.POINTCLOUD:
+        cli.print_warning(
+            "[3D-MAP] Pointcloud mode is not recommended on Quest 3 for regular operations. "
+            "Prefer mesh mode for stable performance."
+        )
+    if map_3d_mode == Map3DMode.OCTOMAP:
+        cli.print_info(
+            "[3D-MAP] Octomap mode uses mesh-marker rendering in MR for Quest performance."
+        )
+
     setup_entries = _build_robot_profile_entries(args)
 
     if args.enable_robot_description:
@@ -423,19 +606,23 @@ def main():
 
     setup = []
     for entry in setup_entries:
-        setup.append(
-            _build_robot(
-                name=str(entry["name"]),
-                robot_type=entry["robot_type"],
-                dimensions=entry["dimensions"],
-                urdf_path=str(entry["urdf_path"] or ""),
-                description_base_frame=str(entry["base_frame"]),
-                enable_robot_description=bool(args.enable_robot_description),
-                collision_transparent=bool(args.collision_transparent),
-                camera_image_scale=float(args.camera_image_scale),
-                camera_overhead_size=float(args.camera_overhead_size),
-            )
+        setup_entry = _build_robot(
+            name=str(entry["name"]),
+            robot_type=entry["robot_type"],
+            dimensions=entry["dimensions"],
+            urdf_path=str(entry["urdf_path"] or ""),
+            description_base_frame=str(entry["base_frame"]),
+            enable_robot_description=bool(args.enable_robot_description),
+            collision_transparent=bool(args.collision_transparent),
+            camera_image_scale=float(args.camera_image_scale),
+            camera_overhead_size=float(args.camera_overhead_size),
         )
+        _add_map_3d_visualization(
+            setup_entry["dataviz"],
+            args,
+            map_3d_mode,
+        )
+        setup.append(setup_entry)
     robots = [entry["robot"] for entry in setup]
     datavizs = [entry["dataviz"] for entry in setup]
 
