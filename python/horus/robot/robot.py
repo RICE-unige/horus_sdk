@@ -177,11 +177,24 @@ class Robot:
         for sensor in self.sensors:
             dataviz.add_sensor_visualization(sensor, self.name)
 
+        # Use the configured base frame when available so TF visualization matches
+        # robots that do not use base_link (for example, go1/base).
+        configured_base = "base_link"
+        robot_desc_cfg = self.metadata.get("robot_description_config", {})
+        if isinstance(robot_desc_cfg, dict):
+            raw_base = str(robot_desc_cfg.get("base_frame", "") or "").strip()
+            if raw_base:
+                configured_base = raw_base
+        if configured_base.startswith(f"{self.name}/"):
+            transform_frame_id = configured_base
+        else:
+            transform_frame_id = f"{self.name}/{configured_base}"
+
         # Add robot transform visualization
         dataviz.add_robot_transform(
             robot_name=self.name,
             topic="/tf",
-            frame_id=f"{self.name}_base_link",
+            frame_id=transform_frame_id,
         )
 
         return dataviz
@@ -219,6 +232,99 @@ class Robot:
             dataviz.add_robot_trajectory(
                 robot_name=self.name, topic=trajectory_topic, frame_id="map"
             )
+
+    def add_navigation_safety_to_dataviz(
+        self,
+        dataviz: "DataViz",
+        odom_topic: Optional[str] = None,
+        collision_risk_topic: Optional[str] = None,
+        include_velocity: bool = True,
+        include_trail: bool = True,
+        include_collision: bool = True,
+    ) -> None:
+        """
+        Add navigation safety visualizations (velocity/trail/collision risk).
+
+        Args:
+            dataviz: DataViz instance to add visualizations to.
+            odom_topic: Topic for nav_msgs/Odometry input.
+            collision_risk_topic: Topic for SDK-published collision risk JSON.
+            include_velocity: Include floor velocity text visualization.
+            include_trail: Include short odometry trail visualization.
+            include_collision: Include collision risk halo visualization.
+        """
+        resolved_odom_topic = odom_topic or f"/{self.name}/odom"
+        resolved_collision_topic = collision_risk_topic or f"/{self.name}/collision_risk"
+
+        if include_velocity:
+            dataviz.add_robot_velocity_data(
+                robot_name=self.name,
+                topic=resolved_odom_topic,
+                frame_id="map",
+            )
+
+        if include_trail:
+            dataviz.add_robot_odometry_trail(
+                robot_name=self.name,
+                topic=resolved_odom_topic,
+                frame_id="map",
+            )
+
+        configured_base = "base_link"
+        robot_desc_cfg = self.metadata.get("robot_description_config", {})
+        if isinstance(robot_desc_cfg, dict):
+            raw_base = str(robot_desc_cfg.get("base_frame", "") or "").strip()
+            if raw_base:
+                configured_base = raw_base
+        if configured_base.startswith(f"{self.name}/"):
+            collision_frame = configured_base
+        else:
+            collision_frame = f"{self.name}/{configured_base}"
+
+        if include_collision:
+            dataviz.add_robot_collision_risk(
+                robot_name=self.name,
+                topic=resolved_collision_topic,
+                frame_id=collision_frame,
+            )
+
+    def configure_robot_description(
+        self,
+        urdf_path: str,
+        base_frame: str = "base_link",
+        source: str = "ros",
+        ros_param_node: str = "",
+        ros_param_name: str = "robot_description",
+        chunk_size_bytes: int = 12000,
+        is_transparent: bool = False,
+        enabled: bool = True,
+    ) -> None:
+        """
+        Configure robot description resolution for MR collision/joint visualization.
+
+        Args:
+            urdf_path: Absolute or workspace-relative URDF file path.
+            base_frame: Link frame used as MR anchoring root.
+            source: Description source type (v1: "ros").
+            ros_param_node: Optional ROS node name for fallback parameter fetch.
+            ros_param_name: ROS parameter name (default: robot_description).
+            chunk_size_bytes: Chunk size used for SDK->MR transport.
+            is_transparent: Render collision body as transparent in MR.
+            enabled: Enable robot description manifest + chunk transport.
+        """
+        self.add_metadata(
+            "robot_description_config",
+            {
+                "enabled": bool(enabled),
+                "source": str(source or "ros"),
+                "urdf_path": str(urdf_path or ""),
+                "base_frame": str(base_frame or "base_link"),
+                "ros_param_node": str(ros_param_node or ""),
+                "ros_param_name": str(ros_param_name or "robot_description"),
+                "chunk_size_bytes": int(max(1024, min(64000, chunk_size_bytes))),
+                "is_transparent": bool(is_transparent),
+            },
+        )
 
     def create_full_dataviz(
         self,

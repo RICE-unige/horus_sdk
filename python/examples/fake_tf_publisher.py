@@ -61,6 +61,23 @@ def parse_resolution_list(raw_value):
     return resolutions
 
 
+def parse_robot_base_frames(raw_value):
+    mapping = {}
+    if not raw_value:
+        return mapping
+
+    for token in str(raw_value).split(","):
+        item = token.strip()
+        if not item or ":" not in item:
+            continue
+        robot, frame = item.split(":", 1)
+        robot = robot.strip()
+        frame = frame.strip().strip("/")
+        if robot and frame:
+            mapping[robot] = frame
+    return mapping
+
+
 class RobotState:
     def __init__(self, name, x, y, vx, vy, yaw):
         self.name = name
@@ -84,6 +101,7 @@ class FakeTFPublisher(Node):
         robot_names,
         map_frame,
         base_frame,
+        robot_base_frames,
         rate_hz,
         height,
         scale,
@@ -119,6 +137,7 @@ class FakeTFPublisher(Node):
         self.robot_names = robot_names
         self.map_frame = map_frame
         self.base_frame = base_frame
+        self.robot_base_frames = dict(robot_base_frames or {})
         self.rate_hz = max(rate_hz, 0.1)
         self.height = height
         self.scale = scale
@@ -447,12 +466,18 @@ class FakeTFPublisher(Node):
             if self._distance_xy(previous_x, previous_y, robot.x, robot.y) > 1e-3:
                 robot.target_x, robot.target_y = self._sample_patrol_target(robot.x, robot.y)
 
+    def _base_frame_for(self, robot_name):
+        explicit = self.robot_base_frames.get(robot_name)
+        if explicit:
+            return str(explicit).strip().strip("/")
+        return self.base_frame
+
     def _publish_static_frames(self):
         now = self.get_clock().now().to_msg()
         transforms = []
 
         for name in self.robot_names:
-            parent = f"{name}/{self.base_frame}"
+            parent = f"{name}/{self._base_frame_for(name)}"
             static_children = [
                 ("left_wheel", (0.0, 0.25, -0.05), 0.0),
                 ("right_wheel", (0.0, -0.25, -0.05), 0.0),
@@ -644,7 +669,7 @@ class FakeTFPublisher(Node):
             tf = TransformStamped()
             tf.header.stamp = now
             tf.header.frame_id = self.map_frame
-            tf.child_frame_id = f"{robot.name}/{self.base_frame}"
+            tf.child_frame_id = f"{robot.name}/{self._base_frame_for(robot.name)}"
             tf.transform.translation.x = robot.x * self.scale
             tf.transform.translation.y = robot.y * self.scale
             tf.transform.translation.z = self.height * self.scale
@@ -834,7 +859,7 @@ class FakeTFPublisher(Node):
                 if publisher is not None:
                     msg = Image()
                     msg.header.stamp = stamp
-                    msg.header.frame_id = f"{robot.name}/camera_link"
+                    msg.header.frame_id = f"{robot.name}/{self._base_frame_for(robot.name)}"
                     msg.height = height
                     msg.width = width
                     msg.encoding = "rgb8"
@@ -854,7 +879,7 @@ class FakeTFPublisher(Node):
                     if compressed_payload:
                         msg = CompressedImage()
                         msg.header.stamp = stamp
-                        msg.header.frame_id = f"{robot.name}/camera_link"
+                        msg.header.frame_id = f"{robot.name}/{self._base_frame_for(robot.name)}"
                         msg.format = "jpeg"
                         msg.data = compressed_payload
                         compressed_publisher.publish(msg)
@@ -1019,6 +1044,11 @@ def build_parser():
     parser.add_argument("--robot-count", type=int, default=10, help="Number of robots")
     parser.add_argument("--map-frame", default="map", help="Fixed map frame name")
     parser.add_argument("--base-frame", default="base_link", help="Base frame name (no prefix)")
+    parser.add_argument(
+        "--robot-base-frames",
+        default="",
+        help="Optional per-robot base frame overrides: 'go1:base,jackal:base_link'.",
+    )
     parser.add_argument("--rate", type=float, default=30.0, help="Publish rate (Hz)")
     parser.add_argument("--height", type=float, default=0.0, help="Z height in meters")
     parser.add_argument("--scale", type=float, default=1.0, help="Position scale multiplier")
@@ -1215,6 +1245,7 @@ def main():
         robot_names=robot_names,
         map_frame=args.map_frame,
         base_frame=args.base_frame,
+        robot_base_frames=parse_robot_base_frames(args.robot_base_frames),
         rate_hz=args.rate,
         height=args.height,
         scale=args.scale,

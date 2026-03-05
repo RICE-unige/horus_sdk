@@ -1,16 +1,6 @@
 """
 Robot registry client for HORUS SDK
 
-Handles robot registration with the HORUS backend system
-"""
-
-import threading
-import time
-from typing import Any, Dict, Tuple
-
-"""
-Robot registry client for HORUS SDK
-
 Handles robot registration with the HORUS backend system via ROS 2 Topics.
 protocol:
   1. SDK publishes JSON config to /horus/registration
@@ -28,7 +18,9 @@ import signal
 import os
 import math
 import shutil
-from typing import Any, Dict, Tuple, Optional
+import shlex
+from typing import Any, Dict, Tuple, Optional, List
+from horus.description import RobotDescriptionResolver
 
 try:
     import rclpy
@@ -48,6 +40,12 @@ class RobotRegistryClient:
         """Initialize robot registry client"""
         self.node = None
         self.publisher = None
+        self.sdk_replay_begin_publisher = None
+        self.sdk_replay_item_publisher = None
+        self.sdk_replay_end_publisher = None
+        self.robot_description_chunk_begin_publisher = None
+        self.robot_description_chunk_item_publisher = None
+        self.robot_description_chunk_end_publisher = None
         self.subscriber = None
         self.ros_initialized = False
         self._registration_lock = threading.Lock()
@@ -59,10 +57,22 @@ class RobotRegistryClient:
         self._last_heartbeat_time = 0
         self._app_heartbeats = {}
         self._app_uptime_by_id = {}
+        self._app_presence_by_id: Dict[str, Dict[str, Any]] = {}
         self._app_restart_seq = 0
         self._last_consumed_restart_seq = 0
         self._remote_ip = None
         self._teleop_runtime_by_topic: Dict[str, Dict[str, Any]] = {}
+        self._teleop_runtime_state_ttl_s = 3.5
+        self._multi_operator_presence_ttl_s = 5.0
+        self._registration_replay_request_seq = 0
+        self._last_consumed_registration_replay_request_seq = 0
+        self._last_registration_replay_request: Dict[str, Any] = {}
+        self._sdk_replay_burst_attempts = 3
+        self._sdk_replay_burst_initial_delay_s = 0.15
+        self._sdk_replay_burst_inter_attempt_delay_s = 0.25
+        self._robot_description_resolver = RobotDescriptionResolver()
+        self._robot_description_by_robot: Dict[str, Dict[str, Any]] = {}
+        self._robot_description_by_id: Dict[str, Dict[str, Any]] = {}
         
         if ROS2_AVAILABLE:
             self._initialize_ros2()
@@ -151,6 +161,31 @@ class RobotRegistryClient:
                 depth=10
             )
 
+            sdk_replay_qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=256,
+            )
+
+            self.sdk_replay_begin_publisher = self.node.create_publisher(
+                String, "/horus/multi_operator/sdk_registry_replay_begin", sdk_replay_qos
+            )
+            self.sdk_replay_item_publisher = self.node.create_publisher(
+                String, "/horus/multi_operator/sdk_registry_replay_item", sdk_replay_qos
+            )
+            self.sdk_replay_end_publisher = self.node.create_publisher(
+                String, "/horus/multi_operator/sdk_registry_replay_end", sdk_replay_qos
+            )
+            self.robot_description_chunk_begin_publisher = self.node.create_publisher(
+                String, "/horus/robot_description/chunk_begin", sdk_replay_qos
+            )
+            self.robot_description_chunk_item_publisher = self.node.create_publisher(
+                String, "/horus/robot_description/chunk_item", sdk_replay_qos
+            )
+            self.robot_description_chunk_end_publisher = self.node.create_publisher(
+                String, "/horus/robot_description/chunk_end", sdk_replay_qos
+            )
+
             self.subscriber = self.node.create_subscription(
                 String, "/horus/registration_ack", self._ack_callback, ack_qos
             )
@@ -176,6 +211,27 @@ class RobotRegistryClient:
                 ack_qos,
             )
 
+            self.node.create_subscription(
+                String,
+                "/horus/multi_operator_presence",
+                self._multi_operator_presence_callback,
+                ack_qos,
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/multi_operator/sdk_registration_replay_request",
+                self._multi_operator_registration_replay_request_callback,
+                ack_qos,
+            )
+
+            self.node.create_subscription(
+                String,
+                "/horus/robot_description/request",
+                self._robot_description_request_callback,
+                ack_qos,
+            )
+
         except Exception as e:
             cli.print_error(f"Failed to init ROS context: {e}")
             import traceback
@@ -192,11 +248,47 @@ class RobotRegistryClient:
             s.settimeout(0.5)
             return s.connect_ex(("localhost", port)) == 0
 
-    def _auto_start_bridge_with_horus_helper(self) -> bool:
-        """Try bridge startup using installer-generated horus-start helper."""
+    def _get_bridge_autostart_mode(self) -> str:
+        """Resolve bridge auto-start mode from environment."""
         from horus.utils import cli
 
-        candidate_paths = []
+        raw_mode = str(os.environ.get("HORUS_SDK_BRIDGE_AUTOSTART_MODE", "auto") or "auto").strip().lower()
+        valid_modes = {"auto", "ros2", "helper", "off"}
+        if raw_mode in valid_modes:
+            return raw_mode
+
+        cli.print_info(
+            f"Unknown HORUS_SDK_BRIDGE_AUTOSTART_MODE='{raw_mode}'. Using 'auto'."
+        )
+        return "auto"
+
+    def _get_bridge_startup_settle_delay_s(self) -> float:
+        """Optional delay after bridge port opens to allow internal startup to settle."""
+        raw_value = str(os.environ.get("HORUS_SDK_BRIDGE_STARTUP_SETTLE_MS", "750") or "750").strip()
+        try:
+            delay_ms = float(raw_value)
+        except Exception:
+            delay_ms = 750.0
+
+        if not math.isfinite(delay_ms) or delay_ms < 0:
+            delay_ms = 750.0
+
+        return delay_ms / 1000.0
+
+    def _sleep_after_bridge_startup_settle(self) -> None:
+        """Sleep briefly after bridge startup if configured."""
+        from horus.utils import cli
+
+        delay_s = self._get_bridge_startup_settle_delay_s()
+        if delay_s <= 0:
+            return
+
+        cli.print_info(f"Waiting {delay_s:.2f}s for bridge startup settle...")
+        time.sleep(delay_s)
+
+    def _get_horus_start_helper_candidates(self) -> List[str]:
+        """Collect possible horus-start helper paths, preserving priority order."""
+        candidate_paths: List[str] = []
         env_horus_home = os.environ.get("HORUS_HOME")
         if env_horus_home:
             candidate_paths.append(os.path.join(env_horus_home, "bin", "horus-start"))
@@ -207,17 +299,96 @@ class RobotRegistryClient:
         if horus_start_in_path:
             candidate_paths.append(horus_start_in_path)
 
-        # Deduplicate while preserving order.
-        deduped_paths = []
+        deduped_paths: List[str] = []
         seen = set()
         for path in candidate_paths:
             if path not in seen:
                 deduped_paths.append(path)
                 seen.add(path)
+        return deduped_paths
 
-        for helper_path in deduped_paths:
+    def _get_horus_helper_env_path(self, helper_path: str) -> Optional[str]:
+        """Resolve sibling horus-env for an installer helper path if present."""
+        helper_dir = os.path.dirname(os.path.abspath(helper_path))
+        env_path = os.path.join(helper_dir, "horus-env")
+        if os.path.isfile(env_path):
+            return env_path
+        return None
+
+    def _get_ros2_pkg_prefix_current_shell(self, package_name: str) -> Optional[str]:
+        """Resolve a ROS package prefix using the current shell environment."""
+        if shutil.which("ros2") is None:
+            return None
+
+        try:
+            check_pkg = subprocess.run(
+                ["ros2", "pkg", "prefix", package_name],
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+        except Exception:
+            return None
+
+        if check_pkg.returncode != 0:
+            return None
+
+        prefix = str(check_pkg.stdout or "").strip()
+        return prefix or None
+
+    def _get_ros2_pkg_prefix_from_helper_env(self, helper_path: str, package_name: str) -> Optional[str]:
+        """Resolve a ROS package prefix by sourcing the helper's horus-env script."""
+        env_script = self._get_horus_helper_env_path(helper_path)
+        if not env_script:
+            return None
+
+        bash_path = shutil.which("bash")
+        if not bash_path and os.path.isfile("/bin/bash"):
+            bash_path = "/bin/bash"
+        if not bash_path:
+            return None
+
+        command = (
+            f"source {shlex.quote(env_script)} >/dev/null 2>&1 && "
+            f"ros2 pkg prefix {shlex.quote(package_name)}"
+        )
+        try:
+            check_pkg = subprocess.run(
+                [bash_path, "-lc", command],
+                capture_output=True,
+                text=True,
+                timeout=8.0,
+            )
+        except Exception:
+            return None
+
+        if check_pkg.returncode != 0:
+            return None
+
+        prefix = str(check_pkg.stdout or "").strip()
+        return prefix or None
+
+    def _get_first_helper_bridge_prefix(self) -> Optional[str]:
+        """Inspect the first available helper environment and return bridge package prefix."""
+        for helper_path in self._get_horus_start_helper_candidates():
             if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
                 continue
+            prefix = self._get_ros2_pkg_prefix_from_helper_env(helper_path, "horus_unity_bridge")
+            if prefix:
+                return prefix
+        return None
+
+    def _auto_start_bridge_with_horus_helper(self) -> bool:
+        """Try bridge startup using installer-generated horus-start helper."""
+        from horus.utils import cli
+
+        for helper_path in self._get_horus_start_helper_candidates():
+            if not (os.path.isfile(helper_path) and os.access(helper_path, os.X_OK)):
+                continue
+
+            helper_bridge_prefix = self._get_ros2_pkg_prefix_from_helper_env(helper_path, "horus_unity_bridge")
+            if helper_bridge_prefix:
+                cli.print_info(f"Helper env horus_unity_bridge prefix: {helper_bridge_prefix}")
 
             cli.print_info(f"Trying helper auto-start: {helper_path}")
             try:
@@ -234,6 +405,7 @@ class RobotRegistryClient:
             with cli.status("Launching Horus Bridge...", spinner="dots"):
                 for _ in range(20):
                     if self._is_port_open(10000):
+                        self._sleep_after_bridge_startup_settle()
                         cli.print_success("Horus Bridge launched successfully.")
                         return True
                     if self.bridge_process and self.bridge_process.poll() is not None:
@@ -253,16 +425,11 @@ class RobotRegistryClient:
             return False
 
         try:
-            check_pkg = subprocess.run(
-                ["ros2", "pkg", "prefix", "horus_unity_bridge"],
-                capture_output=True,
-            )
-            if check_pkg.returncode != 0:
+            bridge_prefix = self._get_ros2_pkg_prefix_current_shell("horus_unity_bridge")
+            if not bridge_prefix:
                 return False
 
-            bridge_prefix = check_pkg.stdout.decode().strip()
-            if bridge_prefix:
-                cli.print_info(f"Using horus_unity_bridge from: {bridge_prefix}")
+            cli.print_info(f"Using horus_unity_bridge from current shell: {bridge_prefix}")
 
             self.bridge_process = subprocess.Popen(
                 ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"],
@@ -275,6 +442,7 @@ class RobotRegistryClient:
             with cli.status("Launching Horus Bridge...", spinner="dots"):
                 for _ in range(15):
                     if self._is_port_open(10000):
+                        self._sleep_after_bridge_startup_settle()
                         cli.print_success("Horus Bridge launched successfully.")
                         return True
                     if self.bridge_process and self.bridge_process.poll() is not None:
@@ -294,13 +462,36 @@ class RobotRegistryClient:
             cli.print_info("Horus Bridge detected on port 10000.")
             return True
 
+        mode = self._get_bridge_autostart_mode()
         cli.print_info("No Bridge on port 10000. Attempting auto-start...")
+        cli.print_info(f"Bridge auto-start mode: {mode}")
 
-        if self._auto_start_bridge_with_horus_helper():
-            return True
+        if mode == "off":
+            cli.print_error("Bridge auto-start disabled (HORUS_SDK_BRIDGE_AUTOSTART_MODE=off).")
+            return False
 
-        if self._auto_start_bridge_with_ros2_launch():
-            return True
+        if mode == "auto":
+            current_shell_prefix = self._get_ros2_pkg_prefix_current_shell("horus_unity_bridge")
+            helper_prefix = self._get_first_helper_bridge_prefix()
+            if current_shell_prefix and helper_prefix and current_shell_prefix != helper_prefix:
+                cli.print_info(
+                    "Warning: Current shell ROS workspace differs from helper workspace for horus_unity_bridge."
+                )
+                cli.print_info(f"Current shell prefix: {current_shell_prefix}")
+                cli.print_info(f"Helper workspace prefix: {helper_prefix}")
+                cli.print_info("Auto mode will try current-shell ros2 launch first.")
+
+            if self._auto_start_bridge_with_ros2_launch():
+                return True
+
+            if self._auto_start_bridge_with_horus_helper():
+                return True
+        elif mode == "ros2":
+            if self._auto_start_bridge_with_ros2_launch():
+                return True
+        elif mode == "helper":
+            if self._auto_start_bridge_with_horus_helper():
+                return True
 
         cli.print_error("Failed to auto-launch bridge.")
         return False
@@ -354,6 +545,385 @@ class RobotRegistryClient:
                 self._app_restart_seq += 1
             self._app_uptime_by_id[app_id] = heartbeat_uptime
 
+    def _multi_operator_presence_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        now = time.time()
+        app_id = str(payload.get("app_id") or payload.get("ip") or "unknown").strip() or "unknown"
+        role = str(payload.get("role") or "").strip().lower()
+        state = str(payload.get("state") or "").strip().lower()
+        ip = str(payload.get("ip") or "").strip()
+        session_id = str(payload.get("session_id") or "").strip()
+
+        self._app_presence_by_id[app_id] = {
+            "ts": now,
+            "role": role,
+            "state": state,
+            "ip": ip,
+            "session_id": session_id,
+            "workspace_active": bool(payload.get("workspace_active", False)),
+        }
+
+    def _multi_operator_registration_replay_request_callback(self, msg):
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        payload: Dict[str, Any] = {}
+        if payload_raw:
+            try:
+                parsed = json.loads(payload_raw)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except Exception:
+                payload = {}
+
+        self._last_registration_replay_request = payload
+        self._registration_replay_request_seq += 1
+
+    def _consume_registration_replay_request(self) -> Optional[Dict[str, Any]]:
+        if self._registration_replay_request_seq == self._last_consumed_registration_replay_request_seq:
+            return None
+        self._last_consumed_registration_replay_request_seq = self._registration_replay_request_seq
+        return dict(self._last_registration_replay_request or {})
+
+    def _robot_description_request_callback(self, msg):
+        if (
+            self.robot_description_chunk_begin_publisher is None
+            or self.robot_description_chunk_item_publisher is None
+            or self.robot_description_chunk_end_publisher is None
+        ):
+            return
+
+        payload_raw = str(getattr(msg, "data", "") or "").strip()
+        if not payload_raw:
+            return
+
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        request_id = str(payload.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        robot_name = str(payload.get("robot_name") or "").strip()
+        description_id = str(payload.get("description_id") or "").strip()
+        session_id = str(payload.get("session_id") or "").strip()
+        app_id = str(payload.get("app_id") or "").strip()
+
+        artifact_container: Optional[Dict[str, Any]] = None
+        if description_id:
+            artifact_container = self._robot_description_by_id.get(description_id)
+        if artifact_container is None and robot_name:
+            artifact_container = self._robot_description_by_robot.get(robot_name)
+
+        if artifact_container is None:
+            return
+
+        artifact = artifact_container.get("artifact")
+        if artifact is None:
+            return
+
+        resolved_description_id = str(artifact.manifest.description_id)
+        if description_id and description_id != resolved_description_id:
+            return
+
+        chunks = list(artifact.chunks or [])
+        expected_chunks = len(chunks)
+        now_ms = int(time.time() * 1000)
+
+        begin = String()
+        begin.data = json.dumps(
+            {
+                "request_id": request_id,
+                "robot_name": robot_name,
+                "description_id": resolved_description_id,
+                "session_id": session_id,
+                "app_id": app_id,
+                "expected_chunks": expected_chunks,
+                "encoding": artifact.manifest.encoding,
+                "ts_unix_ms": now_ms,
+            }
+        )
+        self.robot_description_chunk_begin_publisher.publish(begin)
+
+        for index, chunk_data in enumerate(chunks):
+            item = String()
+            item.data = json.dumps(
+                {
+                    "request_id": request_id,
+                    "robot_name": robot_name,
+                    "description_id": resolved_description_id,
+                    "chunk_index": index,
+                    "total_chunks": expected_chunks,
+                    "chunk_data": chunk_data,
+                }
+            )
+            self.robot_description_chunk_item_publisher.publish(item)
+
+        end = String()
+        end.data = json.dumps(
+            {
+                "request_id": request_id,
+                "robot_name": robot_name,
+                "description_id": resolved_description_id,
+                "received_count": expected_chunks,
+                "ts_unix_ms": int(time.time() * 1000),
+            }
+        )
+        self.robot_description_chunk_end_publisher.publish(end)
+
+    def _publish_sdk_registry_replay_once(self, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
+        if not self.ros_initialized or self.node is None:
+            return False, {"error": "ROS2 not initialized"}
+        if self.sdk_replay_begin_publisher is None or self.sdk_replay_item_publisher is None or self.sdk_replay_end_publisher is None:
+            return False, {"error": "SDK replay publishers unavailable"}
+
+        replay_request = dict(replay_request or {})
+        request_id = str(replay_request.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        join_attempt_id = str(replay_request.get("join_attempt_id") or "").strip()
+        requester_app_id = str(replay_request.get("requester_app_id") or replay_request.get("app_id") or "unknown").strip() or "unknown"
+        now_ms = int(time.time() * 1000)
+
+        payloads = []
+        for _, _, msg in (entries or []):
+            json_payload = str(getattr(msg, "data", "") or "")
+            if json_payload:
+                payloads.append(json_payload)
+
+        expected_count = len(payloads)
+
+        begin_msg = String()
+        begin_msg.data = json.dumps(
+            {
+                "request_id": request_id,
+                "join_attempt_id": join_attempt_id,
+                "expected_count": expected_count,
+                "ts_unix_ms": now_ms,
+            }
+        )
+        self.sdk_replay_begin_publisher.publish(begin_msg)
+
+        published_count = 0
+        for idx, registration_json in enumerate(payloads):
+            item_msg = String()
+            item_msg.data = json.dumps(
+                {
+                    "request_id": request_id,
+                    "join_attempt_id": join_attempt_id,
+                    "index": idx,
+                    "registration_json": registration_json,
+                }
+            )
+            self.sdk_replay_item_publisher.publish(item_msg)
+            published_count += 1
+
+        end_msg = String()
+        end_msg.data = json.dumps(
+            {
+                "request_id": request_id,
+                "join_attempt_id": join_attempt_id,
+                "expected_count": expected_count,
+                "published_count": published_count,
+                "ts_unix_ms": int(time.time() * 1000),
+            }
+        )
+        self.sdk_replay_end_publisher.publish(end_msg)
+
+        return True, {
+            "request_id": request_id,
+            "join_attempt_id": join_attempt_id,
+            "requester_app_id": requester_app_id,
+            "expected_count": expected_count,
+            "published_count": published_count,
+        }
+
+    def _publish_sdk_registry_replay(self, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
+        if not self.ros_initialized or self.node is None:
+            return False, {"error": "ROS2 not initialized"}
+        if self.sdk_replay_begin_publisher is None or self.sdk_replay_item_publisher is None or self.sdk_replay_end_publisher is None:
+            return False, {"error": "SDK replay publishers unavailable"}
+
+        base_request = dict(replay_request or {})
+        request_id = str(base_request.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        base_request["request_id"] = request_id
+
+        # Replay settings are configurable via internal attributes. The Unity
+        # coordinator also retries requests, so keep this path simple/synchronous.
+        attempt_count = max(1, int(getattr(self, "_sdk_replay_burst_attempts", 1) or 1))
+        initial_delay_s = max(0.0, float(getattr(self, "_sdk_replay_burst_initial_delay_s", 0.0) or 0.0))
+        inter_attempt_delay_s = max(0.0, float(getattr(self, "_sdk_replay_burst_inter_attempt_delay_s", 0.0) or 0.0))
+
+        if initial_delay_s > 0.0:
+            time.sleep(initial_delay_s)
+
+        per_attempt_published_count: List[int] = []
+        last_result: Dict[str, Any] = {}
+
+        for attempt_idx in range(attempt_count):
+            ok, result = self._publish_sdk_registry_replay_once(entries, base_request)
+            if not ok:
+                return False, result
+            last_result = dict(result or {})
+            per_attempt_published_count.append(int(last_result.get("published_count") or 0))
+            if attempt_idx < (attempt_count - 1) and inter_attempt_delay_s > 0.0:
+                time.sleep(inter_attempt_delay_s)
+
+        last_result["attempt_count"] = attempt_count
+        last_result["per_attempt_published_count"] = per_attempt_published_count
+        last_result["total_published_count"] = int(sum(per_attempt_published_count))
+        return True, last_result
+
+    def _prune_stale_app_presence(self, timeout_s: float):
+        now = time.time()
+        timeout = max(1.0, float(timeout_s))
+        stale = [
+            app_id
+            for app_id, data in self._app_presence_by_id.items()
+            if (now - float(data.get("ts", 0.0) or 0.0)) > timeout
+        ]
+        for app_id in stale:
+            self._app_presence_by_id.pop(app_id, None)
+
+    def _get_app_presence_summary(self, timeout_s: float = 5.0) -> Dict[str, Any]:
+        self._prune_stale_app_presence(timeout_s)
+        summary = {
+            "total": 0,
+            "host_count": 0,
+            "joiner_count": 0,
+            "single_count": 0,
+            "host_created_count": 0,
+            "joiner_joined_count": 0,
+            "alignment_pending_count": 0,
+            "alignment_ready_count": 0,
+            "workspace_ready_count": 0,
+            "registry_synced_count": 0,
+        }
+
+        for _, data in self._app_presence_by_id.items():
+            role = str(data.get("role") or "").strip().lower()
+            state = str(data.get("state") or "").strip().lower()
+            summary["total"] += 1
+            if role == "host":
+                summary["host_count"] += 1
+                if state in {
+                    "host_created",
+                    "alignment_pending",
+                    "alignment_ready",
+                    "colocation_ready",
+                    "workspace_ready_host",
+                    "workspace_synced",
+                    "registry_synced",
+                    "workspace_ready",
+                }:
+                    summary["host_created_count"] += 1
+            elif role == "joiner":
+                summary["joiner_count"] += 1
+                if state in {
+                    "joiner_discovered_host",
+                    "joiner_joined",
+                    "alignment_pending",
+                    "alignment_ready",
+                    "colocation_ready",
+                    "workspace_ready_joiner",
+                    "workspace_synced",
+                    "registry_synced",
+                    "workspace_ready",
+                }:
+                    summary["joiner_joined_count"] += 1
+            elif role == "single":
+                summary["single_count"] += 1
+
+            if state in {"alignment_pending", "joiner_discovered_host"}:
+                summary["alignment_pending_count"] += 1
+
+            if state in {"alignment_ready", "colocation_ready", "workspace_ready_host", "workspace_ready_joiner", "workspace_synced", "registry_synced"}:
+                summary["alignment_ready_count"] += 1
+
+            if state.startswith("workspace_ready") or state == "workspace_synced":
+                summary["workspace_ready_count"] += 1
+
+            if state == "registry_synced":
+                summary["registry_synced_count"] += 1
+
+        return summary
+
+    def _format_multi_operator_summary(self) -> str:
+        summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
+
+        if summary["total"] <= 0:
+            return "Single Operator / No presence"
+
+        host_count = int(summary.get("host_count", 0) or 0)
+        joiner_count = int(summary.get("joiner_count", 0) or 0)
+        alignment_pending = int(summary.get("alignment_pending_count", 0) or 0)
+        alignment_ready = int(summary.get("alignment_ready_count", 0) or 0)
+        workspace_ready = int(summary.get("workspace_ready_count", 0) or 0)
+        registry_synced = int(summary.get("registry_synced_count", 0) or 0)
+
+        if host_count <= 0 and joiner_count > 0:
+            base = f"Joiners only ({joiner_count})"
+        elif host_count > 0:
+            base = "Host Created" if int(summary.get("host_created_count", 0) or 0) > 0 else "Host Detected"
+            if joiner_count > 0:
+                base += f" + {joiner_count} Joiner" + ("" if joiner_count == 1 else "s")
+        else:
+            base = f"Operators: {summary['total']}"
+
+        if joiner_count > 0 and alignment_pending > 0 and alignment_ready <= 0:
+            base += " (Aligning)"
+        elif alignment_ready > 0:
+            base += f" | Alignment Ready: {alignment_ready}"
+
+        if workspace_ready > 0:
+            base += f" | Workspace Ready: {workspace_ready}"
+
+        if registry_synced > 0:
+            base += f" | Registry Synced: {registry_synced}"
+
+        return base
+
+    def _format_app_link_status(self, is_connected: bool, seen_heartbeat: bool) -> str:
+        summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
+
+        if is_connected:
+            details = []
+            if summary["host_count"] > 0:
+                if summary["host_created_count"] > 0:
+                    details.append("Host Created")
+                else:
+                    details.append("Host Detected")
+            if summary["joiner_count"] > 0:
+                if summary["joiner_joined_count"] > 0:
+                    details.append(f"Joiners Joined: {summary['joiner_joined_count']}")
+                else:
+                    details.append(f"Joiners: {summary['joiner_count']}")
+            if summary.get("alignment_ready_count", 0) > 0:
+                details.append(f"Alignment Ready: {summary['alignment_ready_count']}")
+            elif summary.get("alignment_pending_count", 0) > 0:
+                details.append(f"Aligning: {summary['alignment_pending_count']}")
+            if summary["workspace_ready_count"] > 0:
+                details.append(f"Workspace Ready: {summary['workspace_ready_count']}")
+
+            if details:
+                return "Connected (" + " | ".join(details) + ")"
+            return "Connected"
+
+        if seen_heartbeat:
+            if summary["joiner_count"] > 0:
+                return "Disconnected (Waiting for Host App...)"
+            return "Disconnected (Waiting for Horus App...)"
+        return "Waiting for Horus App..."
+
     @staticmethod
     def _normalize_transport(value: Any) -> Optional[str]:
         normalized = str(value or "").strip().lower()
@@ -391,6 +961,12 @@ class RobotRegistryClient:
         if not state:
             return None
 
+        now = time.time()
+        ts = float(state.get("ts", 0.0) or 0.0)
+        if (now - ts) > max(0.5, float(self._teleop_runtime_state_ttl_s)):
+            self._teleop_runtime_by_topic.pop(topic, None)
+            return None
+
         if not bool(state.get("active", False)):
             return None
 
@@ -402,6 +978,15 @@ class RobotRegistryClient:
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
             self._app_uptime_by_id.pop(ip, None)
+            self._app_presence_by_id.pop(ip, None)
+        self._prune_stale_app_presence(self._multi_operator_presence_ttl_s)
+        stale_topics = [
+            topic
+            for topic, state in self._teleop_runtime_by_topic.items()
+            if (now - float(state.get("ts", 0.0) or 0.0)) > max(0.5, float(self._teleop_runtime_state_ttl_s))
+        ]
+        for topic in stale_topics:
+            self._teleop_runtime_by_topic.pop(topic, None)
         active_count = len(self._app_heartbeats)
         if active_count <= 0:
             self._teleop_runtime_by_topic.clear()
@@ -488,6 +1073,37 @@ class RobotRegistryClient:
             _append_topic(teleop.get("command_topic"))
             _append_topic(teleop.get("raw_input_topic"))
             _append_topic(teleop.get("head_pose_topic"))
+
+        return topics
+
+    def _collect_camera_topics(self, config: Dict[str, Any]) -> list:
+        topics = []
+        if not isinstance(config, dict):
+            return topics
+
+        sensors = config.get("sensors")
+        if not isinstance(sensors, list):
+            return topics
+
+        def _append_topic(value: Any):
+            topic = str(value or "").strip()
+            if topic and topic not in topics:
+                topics.append(topic)
+
+        for sensor_cfg in sensors:
+            if not isinstance(sensor_cfg, dict):
+                continue
+            if str(sensor_cfg.get("type", "")).strip().lower() != "camera":
+                continue
+
+            _append_topic(sensor_cfg.get("topic"))
+            cam_cfg = sensor_cfg.get("camera_config") or {}
+            if not isinstance(cam_cfg, dict):
+                cam_cfg = {}
+            _append_topic(cam_cfg.get("right_topic"))
+            _append_topic(cam_cfg.get("minimap_topic"))
+            _append_topic(cam_cfg.get("teleop_topic"))
+            _append_topic(cam_cfg.get("teleop_right_topic"))
 
         return topics
 
@@ -593,9 +1209,6 @@ class RobotRegistryClient:
         return None
 
     def _resolve_data_topic_link(self, topic: str) -> bool:
-        monitored_state = self._get_monitored_subscription_state(topic)
-        if monitored_state is not None:
-            return monitored_state
         return self._has_backend_subscriber(topic)
 
     def _has_backend_subscriber(self, topic: str) -> bool:
@@ -637,6 +1250,15 @@ class RobotRegistryClient:
             "/horus/registration": "sdk_pub",
             "/horus/registration_ack": "sdk_sub",
             "/horus/heartbeat": "sdk_sub",
+            "/horus/multi_operator_presence": "sdk_sub",
+            "/horus/multi_operator/sdk_registration_replay_request": "sdk_sub",
+            "/horus/multi_operator/sdk_registry_replay_begin": "sdk_pub",
+            "/horus/multi_operator/sdk_registry_replay_item": "sdk_pub",
+            "/horus/multi_operator/sdk_registry_replay_end": "sdk_pub",
+            "/horus/robot_description/request": "sdk_sub",
+            "/horus/robot_description/chunk_begin": "sdk_pub",
+            "/horus/robot_description/chunk_item": "sdk_pub",
+            "/horus/robot_description/chunk_end": "sdk_pub",
         }
         control_topic_set = set(control_topics or [])
         for topic in robot_topics:
@@ -645,7 +1267,20 @@ class RobotRegistryClient:
         return roles
 
     def _topic_group(self, topic: str, robot_names):
-        if topic in ("/horus/registration", "/horus/registration_ack", "/horus/heartbeat"):
+        if topic in (
+            "/horus/registration",
+            "/horus/registration_ack",
+            "/horus/heartbeat",
+            "/horus/multi_operator_presence",
+            "/horus/multi_operator/sdk_registration_replay_request",
+            "/horus/multi_operator/sdk_registry_replay_begin",
+            "/horus/multi_operator/sdk_registry_replay_item",
+            "/horus/multi_operator/sdk_registry_replay_end",
+            "/horus/robot_description/request",
+            "/horus/robot_description/chunk_begin",
+            "/horus/robot_description/chunk_item",
+            "/horus/robot_description/chunk_end",
+        ):
             return "sdk"
         if topic == "/tf":
             return "shared"
@@ -657,11 +1292,41 @@ class RobotRegistryClient:
 
     def _extract_camera_topic_profiles(self, config: Dict) -> Dict[str, Dict[str, str]]:
         profiles: Dict[str, Dict[str, str]] = {}
+
+        def _normalize_transport(value: Any, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            return normalized if normalized in ("ros", "webrtc") else fallback
+
+        def _normalize_mode(value: Any, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            return normalized if normalized in ("minimap", "teleop", "both") else fallback
+
+        def _merge_profile(topic_name: str, source_mode: str, minimap_streaming: str, teleop_streaming: str, startup_mode: str):
+            if not topic_name:
+                return
+            existing = profiles.get(topic_name)
+            if existing is None:
+                profiles[topic_name] = {
+                    "minimap": minimap_streaming,
+                    "teleop": teleop_streaming,
+                    "startup": startup_mode,
+                    "source_mode": source_mode,
+                }
+                return
+
+            existing["minimap"] = _normalize_transport(existing.get("minimap"), minimap_streaming)
+            existing["teleop"] = _normalize_transport(existing.get("teleop"), teleop_streaming)
+            existing["startup"] = _normalize_mode(existing.get("startup"), startup_mode)
+            merged_mode = existing.get("source_mode", source_mode)
+            if merged_mode != source_mode:
+                merged_mode = "both"
+            existing["source_mode"] = _normalize_mode(merged_mode, "both")
+
         for sensor_cfg in config.get("sensors", []):
             if str(sensor_cfg.get("type", "")).strip().lower() != "camera":
                 continue
-            topic_name = str(sensor_cfg.get("topic", "")).strip()
-            if not topic_name:
+            base_topic = str(sensor_cfg.get("topic", "")).strip()
+            if not base_topic:
                 continue
 
             cam_cfg = sensor_cfg.get("camera_config") or {}
@@ -684,11 +1349,12 @@ class RobotRegistryClient:
             if startup_mode not in ("minimap", "teleop"):
                 startup_mode = "minimap"
 
-            profiles[topic_name] = {
-                "minimap": minimap_streaming,
-                "teleop": teleop_streaming,
-                "startup": startup_mode,
-            }
+            minimap_topic = str(cam_cfg.get("minimap_topic") or "").strip() or base_topic
+            teleop_topic = str(cam_cfg.get("teleop_topic") or "").strip() or base_topic
+
+            _merge_profile(minimap_topic, "minimap", minimap_streaming, teleop_streaming, startup_mode)
+            _merge_profile(teleop_topic, "teleop", minimap_streaming, teleop_streaming, startup_mode)
+
         return profiles
 
     def _payload_coerce_bool(self, value: Any, default: bool) -> bool:
@@ -768,6 +1434,123 @@ class RobotRegistryClient:
         color = render_options.get("color")
         if color not in (None, ""):
             payload["color"] = str(color)
+
+        if viz_type_value == "path":
+            path_payload: Dict[str, Any] = {}
+            source_type = getattr(data_source, "source_type", None)
+            source_type_value = str(getattr(source_type, "value", source_type) or "").strip()
+            role = None
+            if source_type_value == "robot_global_path":
+                role = "global"
+            elif source_type_value == "robot_local_path":
+                role = "local"
+            elif source_type_value == "robot_trajectory":
+                role = "trajectory"
+
+            if role:
+                path_payload["role"] = role
+
+            if "line_width" in render_options:
+                path_payload["line_width"] = self._payload_coerce_float(
+                    render_options.get("line_width"),
+                    1.0,
+                )
+
+            line_style = render_options.get("line_style")
+            if line_style not in (None, ""):
+                path_payload["line_style"] = str(line_style)
+
+            if path_payload:
+                payload["path"] = path_payload
+
+        if viz_type_value == "velocity_data":
+            velocity_payload: Dict[str, Any] = {}
+            units = render_options.get("units")
+            if units not in (None, ""):
+                velocity_payload["units"] = str(units)
+
+            if "text_back_offset_m" in render_options:
+                velocity_payload["text_back_offset_m"] = self._payload_coerce_float(
+                    render_options.get("text_back_offset_m"),
+                    0.36,
+                )
+            if "floor_offset_m" in render_options:
+                velocity_payload["floor_offset_m"] = self._payload_coerce_float(
+                    render_options.get("floor_offset_m"),
+                    0.01,
+                )
+            if "update_hz" in render_options:
+                velocity_payload["update_hz"] = self._payload_coerce_float(
+                    render_options.get("update_hz"),
+                    10.0,
+                )
+
+            if velocity_payload:
+                payload["velocity"] = velocity_payload
+
+        if viz_type_value == "odometry_trail":
+            trail_payload: Dict[str, Any] = {}
+            if "max_points" in render_options:
+                trail_payload["max_points"] = int(
+                    round(
+                        self._payload_coerce_float(
+                            render_options.get("max_points"),
+                            48.0,
+                        )
+                    )
+                )
+            if "history_seconds" in render_options:
+                trail_payload["history_seconds"] = self._payload_coerce_float(
+                    render_options.get("history_seconds"),
+                    3.2,
+                )
+            if "min_spacing_m" in render_options:
+                trail_payload["min_spacing_m"] = self._payload_coerce_float(
+                    render_options.get("min_spacing_m"),
+                    0.07,
+                )
+            if "line_width_m" in render_options:
+                trail_payload["line_width_m"] = self._payload_coerce_float(
+                    render_options.get("line_width_m"),
+                    0.0048,
+                )
+            if "trail_back_offset_m" in render_options:
+                trail_payload["trail_back_offset_m"] = self._payload_coerce_float(
+                    render_options.get("trail_back_offset_m"),
+                    0.44,
+                )
+
+            if trail_payload:
+                payload["trail"] = trail_payload
+
+        if viz_type_value == "collision_risk":
+            collision_payload: Dict[str, Any] = {}
+            if "threshold_m" in render_options:
+                collision_payload["threshold_m"] = self._payload_coerce_float(
+                    render_options.get("threshold_m"),
+                    1.2,
+                )
+            if "radius_m" in render_options:
+                collision_payload["radius_m"] = self._payload_coerce_float(
+                    render_options.get("radius_m"),
+                    1.2,
+                )
+            source = render_options.get("source")
+            if source not in (None, ""):
+                collision_payload["source"] = str(source)
+            if "alpha_min" in render_options:
+                collision_payload["alpha_min"] = self._payload_coerce_float(
+                    render_options.get("alpha_min"),
+                    0.0,
+                )
+            if "alpha_max" in render_options:
+                collision_payload["alpha_max"] = self._payload_coerce_float(
+                    render_options.get("alpha_max"),
+                    0.55,
+                )
+
+            if collision_payload:
+                payload["collision"] = collision_payload
 
         if viz_type_value == "occupancy_grid":
             occupancy_payload: Dict[str, Any] = {}
@@ -983,12 +1766,36 @@ class RobotRegistryClient:
         camera_topic_profiles: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> list:
         camera_topic_profiles = camera_topic_profiles or {}
-        core_topic_set = {"/horus/registration", "/horus/registration_ack", "/horus/heartbeat"}
+        core_topic_set = {
+            "/horus/registration",
+            "/horus/registration_ack",
+            "/horus/heartbeat",
+            "/horus/multi_operator_presence",
+            "/horus/multi_operator/sdk_registration_replay_request",
+            "/horus/multi_operator/sdk_registry_replay_begin",
+            "/horus/multi_operator/sdk_registry_replay_item",
+            "/horus/multi_operator/sdk_registry_replay_end",
+            "/horus/robot_description/request",
+            "/horus/robot_description/chunk_begin",
+            "/horus/robot_description/chunk_item",
+            "/horus/robot_description/chunk_end",
+        }
         rows = []
 
         for topic in monitored_topics:
             role = topic_roles.get(topic, "backend_sub")
             topic_kind = "core" if topic in core_topic_set else "data"
+            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
+            runtime_transport = self._get_runtime_transport_override(topic)
+            if runtime_transport:
+                camera_profile["active_transport"] = runtime_transport
+
+            camera_active_transport = self._normalize_transport(camera_profile.get("active_transport"))
+            if not camera_active_transport and camera_profile:
+                startup_mode = str(camera_profile.get("startup", "minimap")).strip().lower()
+                minimap_transport = self._normalize_transport(camera_profile.get("minimap")) or "ros"
+                teleop_transport = self._normalize_transport(camera_profile.get("teleop")) or "webrtc"
+                camera_active_transport = teleop_transport if startup_mode == "teleop" else minimap_transport
 
             if role == "sdk_pub":
                 role_label = "sdk->bridge"
@@ -1038,20 +1845,27 @@ class RobotRegistryClient:
                     subs = 0
                     data = "IDLE"
                 else:
-                    link_ok = self._resolve_data_topic_link(topic)
-                    link = "OK" if link_ok else "NO"
-                    subs = 1 if link_ok else 0
-                    if not link_ok:
-                        data = "IDLE"
-                    elif pubs > 0:
-                        data = "ACTIVE"
+                    if camera_active_transport == "webrtc":
+                        source_available = pubs > 0
+                        link_ok = source_available and is_connected
+                        link = "OK" if link_ok else "NO"
+                        subs = 1 if link_ok else 0
+                        if not source_available:
+                            data = "STALE"
+                        elif link_ok:
+                            data = "ACTIVE"
+                        else:
+                            data = "IDLE"
                     else:
-                        data = "STALE"
-
-            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
-            runtime_transport = self._get_runtime_transport_override(topic)
-            if runtime_transport:
-                camera_profile["active_transport"] = runtime_transport
+                        link_ok = self._resolve_data_topic_link(topic)
+                        link = "OK" if link_ok else "NO"
+                        subs = 1 if link_ok else 0
+                        if not link_ok:
+                            data = "IDLE"
+                        elif pubs > 0:
+                            data = "ACTIVE"
+                        else:
+                            data = "STALE"
 
             rows.append(
                 {
@@ -1132,9 +1946,23 @@ class RobotRegistryClient:
             
             data_topics = self._collect_topics(dataviz)
             control_topics = self._collect_control_topics(config)
-            robot_topics = self._merge_topics(data_topics, control_topics)
+            camera_topics = self._collect_camera_topics(config)
+            robot_topics = self._merge_topics(data_topics, control_topics, camera_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
-            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
+            core_topics = [
+                "/horus/registration",
+                "/horus/registration_ack",
+                "/horus/heartbeat",
+                "/horus/multi_operator_presence",
+                "/horus/multi_operator/sdk_registration_replay_request",
+                "/horus/multi_operator/sdk_registry_replay_begin",
+                "/horus/multi_operator/sdk_registry_replay_item",
+                "/horus/multi_operator/sdk_registry_replay_end",
+                "/horus/robot_description/request",
+                "/horus/robot_description/chunk_begin",
+                "/horus/robot_description/chunk_item",
+                "/horus/robot_description/chunk_end",
+            ]
             monitored_topics = core_topics + [t for t in robot_topics if t not in core_topics]
 
             try:
@@ -1188,6 +2016,7 @@ class RobotRegistryClient:
             show_counts = bool(os.getenv("HORUS_DASHBOARD_SHOW_COUNTS"))
             with cli.ConnectionDashboard(local_ip, 10000, bridge_state, show_counts=show_counts) as dashboard:
                 dashboard.update_app_link("Waiting for Horus App...")
+                dashboard.update_multi_operator(self._format_multi_operator_summary())
                 dashboard.update_registration("Idle")
                 dashboard.update_status("")
                 last_stats_update = 0.0
@@ -1216,12 +2045,8 @@ class RobotRegistryClient:
                     if app_restarted:
                         had_connection_drop = True
 
-                    if is_connected:
-                        dashboard.update_app_link("Connected")
-                    elif seen_heartbeat:
-                        dashboard.update_app_link("Disconnected (Waiting for Horus App...)")
-                    else:
-                        dashboard.update_app_link("Waiting for Horus App...")
+                    dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
+                    dashboard.update_multi_operator(self._format_multi_operator_summary())
                     
                     # Update Topic Stats (every ~1s)
                     if (time.time() - last_stats_update) >= 1.0:
@@ -1409,7 +2234,20 @@ class RobotRegistryClient:
 
             entries = []
             entry_by_name = {}
-            core_topics = ["/horus/registration", "/horus/registration_ack", "/horus/heartbeat"]
+            core_topics = [
+                "/horus/registration",
+                "/horus/registration_ack",
+                "/horus/heartbeat",
+                "/horus/multi_operator_presence",
+                "/horus/multi_operator/sdk_registration_replay_request",
+                "/horus/multi_operator/sdk_registry_replay_begin",
+                "/horus/multi_operator/sdk_registry_replay_item",
+                "/horus/multi_operator/sdk_registry_replay_end",
+                "/horus/robot_description/request",
+                "/horus/robot_description/chunk_begin",
+                "/horus/robot_description/chunk_item",
+                "/horus/robot_description/chunk_end",
+            ]
             robot_topics = []
             control_topics = []
             camera_topic_profiles = {}
@@ -1427,6 +2265,7 @@ class RobotRegistryClient:
                 entry_by_name[robot.name] = (robot, dataviz, msg)
                 camera_topic_profiles.update(self._extract_camera_topic_profiles(config))
                 robot_topics = self._merge_topics(robot_topics, self._collect_topics(dataviz))
+                robot_topics = self._merge_topics(robot_topics, self._collect_camera_topics(config))
                 control_topics = self._merge_topics(control_topics, self._collect_control_topics(config))
 
             robot_topics = self._merge_topics(robot_topics, control_topics)
@@ -1536,15 +2375,25 @@ class RobotRegistryClient:
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
                     app_restarted = self._consume_app_restart_signal()
+                    replay_request = self._consume_registration_replay_request()
                     if is_connected and (not last_connection_state or app_restarted):
                         for robot, dataviz, msg in entries:
                             publish_and_wait(robot, dataviz, msg)
+                    elif is_connected and replay_request:
+                        # Re-publish registrations to /horus/registration directly.
+                        # The joiner now also processes this topic, so this uses the
+                        # same proven channel as host registration instead of relying
+                        # on the separate replay topic assembly mechanism.
+                        for _, _, msg in entries:
+                            self.publisher.publish(msg)
+                        self._publish_sdk_registry_replay(entries, replay_request)
                     last_connection_state = is_connected
                     time.sleep(0.2)
 
             show_counts = bool(os.getenv("HORUS_DASHBOARD_SHOW_COUNTS"))
             with cli.ConnectionDashboard(local_ip, 10000, bridge_state, show_counts=show_counts) as dashboard:
                 dashboard.update_app_link("Waiting for Horus App...")
+                dashboard.update_multi_operator(self._format_multi_operator_summary())
                 dashboard.update_registration("Idle")
                 dashboard.update_status("")
 
@@ -1569,15 +2418,29 @@ class RobotRegistryClient:
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
                     app_restarted = self._consume_app_restart_signal()
+                    replay_request = self._consume_registration_replay_request()
                     if app_restarted:
                         had_connection_drop = True
 
-                    if is_connected:
-                        dashboard.update_app_link("Connected")
-                    elif seen_heartbeat:
-                        dashboard.update_app_link("Disconnected (Waiting for Horus App...)")
-                    else:
-                        dashboard.update_app_link("Waiting for Horus App...")
+                    dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
+                    dashboard.update_multi_operator(self._format_multi_operator_summary())
+
+                    if replay_request and is_connected:
+                        dashboard.update_registration("Re-registering")
+                        dashboard.update_status("Replaying robot registrations for joiner...")
+                        # Re-publish to /horus/registration directly so the joiner
+                        # receives registrations through the same channel as the host.
+                        for _, _, reg_msg in entries:
+                            self.publisher.publish(reg_msg)
+                        ok, result = self._publish_sdk_registry_replay(entries, replay_request)
+                        if not ok:
+                            dashboard.update_registration("Failed")
+                            dashboard.update_status((result or {}).get("error") or "Registration replay failed")
+                        else:
+                            dashboard.update_registration("Registered")
+                            published = int((result or {}).get("published_count") or 0)
+                            attempts = int((result or {}).get("attempt_count") or 1)
+                            dashboard.update_status(f"Replay complete ({published} robots, {attempts} attempts)")
 
                     if not is_connected:
                         if last_connection_state:
@@ -1738,10 +2601,79 @@ class RobotRegistryClient:
         """
         Unregister robot from HORUS backend
         """
+        self._remove_robot_description_cache(str(robot_id or ""))
         # For unregistration, we can send a config with "action": "unregister"
         # Or just empty config with name.
         # Implementation simplified for now.
         return True, {"message": "Unregistered (Local cleanup only)"}
+
+    def _resolve_robot_description_artifact(self, robot) -> Optional[Dict[str, Any]]:
+        if robot is None:
+            return None
+
+        from horus.utils import cli
+
+        metadata = getattr(robot, "metadata", None)
+        description_config = metadata.get("robot_description_config") if isinstance(metadata, dict) else None
+        has_description_config = isinstance(description_config, dict) and bool(description_config.get("enabled", True))
+
+        if not hasattr(self, "_robot_description_resolver") or self._robot_description_resolver is None:
+            self._robot_description_resolver = RobotDescriptionResolver()
+        if not hasattr(self, "_robot_description_by_robot") or self._robot_description_by_robot is None:
+            self._robot_description_by_robot = {}
+        if not hasattr(self, "_robot_description_by_id") or self._robot_description_by_id is None:
+            self._robot_description_by_id = {}
+
+        artifact = self._robot_description_resolver.resolve_for_robot(robot)
+        if artifact is None:
+            reason = ""
+            try:
+                reason = str(self._robot_description_resolver.last_error or "").strip()
+            except Exception:
+                reason = ""
+            if not has_description_config and not reason:
+                return None
+            robot_name = str(getattr(robot, "name", "") or "").strip() or "unknown"
+            if reason:
+                cli.print_info(
+                    f"Robot description unavailable for '{robot_name}': {reason}"
+                )
+            else:
+                cli.print_info(
+                    f"Robot description unavailable for '{robot_name}': unresolved source."
+                )
+            return None
+
+        robot_name = str(getattr(robot, "name", "") or "").strip()
+        container = {
+            "robot_name": robot_name,
+            "artifact": artifact,
+        }
+        if robot_name:
+            self._robot_description_by_robot[robot_name] = container
+        self._robot_description_by_id[artifact.manifest.description_id] = container
+        return container
+
+    def _remove_robot_description_cache(self, robot_name: str) -> None:
+        normalized = str(robot_name or "").strip()
+        if not normalized:
+            return
+        cache_by_robot = getattr(self, "_robot_description_by_robot", None)
+        cache_by_id = getattr(self, "_robot_description_by_id", None)
+        if not isinstance(cache_by_robot, dict) or not isinstance(cache_by_id, dict):
+            return
+
+        container = cache_by_robot.pop(normalized, None)
+        if container is None:
+            return
+        artifact = container.get("artifact")
+        if artifact is None:
+            return
+        description_id = str(artifact.manifest.description_id or "").strip()
+        if description_id:
+            existing = cache_by_id.get(description_id)
+            if existing is container:
+                cache_by_id.pop(description_id, None)
 
     def _build_robot_config_dict(
         self,
@@ -1820,6 +2752,22 @@ class RobotRegistryClient:
                     return normalized
                 return fallback
 
+            def _normalize_image_type(value, fallback):
+                normalized = str(value).strip().lower() if value is not None else ""
+                if normalized in ("raw", "compressed"):
+                    return normalized
+                return fallback
+
+            def _normalize_layout(value, fallback):
+                normalized = str(value).strip().lower() if value is not None else ""
+                if normalized in ("sbs", "side_by_side", "side-by-side"):
+                    return "side_by_side"
+                if normalized in ("dual_topic", "dual", "two_topics", "two_topic"):
+                    return "dual_topic"
+                if normalized in ("mono", ""):
+                    return "mono" if normalized == "mono" else fallback
+                return fallback
+
             legacy_streaming_type = _normalize_transport(
                 metadata.get("streaming_type"),
                 "",
@@ -1861,12 +2809,80 @@ class RobotRegistryClient:
             ).strip().lower()
             if startup_mode not in ("minimap", "teleop"):
                 startup_mode = "minimap"
+
+            is_stereo = bool(getattr(sensor, "is_stereo", False))
+            raw_stereo_layout = str(
+                metadata.get("stereo_layout", getattr(sensor, "stereo_layout", ""))
+            ).strip().lower()
+            if is_stereo:
+                if raw_stereo_layout in ("dual_topic", "dual", "two_topics", "two_topic"):
+                    stereo_layout = "dual_topic"
+                else:
+                    stereo_layout = "side_by_side"
+            else:
+                stereo_layout = "mono"
+
+            right_topic = str(
+                metadata.get("right_topic", getattr(sensor, "right_topic", ""))
+            ).strip()
+
+            minimap_topic = str(
+                metadata.get("minimap_topic", getattr(sensor, "minimap_topic", ""))
+            ).strip()
+            if not minimap_topic:
+                minimap_topic = str(getattr(sensor, "topic", "")).strip()
+
+            teleop_topic = str(
+                metadata.get("teleop_topic", getattr(sensor, "teleop_topic", ""))
+            ).strip()
+            if not teleop_topic:
+                teleop_topic = minimap_topic
+
+            image_type = _normalize_image_type(metadata.get("image_type"), "raw")
+            minimap_image_type = _normalize_image_type(
+                metadata.get("minimap_image_type", getattr(sensor, "minimap_image_type", "")),
+                image_type,
+            )
+            teleop_image_type = _normalize_image_type(
+                metadata.get("teleop_image_type", getattr(sensor, "teleop_image_type", "")),
+                image_type,
+            )
+
+            minimap_max_fps = _coerce_int(
+                metadata.get("minimap_max_fps", getattr(sensor, "minimap_max_fps", 30)),
+                30,
+            )
+            minimap_max_fps = max(1, min(30, minimap_max_fps))
+
+            teleop_stereo_layout = _normalize_layout(
+                metadata.get("teleop_stereo_layout", getattr(sensor, "teleop_stereo_layout", "")),
+                stereo_layout,
+            )
+            teleop_right_topic = str(
+                metadata.get("teleop_right_topic", getattr(sensor, "teleop_right_topic", ""))
+            ).strip()
+            if not teleop_right_topic:
+                teleop_right_topic = right_topic
+            if not is_stereo:
+                teleop_stereo_layout = "mono"
+                teleop_right_topic = ""
+
             return {
                 "streaming_type": legacy_streaming_type,
                 "minimap_streaming_type": minimap_streaming_type,
                 "teleop_streaming_type": teleop_streaming_type,
+                "minimap_topic": minimap_topic,
+                "teleop_topic": teleop_topic,
+                "minimap_image_type": minimap_image_type,
+                "teleop_image_type": teleop_image_type,
+                "minimap_max_fps": minimap_max_fps,
+                "teleop_stereo_layout": teleop_stereo_layout,
+                "teleop_right_topic": teleop_right_topic,
                 "startup_mode": startup_mode,
-                "image_type": str(metadata.get("image_type", "raw")).lower(),
+                "is_stereo": is_stereo,
+                "stereo_layout": stereo_layout,
+                "right_topic": right_topic,
+                "image_type": image_type,
                 "display_mode": str(metadata.get("display_mode", "projected")).lower(),
                 "use_tf": _coerce_bool(metadata.get("use_tf"), True),
                 "projection_target_frame": str(metadata.get("projection_target_frame", "")),
@@ -1882,7 +2898,7 @@ class RobotRegistryClient:
                 ),
                 "webrtc_framerate": _coerce_int(
                     metadata.get("webrtc_framerate"),
-                    getattr(sensor, "fps", 20),
+                    max(30, min(90, _coerce_int(getattr(sensor, "fps", None), 30))),
                 ),
                 "webrtc_stun_server_url": str(
                     metadata.get("webrtc_stun_server_url", "stun:stun.l.google.com:19302")
@@ -2106,6 +3122,10 @@ class RobotRegistryClient:
             position_tolerance_m = max(0.01, min(10.0, position_tolerance_m))
             yaw_tolerance_deg = _coerce_float(go_to_point_metadata.get("yaw_tolerance_deg"), 12.0)
             yaw_tolerance_deg = max(0.1, min(180.0, yaw_tolerance_deg))
+            min_altitude_m = _coerce_float(go_to_point_metadata.get("min_altitude_m"), 0.0)
+            min_altitude_m = max(0.0, min(100.0, min_altitude_m))
+            max_altitude_m = _coerce_float(go_to_point_metadata.get("max_altitude_m"), 10.0)
+            max_altitude_m = max(min_altitude_m + 0.1, min(100.0, max_altitude_m))
 
             waypoint_metadata = task_metadata.get("waypoint")
             if not isinstance(waypoint_metadata, dict):
@@ -2131,6 +3151,8 @@ class RobotRegistryClient:
                     "frame_id": frame_id,
                     "position_tolerance_m": position_tolerance_m,
                     "yaw_tolerance_deg": yaw_tolerance_deg,
+                    "min_altitude_m": min_altitude_m,
+                    "max_altitude_m": max_altitude_m,
                 },
                 "waypoint": {
                     "enabled": _coerce_bool(waypoint_metadata.get("enabled"), True),
@@ -2177,6 +3199,9 @@ class RobotRegistryClient:
             if command_override:
                 drive_topic = command_override
 
+        self._remove_robot_description_cache(str(getattr(robot, "name", "") or ""))
+        description_container = self._resolve_robot_description_artifact(robot)
+
         config = {
             "action": "register",
             "robot_name": robot.name,
@@ -2192,6 +3217,14 @@ class RobotRegistryClient:
             "robot_manager_config": _build_robot_manager_config(),
             "timestamp": time.time()
         }
+
+        if description_container is not None:
+            artifact = description_container.get("artifact")
+            if artifact is not None:
+                config["robot_description_manifest"] = artifact.to_manifest_payload()
+                # Inline payload fallback so MR can render descriptions even when
+                # chunk transport is unavailable in a given runtime setup.
+                config["robot_description_payload_json"] = artifact.payload_json
 
         if dimensions is not None:
             config["dimensions"] = dimensions

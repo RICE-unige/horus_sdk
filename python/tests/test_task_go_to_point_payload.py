@@ -32,6 +32,8 @@ def test_go_to_point_task_defaults():
     assert go_to_point["frame_id"] == "map"
     assert go_to_point["position_tolerance_m"] == 0.20
     assert go_to_point["yaw_tolerance_deg"] == 12.0
+    assert go_to_point["min_altitude_m"] == 0.0
+    assert go_to_point["max_altitude_m"] == 10.0
 
 
 def test_go_to_point_task_overrides():
@@ -47,6 +49,8 @@ def test_go_to_point_task_overrides():
                 "frame_id": "custom_map",
                 "position_tolerance_m": 0.35,
                 "yaw_tolerance_deg": 25.0,
+                "min_altitude_m": 1.2,
+                "max_altitude_m": 7.5,
             }
         },
     )
@@ -61,6 +65,8 @@ def test_go_to_point_task_overrides():
     assert go_to_point["frame_id"] == "custom_map"
     assert go_to_point["position_tolerance_m"] == 0.35
     assert go_to_point["yaw_tolerance_deg"] == 25.0
+    assert go_to_point["min_altitude_m"] == 1.2
+    assert go_to_point["max_altitude_m"] == 7.5
 
 
 def test_go_to_point_invalid_values_clamp_to_safe_defaults():
@@ -75,6 +81,8 @@ def test_go_to_point_invalid_values_clamp_to_safe_defaults():
                 "frame_id": "",
                 "position_tolerance_m": -1.0,
                 "yaw_tolerance_deg": 999.0,
+                "min_altitude_m": -5.0,
+                "max_altitude_m": -20.0,
             }
         },
     )
@@ -88,3 +96,5 @@ def test_go_to_point_invalid_values_clamp_to_safe_defaults():
     assert go_to_point["frame_id"] == "map"
     assert go_to_point["position_tolerance_m"] == 0.01
     assert go_to_point["yaw_tolerance_deg"] == 180.0
+    assert go_to_point["min_altitude_m"] == 0.0
+    assert go_to_point["max_altitude_m"] == 0.1

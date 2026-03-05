@@ -24,6 +24,7 @@ except Exception as exc:
 from fake_tf_publisher import (
     FakeTFPublisher,
     build_parser as build_base_parser,
+    parse_robot_base_frames,
     parse_resolution_list,
     quaternion_from_yaw,
     resolve_robot_names,
@@ -36,6 +37,8 @@ class TeleopDrivenFakeTFPublisher(FakeTFPublisher):
     def __init__(self, command_timeout_s: float, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.command_timeout_s = max(0.05, float(command_timeout_s))
+        self.linear_deadband_mps = 0.01
+        self.angular_deadband_rps = 0.01
         self.mode = "teleop"
         self._robot_altitudes = {robot.name: float(self.height) for robot in self.robots}
         self._cmd_state = {
@@ -103,7 +106,7 @@ class TeleopDrivenFakeTFPublisher(FakeTFPublisher):
             tf = TransformStamped()
             tf.header.stamp = now
             tf.header.frame_id = self.map_frame
-            tf.child_frame_id = f"{robot.name}/{self.base_frame}"
+            tf.child_frame_id = f"{robot.name}/{self._base_frame_for(robot.name)}"
             tf.transform.translation.x = robot.x * self.scale
             tf.transform.translation.y = robot.y * self.scale
             tf.transform.translation.z = self._robot_altitudes.get(robot.name, self.height) * self.scale
@@ -131,6 +134,15 @@ class TeleopDrivenFakeTFPublisher(FakeTFPublisher):
                 linear_y = float(state.get("linear_y", 0.0))
                 linear_z = float(state.get("linear_z", 0.0))
                 angular_z = float(state.get("angular_z", 0.0))
+
+            if abs(linear_x) < self.linear_deadband_mps:
+                linear_x = 0.0
+            if abs(linear_y) < self.linear_deadband_mps:
+                linear_y = 0.0
+            if abs(linear_z) < self.linear_deadband_mps:
+                linear_z = 0.0
+            if abs(angular_z) < self.angular_deadband_rps:
+                angular_z = 0.0
 
             planar_speed = math.hypot(linear_x, linear_y)
             if planar_speed > self.max_speed and planar_speed > 1e-6:
@@ -192,6 +204,7 @@ def run_from_args(args):
         robot_names=robot_names,
         map_frame=args.map_frame,
         base_frame=args.base_frame,
+        robot_base_frames=parse_robot_base_frames(args.robot_base_frames),
         rate_hz=args.rate,
         height=args.height,
         scale=args.scale,
