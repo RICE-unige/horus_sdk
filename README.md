@@ -163,14 +163,43 @@ Notes:
 - Use `--robot-profile real_models` with `--anymal-urdf` / `--h1-urdf` (plus existing `--wheeled-urdf` / `--legged-urdf`) for real-model profile overrides.
 - Collision-body transparency is SDK-driven for V1 (`is_transparent` in manifest). Demo defaults to opaque; use `--collision-transparent` to switch.
 
-Real-model profile demo (Anymal C + Jackal + Go1 + Unitree H1):
+Real-model profile demo (Anymal C + Jackal + Go1 + Unitree H1, 3D map off by default):
 
 ```bash
 cd ~/horus_sdk
 python3 python/examples/tools/fetch_robot_description_assets.py --force
-python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models
-python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode off
+python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode off
 ```
+
+Enable 3D map in mesh mode (recommended for Quest 3):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh
+python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode mesh
+```
+
+Enable chunked `MarkerArray` mesh transport explicitly (recommended Quest path):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-mesh-transport marker_array --map-3d-mesh-array-topic /map_3d_mesh_array --map-3d-mesh-chunk-max-triangles 3000
+python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode mesh --map-3d-mesh-transport marker_array --map-3d-mesh-array-topic /map_3d_mesh_array --map-3d-mesh-chunk-max-triangles 3000
+```
+
+3D map CLI notes:
+- `--map-3d-mode {off,pointcloud,mesh}` is the primary switch for this real-model demo pair.
+- Topic/frame overrides are available via `--map-3d-topic`, `--map-3d-frame`, `--map-3d-mesh-topic`, and `--map-3d-mesh-frame`.
+- Mesh transport controls: `--map-3d-mesh-transport {marker,marker_array}`, `--map-3d-mesh-array-topic`, and `--map-3d-mesh-chunk-max-triangles`.
+- Legacy aliases `--with-3d-map` and `--with-3d-mesh` are retained for compatibility and print deprecation warnings.
+- In mesh mode, the fake runtime auto-starts both the fake pointcloud publisher and pointcloud-to-mesh converter pipeline.
+- Mesh converter controls are exposed through: `--map-3d-mesh-voxel-size`, `--map-3d-mesh-max-voxels`, `--map-3d-mesh-max-triangles`, `--map-3d-mesh-update-policy {snapshot,periodic,continuous}`, and `--map-3d-mesh-republish-interval`.
+- Real-model mesh flow defaults transport to `marker_array` unless explicitly overridden.
+- Quest-focused default is snapshot-first mesh conversion (`snapshot` policy with no periodic republish) to avoid repeated heavy marker rebuilds.
+
+> [!WARNING]
+> Pointcloud mode is retained for diagnostics but is not recommended for regular Meta Quest 3 operation. Use mesh mode for stable runtime behavior.
 
 RViz-first TF validation (robot_state_publisher from real URDF):
 
@@ -467,7 +496,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
 | Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. Follow-leader teleop V1 in MR reuses this contract with no schema change. | Add subset/handoff metadata and manipulator-capability descriptors. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
-| 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
+| 3D Map Contracts | :large_orange_diamond: In progress | Shared `--map-3d-mode` workflow is integrated in the real-model demo pair with pointcloud and mesh global visualization payload wiring, greedy voxel meshing, and snapshot-first converter orchestration for Quest-focused runtime stability. | Add richer source descriptors and renderer policy hints (decimation/quality tiers) for runtime tuning. |
 | Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
 | Tasking (2D/3D) | :large_orange_diamond: In progress | Typed Go-To/Waypoint schemas are integrated with altitude-bounds support for aerial robots, plus fake TF validation scripts for ground and drone ops suites. | Add explicit payload contracts for Draw Path, Go-To Label, and subset-based Multi-Robot Go-To policies. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
