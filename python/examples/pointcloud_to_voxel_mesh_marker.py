@@ -9,6 +9,7 @@ Supports two output transports:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -31,7 +32,7 @@ try:
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import PointCloud2, PointField
-    from std_msgs.msg import ColorRGBA
+    from std_msgs.msg import ColorRGBA, String
     from visualization_msgs.msg import Marker, MarkerArray
 except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
@@ -40,6 +41,10 @@ except Exception as exc:
 
 MESH_TRANSPORT_MARKER = "marker"
 MESH_TRANSPORT_MARKER_ARRAY = "marker_array"
+SDK_REPLAY_REQUEST_TOPIC = "/horus/multi_operator/sdk_registration_replay_request"
+SDK_REPLAY_END_TOPIC = "/horus/multi_operator/sdk_registry_replay_end"
+REPLAY_BURST_COUNT_DEFAULT = 8
+REPLAY_BURST_INTERVAL_DEFAULT = 0.5
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,14 @@ class PointCloudToVoxelMeshNode(Node):
         self._last_chunk_signatures: Dict[int, ChunkSignature] = {}
         self._last_mesh_subscriber_count = -1
         self._last_periodic_republish_time = 0.0
+        self._replay_burst_count = REPLAY_BURST_COUNT_DEFAULT
+        self._replay_burst_interval = REPLAY_BURST_INTERVAL_DEFAULT
+        self._replay_burst_remaining = 0
+        self._replay_burst_next_time = 0.0
+        self._replay_burst_total = 0
+        self._replay_burst_published = 0
+        self._replay_burst_source = ""
+        self._replay_burst_request_id = ""
 
         qos = QoSProfile(
             depth=1,
@@ -114,13 +127,20 @@ class PointCloudToVoxelMeshNode(Node):
         self.sub = self.create_subscription(PointCloud2, self.cloud_topic, self._on_cloud, qos)
         self.marker_pub = self.create_publisher(Marker, self.marker_topic, qos)
         self.marker_array_pub = self.create_publisher(MarkerArray, self.marker_array_topic, qos)
+        self.sdk_replay_request_sub = self.create_subscription(
+            String,
+            SDK_REPLAY_REQUEST_TOPIC,
+            self._on_sdk_replay_request,
+            10,
+        )
+        self.sdk_replay_end_sub = self.create_subscription(
+            String,
+            SDK_REPLAY_END_TOPIC,
+            self._on_sdk_replay_end,
+            10,
+        )
 
-        self.republish_timer = None
-        if self.update_mode in {"once", "on_change"}:
-            self.republish_timer = self.create_timer(
-                0.5,
-                self._republish_latest_mesh,
-            )
+        self.republish_timer = self.create_timer(0.5, self._on_timer_tick)
 
         self.get_logger().info(
             f"Voxel mesh converter started: cloud={self.cloud_topic}, transport={self.mesh_transport}, "
@@ -129,7 +149,8 @@ class PointCloudToVoxelMeshNode(Node):
             f"max_voxels={self.max_voxels}, max_triangles={self.max_triangles}, "
             f"update_policy={self.update_policy}, update_mode={self.update_mode}, "
             f"quant_step={self.color_quant_step}, "
-            f"on_change_republish_interval={self.on_change_republish_interval:.2f}s, meshing=greedy"
+            f"on_change_republish_interval={self.on_change_republish_interval:.2f}s, meshing=greedy, "
+            f"replay_burst={self._replay_burst_count}x{self._replay_burst_interval:.2f}s"
         )
 
     def _on_cloud(self, msg: PointCloud2) -> None:
@@ -291,14 +312,12 @@ class PointCloudToVoxelMeshNode(Node):
         except Exception:
             return -1
 
+    def _on_timer_tick(self) -> None:
+        self._service_replay_burst()
+        self._republish_latest_mesh()
+
     def _republish_latest_mesh(self) -> None:
         if self.update_mode not in {"once", "on_change"}:
-            return
-
-        if self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
-            if self._last_marker_array_full is None:
-                return
-        elif self._last_marker is None:
             return
 
         sub_count = self._active_mesh_subscriber_count()
@@ -324,13 +343,8 @@ class PointCloudToVoxelMeshNode(Node):
         if not should_publish:
             return
 
-        if self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
-            self.marker_array_pub.publish(self._last_marker_array_full)
-            if self._last_marker is not None and self.marker_pub.get_subscription_count() > 0:
-                self.marker_pub.publish(self._last_marker)
-        else:
-            self.marker_pub.publish(self._last_marker)
-        self._last_periodic_republish_time = now
+        if not self._publish_latest_mesh_once():
+            return
 
         if reason == "subscriber_change":
             self.get_logger().info(
@@ -344,6 +358,88 @@ class PointCloudToVoxelMeshNode(Node):
                 f"(points={self._last_marker_point_count}, chunks={self._last_chunk_count}, "
                 f"transport={self.mesh_transport})."
             )
+
+    def _service_replay_burst(self) -> None:
+        if self._replay_burst_remaining <= 0:
+            return
+
+        now = time.monotonic()
+        if now < self._replay_burst_next_time:
+            return
+
+        attempt = (self._replay_burst_total - self._replay_burst_remaining) + 1
+        snapshot_available = self._publish_latest_mesh_once()
+        if snapshot_available:
+            self._replay_burst_published += 1
+            self.get_logger().info(
+                f"[3D-MAP][replay_burst] source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, publish={attempt}/{self._replay_burst_total}, "
+                f"snapshot_available=True, points={self._last_marker_point_count}, chunks={self._last_chunk_count}."
+            )
+        else:
+            self.get_logger().warning(
+                f"[3D-MAP][replay_burst] source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, publish={attempt}/{self._replay_burst_total}, "
+                "snapshot_available=False (waiting for first mesh snapshot)."
+            )
+
+        self._replay_burst_remaining -= 1
+        self._replay_burst_next_time = now + self._replay_burst_interval
+        if self._replay_burst_remaining <= 0:
+            self.get_logger().info(
+                f"[3D-MAP][replay_burst] completed source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, "
+                f"published={self._replay_burst_published}/{self._replay_burst_total}."
+            )
+            self._replay_burst_source = ""
+            self._replay_burst_request_id = ""
+
+    def _arm_replay_burst(self, source: str, request_id: str) -> None:
+        self._replay_burst_source = source
+        self._replay_burst_request_id = request_id
+        self._replay_burst_remaining = self._replay_burst_count
+        self._replay_burst_total = self._replay_burst_count
+        self._replay_burst_published = 0
+        self._replay_burst_next_time = time.monotonic()
+        self.get_logger().info(
+            f"[3D-MAP][replay_burst] armed source={source}, request_id={request_id or '-'}, "
+            f"count={self._replay_burst_count}, interval={self._replay_burst_interval:.2f}s."
+        )
+
+    def _publish_latest_mesh_once(self) -> bool:
+        if self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
+            if self._last_marker_array_full is None:
+                return False
+            self.marker_array_pub.publish(self._last_marker_array_full)
+            if self._last_marker is not None and self.marker_pub.get_subscription_count() > 0:
+                self.marker_pub.publish(self._last_marker)
+        else:
+            if self._last_marker is None:
+                return False
+            self.marker_pub.publish(self._last_marker)
+        self._last_periodic_republish_time = time.monotonic()
+        return True
+
+    def _on_sdk_replay_request(self, msg: String) -> None:
+        request_id = self._extract_request_id(msg)
+        self._arm_replay_burst("request", request_id)
+
+    def _on_sdk_replay_end(self, msg: String) -> None:
+        request_id = self._extract_request_id(msg)
+        self._arm_replay_burst("replay_end", request_id)
+
+    @staticmethod
+    def _extract_request_id(msg: String) -> str:
+        payload = str(getattr(msg, "data", "") or "").strip()
+        if not payload:
+            return ""
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict):
+                return str(parsed.get("request_id") or "").strip()
+        except Exception:
+            return ""
+        return ""
 
     def _build_chunked_marker_array(
         self,
