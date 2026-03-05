@@ -268,3 +268,81 @@ def test_mesh_overrides_are_coerced_and_clamped():
     assert mesh["double_sided"] is False
     assert mesh["max_triangles"] == 1000
     assert mesh["source_coordinate_space"] == "enu"
+
+
+def test_octomap_serialized_as_global_visualization():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_octomap(
+        topic="/map_3d_octomap_mesh",
+        frame_id="map",
+        render_options={
+            "render_mode": "surface_mesh",
+            "use_vertex_colors": False,
+            "alpha": 0.85,
+            "double_sided": False,
+            "max_triangles": 125000,
+            "source_coordinate_space": "optical",
+            "native_topic": "/map_3d_octomap",
+            "native_frame": "map",
+            "native_binary_only": True,
+        },
+    )
+
+    client = _build_client()
+    config = client._build_robot_config_dict(robot, dataviz)
+    octomap_entries = [
+        entry for entry in config["global_visualizations"] if entry.get("type") == "octomap"
+    ]
+    assert len(octomap_entries) == 1
+
+    octomap_entry = octomap_entries[0]
+    assert octomap_entry["scope"] == "global"
+    assert octomap_entry["topic"] == "/map_3d_octomap_mesh"
+    assert octomap_entry["frame"] == "map"
+    assert octomap_entry["octomap"]["render_mode"] == "surface_mesh"
+    assert octomap_entry["octomap"]["use_vertex_colors"] is False
+    assert octomap_entry["octomap"]["alpha"] == 0.85
+    assert octomap_entry["octomap"]["double_sided"] is False
+    assert octomap_entry["octomap"]["max_triangles"] == 125000
+    assert octomap_entry["octomap"]["source_coordinate_space"] == "optical"
+    assert octomap_entry["octomap"]["native_topic"] == "/map_3d_octomap"
+    assert octomap_entry["octomap"]["native_frame"] == "map"
+    assert octomap_entry["octomap"]["native_binary_only"] is True
+
+
+def test_octomap_defaults_are_emitted_without_render_options():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_octomap(topic="/map_3d_octomap_mesh", frame_id="map")
+
+    client = _build_client()
+    config = client._build_robot_config_dict(robot, dataviz)
+    entry = next(
+        item for item in config["global_visualizations"] if item.get("type") == "octomap"
+    )
+    octomap = entry["octomap"]
+    assert octomap["render_mode"] == "surface_mesh"
+    assert octomap["use_vertex_colors"] is True
+    assert octomap["alpha"] == 1.0
+    assert octomap["double_sided"] is False
+    assert octomap["max_triangles"] == 60000
+    assert octomap["source_coordinate_space"] == "enu"
+    assert octomap["native_topic"] == "/map_3d_octomap"
+    assert octomap["native_frame"] == "map"
+    assert octomap["native_binary_only"] is True
+
+
+def test_global_visualization_dedupes_octomap_across_multiple_robots():
+    robot_a = Robot(name="bot_a", robot_type=RobotType.WHEELED)
+    dataviz_a = robot_a.create_dataviz()
+    dataviz_a.add_3d_octomap(topic="/map_3d_octomap_mesh", frame_id="map")
+
+    robot_b = Robot(name="bot_b", robot_type=RobotType.WHEELED)
+    dataviz_b = robot_b.create_dataviz()
+    dataviz_b.add_3d_octomap(topic="/map_3d_octomap_mesh", frame_id="map")
+
+    client = _build_client()
+    global_payload = client._build_global_visualizations_payload([dataviz_a, dataviz_b])
+    octomap_entries = [entry for entry in global_payload if entry.get("type") == "octomap"]
+    assert len(octomap_entries) == 1

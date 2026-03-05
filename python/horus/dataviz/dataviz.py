@@ -55,6 +55,7 @@ class VisualizationType(Enum):
     TRANSFORM_TREE = "transform_tree"
     COORDINATE_AXES = "coordinate_axes"
     MESH = "mesh"
+    OCTOMAP = "octomap"
     HEATMAP = "heatmap"
 
 
@@ -592,6 +593,29 @@ class DataViz:
 
         viz_config = VisualizationConfig(
             viz_type=VisualizationType.MESH,
+            data_source=data_source,
+            render_options=render_options or {},
+            layer_priority=-4,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_3d_octomap(
+        self,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add global OctoMap visualization metadata."""
+        data_source = EnvironmentDataSource(
+            name="map_3d_octomap",
+            source_type=DataSourceType.MAP_3D,
+            topic=topic,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.OCTOMAP,
             data_source=data_source,
             render_options=render_options or {},
             layer_priority=-4,

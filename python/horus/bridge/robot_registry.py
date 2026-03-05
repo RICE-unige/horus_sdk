@@ -1713,6 +1713,55 @@ class RobotRegistryClient:
 
             payload["mesh"] = mesh_payload
 
+        if viz_type_value == "octomap":
+            octomap_payload: Dict[str, Any] = {}
+            render_mode = str(
+                render_options.get("render_mode", "surface_mesh")
+            ).strip().lower()
+            if render_mode not in {"surface_mesh", "voxel_cubes"}:
+                render_mode = "surface_mesh"
+            octomap_payload["render_mode"] = render_mode
+            octomap_payload["use_vertex_colors"] = self._payload_coerce_bool(
+                render_options.get("use_vertex_colors"),
+                True,
+            )
+            octomap_payload["alpha"] = min(
+                1.0,
+                max(
+                    0.0,
+                    self._payload_coerce_float(render_options.get("alpha"), 1.0),
+                ),
+            )
+            octomap_payload["double_sided"] = self._payload_coerce_bool(
+                render_options.get("double_sided"),
+                False,
+            )
+            octomap_payload["max_triangles"] = max(
+                1000,
+                int(self._payload_coerce_float(render_options.get("max_triangles"), 60000.0)),
+            )
+            source_coordinate_space = str(
+                render_options.get("source_coordinate_space", "enu")
+            ).strip().lower()
+            if source_coordinate_space not in {"enu", "optical"}:
+                source_coordinate_space = "enu"
+            octomap_payload["source_coordinate_space"] = source_coordinate_space
+            native_topic = str(
+                render_options.get("native_topic", "/map_3d_octomap")
+            ).strip()
+            if native_topic:
+                octomap_payload["native_topic"] = native_topic
+            native_frame = str(
+                render_options.get("native_frame", frame_id or "map")
+            ).strip()
+            if native_frame:
+                octomap_payload["native_frame"] = native_frame
+            octomap_payload["native_binary_only"] = self._payload_coerce_bool(
+                render_options.get("native_binary_only"),
+                True,
+            )
+            payload["octomap"] = octomap_payload
+
         return payload
 
     def _build_global_visualizations_payload(self, datavizs: list) -> list:

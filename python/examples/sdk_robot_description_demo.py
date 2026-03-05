@@ -28,6 +28,7 @@ except ImportError:
     raise
 
 DETAILED_MESH_MAX_TRIANGLES_DEFAULT = 100000
+DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT = 100000
 
 
 def _first_existing_path(candidates: List[str]) -> str:
@@ -268,6 +269,24 @@ def _add_map_3d_visualization(dataviz, args, mode: Map3DMode) -> None:
         )
         return
 
+    if mode == Map3DMode.OCTOMAP:
+        dataviz.add_3d_octomap(
+            topic=str(args.map_3d_octomap_mesh_topic or "/map_3d_octomap_mesh").strip() or "/map_3d_octomap_mesh",
+            frame_id=str(args.map_3d_octomap_frame or "map").strip() or "map",
+            render_options={
+                "render_mode": "surface_mesh",
+                "use_vertex_colors": True,
+                "alpha": 1.0,
+                "double_sided": False,
+                "max_triangles": max(1000, int(getattr(args, "map_3d_octomap_max_triangles", 60000))),
+                "source_coordinate_space": "enu",
+                "native_topic": str(args.map_3d_octomap_topic or "/map_3d_octomap").strip() or "/map_3d_octomap",
+                "native_frame": str(args.map_3d_octomap_frame or "map").strip() or "map",
+                "native_binary_only": True,
+            },
+        )
+        return
+
     marker_topic = "/map_3d_mesh"
     dataviz.add_3d_mesh(
         topic=marker_topic,
@@ -339,6 +358,24 @@ def _apply_high_detail_mesh_registration_defaults(args, mode: Map3DMode) -> None
     cli.print_info(
         "[3D-MAP] Detailed mesh mode auto-set registration --map-3d-mesh-max-triangles=100000 "
         "(override with --map-3d-mesh-max-triangles)."
+    )
+
+
+def _apply_high_detail_octomap_registration_defaults(args, mode: Map3DMode) -> None:
+    if mode != Map3DMode.OCTOMAP or not bool(getattr(args, "map_3d_detailed", False)):
+        return
+
+    if _flag_was_provided("--map-3d-octomap-max-triangles"):
+        return
+
+    current = int(getattr(args, "map_3d_octomap_max_triangles", 0))
+    if current >= DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT:
+        return
+
+    args.map_3d_octomap_max_triangles = DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT
+    cli.print_info(
+        "[3D-MAP] Detailed octomap mode auto-set registration --map-3d-octomap-max-triangles=100000 "
+        "(override with --map-3d-octomap-max-triangles)."
     )
 
 
@@ -520,6 +557,7 @@ def main():
     )
     mesh_transport = _apply_mesh_transport_defaults(args, map_3d_mode)
     _apply_high_detail_mesh_registration_defaults(args, map_3d_mode)
+    _apply_high_detail_octomap_registration_defaults(args, map_3d_mode)
 
     for warning in map_mode_warnings:
         cli.print_warning(f"[3D-MAP] {warning}")
@@ -533,6 +571,10 @@ def main():
         cli.print_warning(
             "[3D-MAP] Pointcloud mode is not recommended on Quest 3 for regular operations. "
             "Prefer mesh mode for stable performance."
+        )
+    if map_3d_mode == Map3DMode.OCTOMAP:
+        cli.print_info(
+            "[3D-MAP] Octomap mode uses mesh-marker rendering in MR for Quest performance."
         )
 
     setup_entries = _build_robot_profile_entries(args)
