@@ -22,10 +22,12 @@ Usage examples:
 """
 
 import argparse
+import json
 import math
 import random
 import struct
 import sys
+import time
 from typing import Dict, List, Optional, Tuple
 
 try:
@@ -34,6 +36,7 @@ try:
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import PointCloud2, PointField
+    from std_msgs.msg import String
 except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
     sys.exit(1)
@@ -41,6 +44,10 @@ except Exception as exc:
 
 PointKey = Tuple[int, int, int]
 PointValue = Tuple[float, float, float, int]
+SDK_REPLAY_REQUEST_TOPIC = "/horus/multi_operator/sdk_registration_replay_request"
+SDK_REPLAY_END_TOPIC = "/horus/multi_operator/sdk_registry_replay_end"
+REPLAY_BURST_COUNT_DEFAULT = 8
+REPLAY_BURST_INTERVAL_DEFAULT = 0.5
 
 
 class PointCloudBuilder:
@@ -133,11 +140,32 @@ class Fake3DMapPublisherRealistic(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.publisher = self.create_publisher(PointCloud2, self.topic, qos)
+        self.sdk_replay_request_sub = self.create_subscription(
+            String,
+            SDK_REPLAY_REQUEST_TOPIC,
+            self._on_sdk_replay_request,
+            10,
+        )
+        self.sdk_replay_end_sub = self.create_subscription(
+            String,
+            SDK_REPLAY_END_TOPIC,
+            self._on_sdk_replay_end,
+            10,
+        )
         self.timer = None
         self.change_timer = None
+        self.replay_timer = self.create_timer(0.1, self._on_replay_burst_tick)
         self._last_change_pub_time = self.get_clock().now().nanoseconds / 1e9
         self._last_subscriber_count = -1
         self._last_publish_time = 0.0
+        self._replay_burst_count = REPLAY_BURST_COUNT_DEFAULT
+        self._replay_burst_interval = REPLAY_BURST_INTERVAL_DEFAULT
+        self._replay_burst_remaining = 0
+        self._replay_burst_next_time = 0.0
+        self._replay_burst_total = 0
+        self._replay_burst_published = 0
+        self._replay_burst_source = ""
+        self._replay_burst_request_id = ""
 
         # Publish initial map once (latched via TRANSIENT_LOCAL).
         self._publish()
@@ -159,7 +187,8 @@ class Fake3DMapPublisherRealistic(Node):
             f"density_multiplier={self.density_multiplier:.2f}, step={self.step:.3f}m, "
             f"mode={self.publish_mode}, rate={self.rate_hz:.2f}Hz, "
             f"map_change_interval={self.map_change_interval:.2f}s, "
-            f"on_change_republish_interval={self.on_change_republish_interval:.2f}s)"
+            f"on_change_republish_interval={self.on_change_republish_interval:.2f}s, "
+            f"replay_burst={self._replay_burst_count}x{self._replay_burst_interval:.2f}s)"
         )
 
     @staticmethod
@@ -475,6 +504,78 @@ class Fake3DMapPublisherRealistic(Node):
 
         msg.data = data
         self.publisher.publish(msg)
+
+    def _on_replay_burst_tick(self) -> None:
+        self._service_replay_burst()
+
+    def _service_replay_burst(self) -> None:
+        if self._replay_burst_remaining <= 0:
+            return
+
+        now = time.monotonic()
+        if now < self._replay_burst_next_time:
+            return
+
+        attempt = (self._replay_burst_total - self._replay_burst_remaining) + 1
+        snapshot_available = len(self._points) > 0
+        if snapshot_available:
+            self._publish()
+            self._replay_burst_published += 1
+            self.get_logger().info(
+                f"[3D-MAP][replay_burst] source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, publish={attempt}/{self._replay_burst_total}, "
+                f"snapshot_available=True, points={len(self._points)}."
+            )
+        else:
+            self.get_logger().warning(
+                f"[3D-MAP][replay_burst] source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, publish={attempt}/{self._replay_burst_total}, "
+                "snapshot_available=False (waiting for first pointcloud snapshot)."
+            )
+
+        self._replay_burst_remaining -= 1
+        self._replay_burst_next_time = now + self._replay_burst_interval
+        if self._replay_burst_remaining <= 0:
+            self.get_logger().info(
+                f"[3D-MAP][replay_burst] completed source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, "
+                f"published={self._replay_burst_published}/{self._replay_burst_total}."
+            )
+            self._replay_burst_source = ""
+            self._replay_burst_request_id = ""
+
+    def _arm_replay_burst(self, source: str, request_id: str) -> None:
+        self._replay_burst_source = source
+        self._replay_burst_request_id = request_id
+        self._replay_burst_remaining = self._replay_burst_count
+        self._replay_burst_total = self._replay_burst_count
+        self._replay_burst_published = 0
+        self._replay_burst_next_time = time.monotonic()
+        self.get_logger().info(
+            f"[3D-MAP][replay_burst] armed source={source}, request_id={request_id or '-'}, "
+            f"count={self._replay_burst_count}, interval={self._replay_burst_interval:.2f}s."
+        )
+
+    @staticmethod
+    def _extract_request_id(msg: String) -> str:
+        payload = str(getattr(msg, "data", "") or "").strip()
+        if not payload:
+            return ""
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict):
+                return str(parsed.get("request_id") or "").strip()
+        except Exception:
+            return ""
+        return ""
+
+    def _on_sdk_replay_request(self, msg: String) -> None:
+        request_id = self._extract_request_id(msg)
+        self._arm_replay_burst("request", request_id)
+
+    def _on_sdk_replay_end(self, msg: String) -> None:
+        request_id = self._extract_request_id(msg)
+        self._arm_replay_burst("replay_end", request_id)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -8,6 +8,7 @@ If octomap_msgs is available, a best-effort native octomap topic is also publish
 from __future__ import annotations
 
 import argparse
+import json
 import importlib.util
 import os
 import random
@@ -28,7 +29,7 @@ try:
     from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-    from std_msgs.msg import ColorRGBA
+    from std_msgs.msg import ColorRGBA, String
     from visualization_msgs.msg import Marker
 except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
@@ -54,6 +55,10 @@ build_greedy_surface_mesh = _voxel_module.build_greedy_surface_mesh
 
 VoxelKey = Tuple[int, int, int]
 ColorU8 = Tuple[int, int, int]
+SDK_REPLAY_REQUEST_TOPIC = "/horus/multi_operator/sdk_registration_replay_request"
+SDK_REPLAY_END_TOPIC = "/horus/multi_operator/sdk_registry_replay_end"
+REPLAY_BURST_COUNT_DEFAULT = 8
+REPLAY_BURST_INTERVAL_DEFAULT = 0.5
 
 
 class FakeOctomapPublisher(Node):
@@ -92,6 +97,18 @@ class FakeOctomapPublisher(Node):
             if HAS_NATIVE_OCTOMAP
             else None
         )
+        self.sdk_replay_request_sub = self.create_subscription(
+            String,
+            SDK_REPLAY_REQUEST_TOPIC,
+            self._on_sdk_replay_request,
+            10,
+        )
+        self.sdk_replay_end_sub = self.create_subscription(
+            String,
+            SDK_REPLAY_END_TOPIC,
+            self._on_sdk_replay_end,
+            10,
+        )
 
         voxel_coords, voxel_colors = self._build_scene_voxels()
         mesh_result = build_greedy_surface_mesh(
@@ -113,6 +130,14 @@ class FakeOctomapPublisher(Node):
         self._last_mesh_subs = -1
         self._last_octomap_subs = -1
         self._last_publish_time = 0.0
+        self._replay_burst_count = REPLAY_BURST_COUNT_DEFAULT
+        self._replay_burst_interval = REPLAY_BURST_INTERVAL_DEFAULT
+        self._replay_burst_remaining = 0
+        self._replay_burst_next_time = 0.0
+        self._replay_burst_total = 0
+        self._replay_burst_published = 0
+        self._replay_burst_source = ""
+        self._replay_burst_request_id = ""
         self.timer = self.create_timer(0.5, self._tick)
 
         self._publish(reason="initial")
@@ -121,7 +146,8 @@ class FakeOctomapPublisher(Node):
             f"mesh_topic={self.mesh_topic}, octomap_topic={self.octomap_topic}, "
             f"voxels={self.scene_voxel_count}, triangles={self.scene_triangle_count}, "
             f"voxel_size={self.voxel_size:.3f}, detailed={self.detailed}, "
-            f"native_octomap={'on' if self.octomap_pub is not None else 'off'}"
+            f"native_octomap={'on' if self.octomap_pub is not None else 'off'}, "
+            f"replay_burst={self._replay_burst_count}x{self._replay_burst_interval:.2f}s"
         )
 
     def _build_scene_voxels(self) -> Tuple[np.ndarray, Optional[np.ndarray]]:
@@ -309,6 +335,8 @@ class FakeOctomapPublisher(Node):
         )
 
     def _tick(self) -> None:
+        self._service_replay_burst()
+
         mesh_subs = int(self.mesh_pub.get_subscription_count())
         octo_subs = int(self.octomap_pub.get_subscription_count()) if self.octomap_pub is not None else 0
         now = time.monotonic()
@@ -332,6 +360,75 @@ class FakeOctomapPublisher(Node):
 
         if should_publish:
             self._publish(reason=reason)
+
+    def _service_replay_burst(self) -> None:
+        if self._replay_burst_remaining <= 0:
+            return
+
+        now = time.monotonic()
+        if now < self._replay_burst_next_time:
+            return
+
+        attempt = (self._replay_burst_total - self._replay_burst_remaining) + 1
+        snapshot_available = self.marker is not None
+        if snapshot_available:
+            self._publish(reason=f"replay_burst_{attempt}")
+            self._replay_burst_published += 1
+            self.get_logger().info(
+                f"[3D-MAP][replay_burst] source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, publish={attempt}/{self._replay_burst_total}, "
+                f"snapshot_available=True, voxels={self.scene_voxel_count}, triangles={self.scene_triangle_count}."
+            )
+        else:
+            self.get_logger().warning(
+                f"[3D-MAP][replay_burst] source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, publish={attempt}/{self._replay_burst_total}, "
+                "snapshot_available=False (waiting for first octomap snapshot)."
+            )
+
+        self._replay_burst_remaining -= 1
+        self._replay_burst_next_time = now + self._replay_burst_interval
+        if self._replay_burst_remaining <= 0:
+            self.get_logger().info(
+                f"[3D-MAP][replay_burst] completed source={self._replay_burst_source}, "
+                f"request_id={self._replay_burst_request_id or '-'}, "
+                f"published={self._replay_burst_published}/{self._replay_burst_total}."
+            )
+            self._replay_burst_source = ""
+            self._replay_burst_request_id = ""
+
+    def _arm_replay_burst(self, source: str, request_id: str) -> None:
+        self._replay_burst_source = source
+        self._replay_burst_request_id = request_id
+        self._replay_burst_remaining = self._replay_burst_count
+        self._replay_burst_total = self._replay_burst_count
+        self._replay_burst_published = 0
+        self._replay_burst_next_time = time.monotonic()
+        self.get_logger().info(
+            f"[3D-MAP][replay_burst] armed source={source}, request_id={request_id or '-'}, "
+            f"count={self._replay_burst_count}, interval={self._replay_burst_interval:.2f}s."
+        )
+
+    @staticmethod
+    def _extract_request_id(msg: String) -> str:
+        payload = str(getattr(msg, "data", "") or "").strip()
+        if not payload:
+            return ""
+        try:
+            parsed = json.loads(payload)
+            if isinstance(parsed, dict):
+                return str(parsed.get("request_id") or "").strip()
+        except Exception:
+            return ""
+        return ""
+
+    def _on_sdk_replay_request(self, msg: String) -> None:
+        request_id = self._extract_request_id(msg)
+        self._arm_replay_burst("request", request_id)
+
+    def _on_sdk_replay_end(self, msg: String) -> None:
+        request_id = self._extract_request_id(msg)
+        self._arm_replay_burst("replay_end", request_id)
 
 
 def build_parser() -> argparse.ArgumentParser:
