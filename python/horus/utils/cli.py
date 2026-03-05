@@ -338,6 +338,11 @@ def print_info(message):
     console.print(f"[info]{message}[/info]")
 
 
+def print_warning(message):
+    """Print a warning message."""
+    console.print(f"[warning]! {message}[/warning]")
+
+
 @contextmanager
 def status(message, spinner="dots"):
     """Show a loading spinner."""
