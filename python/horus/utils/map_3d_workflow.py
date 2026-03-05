@@ -19,6 +19,7 @@ class Map3DMode(str, Enum):
     OFF = "off"
     POINTCLOUD = "pointcloud"
     MESH = "mesh"
+    OCTOMAP = "octomap"
 
 
 class MeshUpdatePolicy(str, Enum):
@@ -63,7 +64,7 @@ def add_map_3d_mode_arguments(parser: argparse.ArgumentParser) -> None:
         choices=[mode.value for mode in Map3DMode],
         default=None,
         help=(
-            "Global 3D map visualization mode: off|pointcloud|mesh "
+            "Global 3D map visualization mode: off|pointcloud|mesh|octomap "
             "(default: off)."
         ),
     )
@@ -160,6 +161,42 @@ def add_map_3d_mode_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
+        "--map-3d-octomap-topic",
+        default="/map_3d_octomap",
+        help="Native octomap topic (default: /map_3d_octomap).",
+    )
+    parser.add_argument(
+        "--map-3d-octomap-mesh-topic",
+        default="/map_3d_octomap_mesh",
+        help="Octomap mesh marker topic (default: /map_3d_octomap_mesh).",
+    )
+    parser.add_argument(
+        "--map-3d-octomap-frame",
+        default="map",
+        help="Octomap frame id (default: map).",
+    )
+    parser.add_argument(
+        "--map-3d-octomap-max-voxels",
+        type=int,
+        default=60000,
+        help="Octomap voxel cap (default: 60000, 0=unlimited).",
+    )
+    parser.add_argument(
+        "--map-3d-octomap-max-triangles",
+        type=int,
+        default=60000,
+        help="Octomap mesh triangle cap (default: 60000, 0=unlimited).",
+    )
+    parser.add_argument(
+        "--map-3d-octomap-republish-interval",
+        type=float,
+        default=0.0,
+        help=(
+            "Republish interval in seconds for octomap/mesh keepalive. "
+            "Default 0 disables periodic keepalive bursts."
+        ),
+    )
+    parser.add_argument(
         "--with-3d-map",
         dest="with_3d_map",
         action="store_true",
@@ -192,7 +229,7 @@ def resolve_map_3d_mode(
     if with_3d_map or with_3d_mesh:
         warnings.append(
             "Deprecated flags detected (--with-3d-map/--with-3d-mesh). "
-            "Use --map-3d-mode {off|pointcloud|mesh}."
+            "Use --map-3d-mode {off|pointcloud|mesh|octomap}."
         )
         if with_3d_map and with_3d_mesh:
             legacy_mode = Map3DMode.MESH
@@ -282,6 +319,38 @@ def build_fake_3d_map_publisher_command(
     ]
 
 
+def build_fake_octomap_publisher_command(
+    python_executable: str,
+    script_dir: str,
+    octomap_topic: str,
+    mesh_topic: str,
+    frame_id: str,
+    max_voxels: int = 60000,
+    max_triangles: int = 60000,
+    republish_interval: float = 0.0,
+    detailed: bool = False,
+) -> List[str]:
+    command = [
+        python_executable,
+        os.path.join(script_dir, "fake_octomap_publisher.py"),
+        "--octomap-topic",
+        str(octomap_topic),
+        "--mesh-topic",
+        str(mesh_topic),
+        "--frame",
+        str(frame_id),
+        "--max-voxels",
+        str(max(0, int(max_voxels))),
+        "--max-triangles",
+        str(max(0, int(max_triangles))),
+        "--republish-interval",
+        str(max(0.0, float(republish_interval))),
+    ]
+    if detailed:
+        command.append("--detailed")
+    return command
+
+
 def build_pointcloud_to_mesh_converter_command(
     python_executable: str,
     script_dir: str,
@@ -344,11 +413,36 @@ def build_map_3d_process_specs(
     mesh_max_triangles: int = 60000,
     mesh_update_policy: str = MeshUpdatePolicy.SNAPSHOT.value,
     mesh_republish_interval: float = 0.0,
+    map_3d_octomap_topic: str = "/map_3d_octomap",
+    map_3d_octomap_mesh_topic: str = "/map_3d_octomap_mesh",
+    map_3d_octomap_frame: str = "map",
+    map_3d_octomap_max_voxels: int = 60000,
+    map_3d_octomap_max_triangles: int = 60000,
+    map_3d_octomap_republish_interval: float = 0.0,
 ) -> List[ManagedProcessSpec]:
     """Build subprocess launch specs required for a selected mode."""
 
     if mode == Map3DMode.OFF:
         return []
+
+    if mode == Map3DMode.OCTOMAP:
+        return [
+            ManagedProcessSpec(
+                name="fake_octomap_publisher",
+                command=build_fake_octomap_publisher_command(
+                    python_executable=python_executable,
+                    script_dir=script_dir,
+                    octomap_topic=map_3d_octomap_topic,
+                    mesh_topic=map_3d_octomap_mesh_topic,
+                    frame_id=map_3d_octomap_frame,
+                    max_voxels=map_3d_octomap_max_voxels,
+                    max_triangles=map_3d_octomap_max_triangles,
+                    republish_interval=map_3d_octomap_republish_interval,
+                    detailed=map_3d_detailed,
+                ),
+                cwd=script_dir,
+            )
+        ]
 
     specs = [
         ManagedProcessSpec(

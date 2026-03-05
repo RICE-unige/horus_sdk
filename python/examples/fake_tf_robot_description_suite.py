@@ -25,6 +25,8 @@ from horus.utils.map_3d_workflow import (
 
 DETAILED_MESH_MAX_VOXELS_DEFAULT = 100000
 DETAILED_MESH_MAX_TRIANGLES_DEFAULT = 100000
+DETAILED_OCTOMAP_MAX_VOXELS_DEFAULT = 100000
+DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT = 100000
 
 
 def _remove_option(parser, option_name: str) -> None:
@@ -88,7 +90,9 @@ def _apply_profile_defaults(args: argparse.Namespace) -> None:
 
 
 def _apply_map_runtime_defaults(args: argparse.Namespace, mode: Map3DMode) -> None:
-    if mode in (Map3DMode.POINTCLOUD, Map3DMode.MESH):
+    if mode == Map3DMode.OCTOMAP:
+        args.map_frame = str(args.map_3d_octomap_frame or "map").strip() or "map"
+    elif mode in (Map3DMode.POINTCLOUD, Map3DMode.MESH):
         args.map_frame = str(args.map_3d_frame or "map").strip() or "map"
 
 
@@ -117,6 +121,29 @@ def _apply_high_detail_mesh_defaults(args: argparse.Namespace, mode: Map3DMode) 
             cli.print_info(
                 "[3D-MAP] Detailed mesh mode auto-set --map-3d-mesh-max-triangles=100000 "
                 "(override with --map-3d-mesh-max-triangles)."
+            )
+
+
+def _apply_high_detail_octomap_defaults(args: argparse.Namespace, mode: Map3DMode) -> None:
+    if mode != Map3DMode.OCTOMAP or not bool(getattr(args, "map_3d_detailed", False)):
+        return
+
+    if not _flag_was_provided("--map-3d-octomap-max-voxels"):
+        current_voxels = int(getattr(args, "map_3d_octomap_max_voxels", 0))
+        if current_voxels < DETAILED_OCTOMAP_MAX_VOXELS_DEFAULT:
+            args.map_3d_octomap_max_voxels = DETAILED_OCTOMAP_MAX_VOXELS_DEFAULT
+            cli.print_info(
+                "[3D-MAP] Detailed octomap mode auto-set --map-3d-octomap-max-voxels=100000 "
+                "(override with --map-3d-octomap-max-voxels)."
+            )
+
+    if not _flag_was_provided("--map-3d-octomap-max-triangles"):
+        current_triangles = int(getattr(args, "map_3d_octomap_max_triangles", 0))
+        if current_triangles < DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT:
+            args.map_3d_octomap_max_triangles = DETAILED_OCTOMAP_MAX_TRIANGLES_DEFAULT
+            cli.print_info(
+                "[3D-MAP] Detailed octomap mode auto-set --map-3d-octomap-max-triangles=100000 "
+                "(override with --map-3d-octomap-max-triangles)."
             )
 
 
@@ -179,6 +206,13 @@ def main():
         cli.print_info(
             f"[3D-MAP] Mode=pointcloud ({map_profile}). Auto-starting fake pointcloud publisher on {args.map_3d_topic}."
         )
+    elif mode == Map3DMode.OCTOMAP:
+        map_profile = "detailed" if bool(getattr(args, "map_3d_detailed", False)) else "default"
+        cli.print_info(
+            "[3D-MAP] Mode=octomap "
+            f"({map_profile}). Auto-starting fake octomap publisher "
+            f"(octomap={args.map_3d_octomap_topic}, mesh={args.map_3d_octomap_mesh_topic})."
+        )
     else:
         map_profile = "detailed" if bool(getattr(args, "map_3d_detailed", False)) else "default"
         cli.print_info(
@@ -194,6 +228,7 @@ def main():
     args.publish_occupancy_grid = False
     _apply_map_runtime_defaults(args, mode)
     _apply_high_detail_mesh_defaults(args, mode)
+    _apply_high_detail_octomap_defaults(args, mode)
 
     processes = []
     try:
@@ -214,6 +249,12 @@ def main():
                 mesh_max_triangles=args.map_3d_mesh_max_triangles,
                 mesh_update_policy=args.map_3d_mesh_update_policy,
                 mesh_republish_interval=args.map_3d_mesh_republish_interval,
+                map_3d_octomap_topic=args.map_3d_octomap_topic,
+                map_3d_octomap_mesh_topic=args.map_3d_octomap_mesh_topic,
+                map_3d_octomap_frame=args.map_3d_octomap_frame,
+                map_3d_octomap_max_voxels=args.map_3d_octomap_max_voxels,
+                map_3d_octomap_max_triangles=args.map_3d_octomap_max_triangles,
+                map_3d_octomap_republish_interval=args.map_3d_octomap_republish_interval,
             )
             processes = start_managed_processes(
                 specs,
