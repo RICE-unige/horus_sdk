@@ -48,10 +48,12 @@ class Robot:
     sensors: List["SensorInstance"] = field(default_factory=list)
     dimensions: Optional[RobotDimensions] = None
 
+    _DEFAULT_LOGICAL_NAME = "robot"
+    _ROS_BINDING_METADATA_KEY = "ros_binding_config"
+
     def __post_init__(self):
         """Validate robot configuration after initialization"""
-        if not self.name:
-            raise ValueError("Robot name cannot be empty")
+        self.name = str(self.name or "").strip() or self._DEFAULT_LOGICAL_NAME
 
         if not isinstance(self.robot_type, RobotType):
             raise TypeError("robot_type must be a RobotType enum")
@@ -117,6 +119,135 @@ class Robot:
         """Get metadata value by key"""
         return self.metadata.get(key, default)
 
+    @staticmethod
+    def _normalize_binding_mode(value: Any, default: str) -> str:
+        normalized = str(value or "").strip().lower()
+        return normalized if normalized in {"prefixed", "flat"} else default
+
+    @staticmethod
+    def _normalize_frame_token(value: Any, default: str = "") -> str:
+        normalized = str(value or "").strip().strip("/")
+        return normalized or default
+
+    @staticmethod
+    def _normalize_topic_prefix(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        return "/" + raw.strip("/")
+
+    @staticmethod
+    def _normalize_topic_leaf(value: Any, default: str = "") -> str:
+        normalized = str(value or "").strip().strip("/")
+        return normalized or default
+
+    def configure_ros_binding(
+        self,
+        tf_mode: str = "prefixed",
+        topic_mode: str = "prefixed",
+        base_frame: str = "base_link",
+        tf_prefix: str = "",
+        topic_prefix: str = "",
+    ) -> None:
+        """Configure how HORUS logical robot identity binds to ROS TF/topics."""
+        resolved_tf_mode = self._normalize_binding_mode(tf_mode, "prefixed")
+        resolved_topic_mode = self._normalize_binding_mode(topic_mode, "prefixed")
+        resolved_base_frame = self._normalize_frame_token(base_frame, "base_link")
+
+        if resolved_tf_mode == "prefixed":
+            resolved_tf_prefix = self._normalize_frame_token(tf_prefix, self.name)
+        else:
+            resolved_tf_prefix = self._normalize_frame_token(tf_prefix)
+
+        if resolved_topic_mode == "prefixed":
+            resolved_topic_prefix = self._normalize_topic_prefix(topic_prefix or f"/{self.name}")
+        else:
+            resolved_topic_prefix = self._normalize_topic_prefix(topic_prefix)
+
+        self.add_metadata(
+            self._ROS_BINDING_METADATA_KEY,
+            {
+                "logical_name": self.name,
+                "tf_mode": resolved_tf_mode,
+                "topic_mode": resolved_topic_mode,
+                "base_frame": resolved_base_frame,
+                "tf_prefix": resolved_tf_prefix,
+                "topic_prefix": resolved_topic_prefix,
+            },
+        )
+
+    def get_ros_binding(self) -> Dict[str, str]:
+        """Return the resolved ROS binding configuration for this robot."""
+        raw = self.metadata.get(self._ROS_BINDING_METADATA_KEY, {})
+        if not isinstance(raw, dict):
+            raw = {}
+
+        robot_desc_cfg = self.metadata.get("robot_description_config", {})
+        desc_base_frame = ""
+        if isinstance(robot_desc_cfg, dict):
+            desc_base_frame = self._normalize_frame_token(
+                robot_desc_cfg.get("base_frame"),
+                "",
+            )
+
+        tf_mode = self._normalize_binding_mode(raw.get("tf_mode"), "prefixed")
+        topic_mode = self._normalize_binding_mode(raw.get("topic_mode"), "prefixed")
+        base_frame = self._normalize_frame_token(
+            raw.get("base_frame"),
+            desc_base_frame or "base_link",
+        )
+
+        if tf_mode == "prefixed":
+            tf_prefix = self._normalize_frame_token(raw.get("tf_prefix"), self.name)
+        else:
+            tf_prefix = self._normalize_frame_token(raw.get("tf_prefix"))
+
+        if topic_mode == "prefixed":
+            topic_prefix = self._normalize_topic_prefix(raw.get("topic_prefix") or f"/{self.name}")
+        else:
+            topic_prefix = self._normalize_topic_prefix(raw.get("topic_prefix"))
+
+        return {
+            "logical_name": self.name,
+            "tf_mode": tf_mode,
+            "topic_mode": topic_mode,
+            "base_frame": base_frame,
+            "tf_prefix": tf_prefix,
+            "topic_prefix": topic_prefix,
+        }
+
+    def resolve_tf_frame(self, frame_name: Optional[str] = None) -> str:
+        """Resolve a frame name according to the configured TF binding mode."""
+        binding = self.get_ros_binding()
+        frame_token = self._normalize_frame_token(frame_name, binding["base_frame"])
+        prefix = self._normalize_frame_token(binding.get("tf_prefix", ""))
+
+        if prefix and (frame_token == prefix or frame_token.startswith(prefix + "/")):
+            return frame_token
+
+        if prefix:
+            return f"{prefix}/{frame_token}"
+        return frame_token
+
+    def resolve_topic(self, topic_name: Optional[str] = None) -> str:
+        """Resolve a topic according to the configured topic binding mode."""
+        binding = self.get_ros_binding()
+        raw_topic = str(topic_name or "").strip()
+        if raw_topic.startswith("/"):
+            return raw_topic
+
+        topic_leaf = self._normalize_topic_leaf(raw_topic)
+        prefix = self._normalize_topic_prefix(binding.get("topic_prefix", ""))
+        if prefix:
+            if not topic_leaf:
+                return prefix
+            prefixed_leaf = prefix.strip("/")
+            if topic_leaf == prefixed_leaf or topic_leaf.startswith(prefixed_leaf + "/"):
+                return "/" + topic_leaf
+            return f"{prefix}/{topic_leaf}"
+
+        return f"/{topic_leaf}" if topic_leaf else "/"
+
     # Sensor management methods
     def add_sensor(self, sensor: "SensorInstance") -> None:
         """Add a sensor to this robot"""
@@ -179,22 +310,11 @@ class Robot:
 
         # Use the configured base frame when available so TF visualization matches
         # robots that do not use base_link (for example, go1/base).
-        configured_base = "base_link"
-        robot_desc_cfg = self.metadata.get("robot_description_config", {})
-        if isinstance(robot_desc_cfg, dict):
-            raw_base = str(robot_desc_cfg.get("base_frame", "") or "").strip()
-            if raw_base:
-                configured_base = raw_base
-        if configured_base.startswith(f"{self.name}/"):
-            transform_frame_id = configured_base
-        else:
-            transform_frame_id = f"{self.name}/{configured_base}"
-
         # Add robot transform visualization
         dataviz.add_robot_transform(
             robot_name=self.name,
             topic="/tf",
-            frame_id=transform_frame_id,
+            frame_id=self.resolve_tf_frame(),
         )
 
         return dataviz
@@ -270,22 +390,11 @@ class Robot:
                 frame_id="map",
             )
 
-        configured_base = "base_link"
-        robot_desc_cfg = self.metadata.get("robot_description_config", {})
-        if isinstance(robot_desc_cfg, dict):
-            raw_base = str(robot_desc_cfg.get("base_frame", "") or "").strip()
-            if raw_base:
-                configured_base = raw_base
-        if configured_base.startswith(f"{self.name}/"):
-            collision_frame = configured_base
-        else:
-            collision_frame = f"{self.name}/{configured_base}"
-
         if include_collision:
             dataviz.add_robot_collision_risk(
                 robot_name=self.name,
                 topic=resolved_collision_topic,
-                frame_id=collision_frame,
+                frame_id=self.resolve_tf_frame(),
             )
 
     def configure_robot_description(

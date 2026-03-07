@@ -1266,7 +1266,11 @@ class RobotRegistryClient:
                 roles[topic] = "backend_pub" if topic in control_topic_set else "backend_sub"
         return roles
 
-    def _topic_group(self, topic: str, robot_names):
+    def _topic_group(self, topic: str, robot_names, topic_group_overrides: Optional[Dict[str, str]] = None):
+        topic_group_overrides = topic_group_overrides or {}
+        override = str(topic_group_overrides.get(topic, "") or "").strip()
+        if override:
+            return override
         if topic in (
             "/horus/registration",
             "/horus/registration_ack",
@@ -1289,6 +1293,22 @@ class RobotRegistryClient:
             if topic.startswith(prefix):
                 return name
         return "shared"
+
+    def _build_topic_group_overrides(self, robot_name: str, topics: list) -> Dict[str, str]:
+        overrides: Dict[str, str] = {}
+        normalized_robot_name = str(robot_name or "").strip()
+        if not normalized_robot_name:
+            return overrides
+
+        canonical_prefix = f"/{normalized_robot_name}/"
+        for topic in topics or []:
+            normalized_topic = str(topic or "").strip()
+            if not normalized_topic:
+                continue
+            if normalized_topic.startswith(canonical_prefix):
+                continue
+            overrides[normalized_topic] = normalized_robot_name
+        return overrides
 
     def _extract_camera_topic_profiles(self, config: Dict) -> Dict[str, Dict[str, str]]:
         profiles: Dict[str, Dict[str, str]] = {}
@@ -1813,8 +1833,10 @@ class RobotRegistryClient:
         is_connected: bool,
         registration_done: bool,
         camera_topic_profiles: Optional[Dict[str, Dict[str, str]]] = None,
+        topic_group_overrides: Optional[Dict[str, str]] = None,
     ) -> list:
         camera_topic_profiles = camera_topic_profiles or {}
+        topic_group_overrides = topic_group_overrides or {}
         core_topic_set = {
             "/horus/registration",
             "/horus/registration_ack",
@@ -1918,7 +1940,7 @@ class RobotRegistryClient:
 
             rows.append(
                 {
-                    "robot": self._topic_group(topic, robot_names),
+                    "robot": self._topic_group(topic, robot_names, topic_group_overrides=topic_group_overrides),
                     "topic": topic,
                     "role": role_label,
                     "topic_kind": topic_kind,
@@ -1998,6 +2020,7 @@ class RobotRegistryClient:
             camera_topics = self._collect_camera_topics(config)
             robot_topics = self._merge_topics(data_topics, control_topics, camera_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
+            topic_group_overrides = self._build_topic_group_overrides(robot.name, robot_topics)
             core_topics = [
                 "/horus/registration",
                 "/horus/registration_ack",
@@ -2106,6 +2129,7 @@ class RobotRegistryClient:
                             is_connected=is_connected,
                             registration_done=registration_success,
                             camera_topic_profiles=camera_topic_profiles,
+                            topic_group_overrides=topic_group_overrides,
                         )
                         dashboard.update_topics(rows)
                         last_stats_update = time.time()
@@ -2300,6 +2324,7 @@ class RobotRegistryClient:
             robot_topics = []
             control_topics = []
             camera_topic_profiles = {}
+            topic_group_overrides = {}
             global_visualizations = self._build_global_visualizations_payload(datavizs)
             for robot, dataviz in zip(robots, datavizs):
                 config = self._build_robot_config_dict(
@@ -2313,9 +2338,19 @@ class RobotRegistryClient:
                 entries.append((robot, dataviz, msg))
                 entry_by_name[robot.name] = (robot, dataviz, msg)
                 camera_topic_profiles.update(self._extract_camera_topic_profiles(config))
-                robot_topics = self._merge_topics(robot_topics, self._collect_topics(dataviz))
-                robot_topics = self._merge_topics(robot_topics, self._collect_camera_topics(config))
-                control_topics = self._merge_topics(control_topics, self._collect_control_topics(config))
+                entry_data_topics = self._collect_topics(dataviz)
+                entry_control_topics = self._collect_control_topics(config)
+                entry_camera_topics = self._collect_camera_topics(config)
+                entry_topics = self._merge_topics(
+                    entry_data_topics,
+                    entry_control_topics,
+                    entry_camera_topics,
+                )
+                for topic, group in self._build_topic_group_overrides(robot.name, entry_topics).items():
+                    topic_group_overrides[topic] = group
+                robot_topics = self._merge_topics(robot_topics, entry_data_topics)
+                robot_topics = self._merge_topics(robot_topics, entry_camera_topics)
+                control_topics = self._merge_topics(control_topics, entry_control_topics)
 
             robot_topics = self._merge_topics(robot_topics, control_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
@@ -2405,6 +2440,7 @@ class RobotRegistryClient:
                     is_connected=is_connected,
                     registration_done=registration_done,
                     camera_topic_profiles=camera_topic_profiles,
+                    topic_group_overrides=topic_group_overrides,
                 )
                 dashboard.update_topics(rows)
 
@@ -3054,7 +3090,7 @@ class RobotRegistryClient:
 
             command_topic = _coerce_text(
                 teleop_metadata.get("command_topic"),
-                f"/{robot.name}/cmd_vel",
+                robot.resolve_topic("cmd_vel"),
             )
             raw_input_topic = _coerce_text(
                 teleop_metadata.get("raw_input_topic"),
@@ -3159,10 +3195,18 @@ class RobotRegistryClient:
             if not isinstance(go_to_point_metadata, dict):
                 go_to_point_metadata = {}
 
-            topic_prefix = f"/{robot.name}"
-            goal_topic = _coerce_text(go_to_point_metadata.get("goal_topic"), f"{topic_prefix}/goal_pose")
-            cancel_topic = _coerce_text(go_to_point_metadata.get("cancel_topic"), f"{topic_prefix}/goal_cancel")
-            status_topic = _coerce_text(go_to_point_metadata.get("status_topic"), f"{topic_prefix}/goal_status")
+            goal_topic = _coerce_text(
+                go_to_point_metadata.get("goal_topic"),
+                robot.resolve_topic("goal_pose"),
+            )
+            cancel_topic = _coerce_text(
+                go_to_point_metadata.get("cancel_topic"),
+                robot.resolve_topic("goal_cancel"),
+            )
+            status_topic = _coerce_text(
+                go_to_point_metadata.get("status_topic"),
+                robot.resolve_topic("goal_status"),
+            )
             frame_id = _coerce_text(go_to_point_metadata.get("frame_id"), "map")
             if not frame_id:
                 frame_id = "map"
@@ -3180,8 +3224,14 @@ class RobotRegistryClient:
             if not isinstance(waypoint_metadata, dict):
                 waypoint_metadata = {}
 
-            waypoint_path_topic = _coerce_text(waypoint_metadata.get("path_topic"), f"{topic_prefix}/waypoint_path")
-            waypoint_status_topic = _coerce_text(waypoint_metadata.get("status_topic"), f"{topic_prefix}/waypoint_status")
+            waypoint_path_topic = _coerce_text(
+                waypoint_metadata.get("path_topic"),
+                robot.resolve_topic("waypoint_path"),
+            )
+            waypoint_status_topic = _coerce_text(
+                waypoint_metadata.get("status_topic"),
+                robot.resolve_topic("waypoint_status"),
+            )
             waypoint_frame_id = _coerce_text(waypoint_metadata.get("frame_id"), "map")
             if not waypoint_frame_id:
                 waypoint_frame_id = "map"
@@ -3240,7 +3290,7 @@ class RobotRegistryClient:
                 seen_global.add(key)
                 global_visualizations.append(payload)
 
-        drive_topic = f"/{robot.name}/cmd_vel"
+        drive_topic = robot.resolve_topic("cmd_vel")
         teleop_control = _build_teleop_control()
         task_control = _build_task_control()
         if isinstance(teleop_control, dict):
@@ -3255,6 +3305,7 @@ class RobotRegistryClient:
             "action": "register",
             "robot_name": robot.name,
             "robot_type": robot.get_type_str(),
+            "ros_binding": robot.get_ros_binding(),
             "sensors": sensor_payloads,
             "visualizations": robot_visualizations,
             "global_visualizations": global_visualizations,
