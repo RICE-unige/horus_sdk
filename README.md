@@ -141,6 +141,40 @@ python3 python/examples/sdk_multi_operator_host_demo.py --robot-count 10 --works
 
 Use this together with the MR runtime host/join workflow to validate dashboard operator visibility and joiner registry replay behavior.
 
+### 5) Flat single-robot validation (no ROS namespace / no TF prefix)
+
+Use this when a robot publishes root topics such as `/cmd_vel`, `/goal_pose`, `/waypoint_path`, `/odom`, and flat TF frames such as `base_link` / `camera_link`.
+
+Fake runtime:
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/fake_tf_single_flat.py \
+  --map-frame map \
+  --base-frame base_link \
+  --camera-frame camera_link \
+  --rate 30
+```
+
+SDK registration demo:
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/sdk_single_robot_flat_demo.py \
+  --robot-name robot \
+  --base-frame base_link \
+  --camera-frame camera_link \
+  --camera-topic /camera/image_raw \
+  --workspace-scale 0.1
+```
+
+Flat single-robot notes:
+- This flow uses the SDK ROS-binding layer instead of requiring a robot namespace or TF prefix.
+- HORUS logical robot identity stays separate from ROS naming; `robot_name` remains the display/runtime identity in MR.
+- Registered default control topics resolve to flat roots in this mode: `/cmd_vel`, `/goal_pose`, `/goal_cancel`, `/goal_status`, `/waypoint_path`, `/waypoint_status`.
+- The fake runtime covers teleop, go-to-point, waypoint, odometry, collision-risk, nav-path, camera, and flat TF validation in one workflow.
+- Ambiguous multi-robot flat-root registration is intentionally rejected on the MR side instead of being guessed.
+
 Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
 - `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
@@ -510,12 +544,13 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 ## Roadmap
 
 > [!NOTE]
-> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes marker-only mesh stability flow and octomap mode integration.
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes marker-only mesh stability flow, octomap mode integration, and flat single-robot ROS-binding compatibility.
 
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
 | Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
 | Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. Follow-leader teleop V1 in MR reuses this contract with no schema change. | Add subset/handoff metadata and manipulator-capability descriptors. |
+| ROS Binding Compatibility | :large_orange_diamond: In progress | Optional ROS-binding metadata is integrated for prefixed and flat single-robot workflows, with resolved registration payloads, dashboard topic ownership overrides for root topics, and explicit flat demo scripts. | Extend example coverage beyond flat single-robot ground flow and document backend metadata conventions more formally. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :large_orange_diamond: In progress | Shared `--map-3d-mode` workflow is integrated in the real-model demo pair with pointcloud, mesh, and octomap global visualization payload wiring, greedy voxel meshing, snapshot-first Quest defaults, marker-only mesh transport coercion for runtime stability, and replay-time bounded republish bursts for deterministic late-join map delivery. | Expand native octomap interoperability beyond metadata-only publish path and add renderer policy hints (decimation/quality tiers) for runtime tuning. |
 | Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
