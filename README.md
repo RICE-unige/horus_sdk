@@ -175,6 +175,30 @@ Flat single-robot notes:
 - The fake runtime covers teleop, go-to-point, waypoint, odometry, collision-risk, nav-path, camera, and flat TF validation in one workflow.
 - Ambiguous multi-robot flat-root registration is intentionally rejected on the MR side instead of being guessed.
 
+### 6) Hospital Carter live demo (compressed camera + prefixed TF)
+
+Use this with the live Isaac hospital scene publishing `carter1/2/3` topics.
+The demo auto-starts `image_transport` republishers for compressed camera feeds and relays
+`/<robot>/tf` into a single shared `/tf` topic with `<robot>/...` frame IDs.
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/sdk_hospital_carter_live_demo.py --workspace-scale 0.1
+```
+
+Quick verification:
+
+```bash
+ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
+ros2 topic echo /tf --once
+```
+
+Expected topics created by the demo:
+- `/carter1/front_stereo_camera/left/image_raw/compressed`
+- `/carter2/front_stereo_camera/left/image_raw/compressed`
+- `/carter3/front_stereo_camera/left/image_raw/compressed`
+- `/tf` (shared, with prefixed frames like `carter1/base_link`, `carter2/base_link`, `carter3/base_link`)
+
 Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
 - `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
