@@ -222,6 +222,27 @@ class DataViz:
         return f"#{r:02x}{g:02x}{b:02x}"
 
     @staticmethod
+    def _deterministic_robot_laser_hex_color(robot_name: str) -> str:
+        """
+        Generate a vivid, high-separation laser color from robot name.
+        """
+        normalized_name = str(robot_name or "").strip().lower().encode("utf-8")
+        digest = hashlib.sha256(normalized_name).digest()
+        hue = ((digest[0] << 8) | digest[1]) / 65535.0
+        saturation = 0.82 + (digest[2] / 255.0) * 0.10
+        value = 0.86 + (digest[3] / 255.0) * 0.10
+        red, green, blue = colorsys.hsv_to_rgb(
+            hue % 1.0,
+            min(0.95, saturation),
+            min(0.96, value),
+        )
+        return "#{:02x}{:02x}{:02x}".format(
+            int(round(red * 255.0)),
+            int(round(green * 255.0)),
+            int(round(blue * 255.0)),
+        )
+
+    @staticmethod
     def _deterministic_robot_nav_path_hex_color(robot_name: str, role: str) -> str:
         """
         Generate a stable robot-specific nav-path color with global/local gradient variants.
@@ -264,13 +285,11 @@ class DataViz:
         # Auto-assign color based on sensor type and robot
         if "color" not in render_options:
             if viz_type == VisualizationType.LASER_SCAN:
-                color = self.color_manager.get_laser_scan_color(robot_name)
-                render_options["color"] = color.to_hex()
-                render_options["alpha"] = color.a
+                render_options["color"] = self._deterministic_robot_laser_hex_color(robot_name)
+                render_options["alpha"] = 0.8
             else:
-                # For other sensors, use base robot color
-                color = self.color_manager.get_robot_color(robot_name)
-                render_options["color"] = color.to_hex()
+                # Sensor colors must stay stable across separate DataViz instances.
+                render_options["color"] = self._deterministic_robot_hex_color(robot_name)
 
         # Create and add visualization
         viz_config = VisualizationConfig(
