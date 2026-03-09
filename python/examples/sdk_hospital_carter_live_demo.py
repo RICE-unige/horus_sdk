@@ -19,9 +19,11 @@ This demo:
 import argparse
 import math
 import os
+import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -45,6 +47,153 @@ DEFAULT_ROBOT_NAMES = ("carter1", "carter2", "carter3")
 DEFAULT_CAMERA_FPS = 20
 DEFAULT_TF_TOPIC = "/tf"
 GLOBAL_ROOT_FRAMES = {"map", "world"}
+NOVA_CARTER_REPO_URL = "https://github.com/NVIDIA-ISAAC-ROS/nova_carter.git"
+NOVA_CARTER_MEDIA_BASE_URL = "https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/nova_carter/main"
+NOVA_CARTER_CACHE_ROOT = os.path.expanduser("~/.cache/horus/robot_description_sources/nova_carter")
+NOVA_CARTER_PACKAGE_DIR = os.path.join(NOVA_CARTER_CACHE_ROOT, "nova_carter_description")
+NOVA_CARTER_REQUIRED_MESHES = (
+    "chassis_link.obj",
+    "caster_frame_base.obj",
+    "nova_carter_wheel_left.obj",
+    "nova_carter_wheel_right.obj",
+    "caster_swivel.obj",
+    "caster_wheel.obj",
+)
+NOVA_CARTER_STATIC_SHELL_URDF = os.path.join(
+    NOVA_CARTER_PACKAGE_DIR,
+    "urdf",
+    "horus_nova_carter_static_shell.urdf",
+)
+_NOVA_CARTER_SOURCE_READY = False
+
+NOVA_CARTER_STATIC_SHELL_URDF_XML = """<?xml version="1.0"?>
+<robot name="nova_carter_static_shell">
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/chassis_link.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/chassis_link.obj"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="nova_carter_caster_frame_base">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/caster_frame_base.obj"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="wheel_left">
+    <visual>
+      <origin xyz="0 0 0.034" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/nova_carter_wheel_left.obj"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="wheel_right">
+    <visual>
+      <origin xyz="0 0 -0.034" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/nova_carter_wheel_right.obj"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="caster_swivel_left">
+    <visual>
+      <origin xyz="-0.000002 0.000004 -0.000002" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/caster_swivel.obj"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="caster_swivel_right">
+    <visual>
+      <origin xyz="-0.0000021 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/caster_swivel.obj"/>
+      </geometry>
+    </visual>
+  </link>
+  <link name="caster_wheel_left">
+    <visual>
+      <origin xyz="0 -0.000005 -0.023039" rpy="3.141592653589793 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/caster_wheel.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0.0000001 -0.0000045 -0.0230392" rpy="3.141592653589793 0 0"/>
+      <geometry>
+        <cylinder radius="0.0755" length="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="caster_wheel_right">
+    <visual>
+      <origin xyz="0 -0.000005 -0.0230391" rpy="3.141592653589793 0 0"/>
+      <geometry>
+        <mesh filename="package://nova_carter_description/meshes/caster_wheel.obj"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 -0.0000046 -0.0230391" rpy="3.141592653589793 0 0"/>
+      <geometry>
+        <cylinder radius="0.0755" length="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint_wheel_left" type="continuous">
+    <origin xyz="0 0.1726 0.14" rpy="-1.5707963267948966 0 0"/>
+    <parent link="base_link"/>
+    <child link="wheel_left"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <joint name="joint_wheel_right" type="continuous">
+    <origin xyz="0 -0.1726 0.14" rpy="-1.5707963267948966 0 0"/>
+    <parent link="base_link"/>
+    <child link="wheel_right"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <joint name="joint_caster_base" type="revolute">
+    <origin xyz="-0.47195 0 0.22289" rpy="-1.5707963267948966 0 1.5707963267948966"/>
+    <parent link="base_link"/>
+    <child link="nova_carter_caster_frame_base"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <joint name="joint_swing_left" type="continuous">
+    <origin xyz="0.132296 0.031188 0.000002" rpy="0 0 -1.5707963267948966"/>
+    <parent link="nova_carter_caster_frame_base"/>
+    <child link="caster_swivel_left"/>
+    <axis xyz="1 0 0"/>
+  </joint>
+  <joint name="joint_swing_right" type="continuous">
+    <origin xyz="-0.1322037 0.0311879 0.0000001" rpy="0 0 -1.5707963267948966"/>
+    <parent link="nova_carter_caster_frame_base"/>
+    <child link="caster_swivel_right"/>
+    <axis xyz="1 0 0"/>
+  </joint>
+  <joint name="joint_caster_left" type="continuous">
+    <origin xyz="-0.1153999 -0.0230851 0.0399971" rpy="1.5707963267948966 -1.5707963267948966 0"/>
+    <parent link="caster_swivel_left"/>
+    <child link="caster_wheel_left"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  <joint name="joint_caster_right" type="continuous">
+    <origin xyz="-0.1154 -0.022989 0.039999" rpy="1.5707963267948966 -1.5707963267948966 0"/>
+    <parent link="caster_swivel_right"/>
+    <child link="caster_wheel_right"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+</robot>
+"""
 
 
 @dataclass(frozen=True)
@@ -153,6 +302,117 @@ def _parse_robot_names(raw_value: str) -> List[str]:
         if token and token not in names:
             names.append(token)
     return names or list(DEFAULT_ROBOT_NAMES)
+
+
+def ensure_nova_carter_description_source() -> str:
+    global _NOVA_CARTER_SOURCE_READY
+    if _NOVA_CARTER_SOURCE_READY and os.path.isfile(NOVA_CARTER_STATIC_SHELL_URDF):
+        return NOVA_CARTER_STATIC_SHELL_URDF
+
+    package_dir = NOVA_CARTER_PACKAGE_DIR
+    if not os.path.isdir(package_dir):
+        os.makedirs(os.path.dirname(package_dir), exist_ok=True)
+        cli.print_step("Fetching official Nova Carter description package...")
+        clone_cmd = [
+            "git",
+            "clone",
+            "--filter=blob:none",
+            "--no-checkout",
+            "--depth",
+            "1",
+            NOVA_CARTER_REPO_URL,
+            NOVA_CARTER_CACHE_ROOT,
+        ]
+        clone_result = subprocess.run(clone_cmd, check=False, capture_output=True, text=True, timeout=240.0)
+        if clone_result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to clone nova_carter repo: {(clone_result.stderr or clone_result.stdout or '').strip()}"
+            )
+        sparse_init = subprocess.run(
+            ["git", "-C", NOVA_CARTER_CACHE_ROOT, "sparse-checkout", "init", "--cone"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30.0,
+        )
+        if sparse_init.returncode != 0:
+            raise RuntimeError(
+                f"Failed to initialize sparse checkout: {(sparse_init.stderr or sparse_init.stdout or '').strip()}"
+            )
+        sparse_set = subprocess.run(
+            ["git", "-C", NOVA_CARTER_CACHE_ROOT, "sparse-checkout", "set", "nova_carter_description"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30.0,
+        )
+        if sparse_set.returncode != 0:
+            raise RuntimeError(
+                f"Failed to set sparse checkout: {(sparse_set.stderr or sparse_set.stdout or '').strip()}"
+            )
+        checkout = subprocess.run(
+            ["git", "-C", NOVA_CARTER_CACHE_ROOT, "checkout"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120.0,
+        )
+        if checkout.returncode != 0:
+            raise RuntimeError(
+                f"Failed to checkout nova_carter_description: {(checkout.stderr or checkout.stdout or '').strip()}"
+            )
+
+    meshes_dir = os.path.join(package_dir, "meshes")
+    os.makedirs(meshes_dir, exist_ok=True)
+    for mesh_name in NOVA_CARTER_REQUIRED_MESHES:
+        mesh_path = os.path.join(meshes_dir, mesh_name)
+        needs_download = True
+        if os.path.isfile(mesh_path):
+            try:
+                with open(mesh_path, "r", encoding="utf-8", errors="ignore") as handle:
+                    first_line = handle.readline().strip()
+                needs_download = first_line.startswith("version https://git-lfs.github.com/spec/v1")
+            except OSError:
+                needs_download = True
+
+        if not needs_download:
+            continue
+
+        cli.print_step(f"Downloading Nova Carter mesh '{mesh_name}'...")
+        mesh_url = f"{NOVA_CARTER_MEDIA_BASE_URL}/nova_carter_description/meshes/{mesh_name}"
+        request = urllib.request.Request(mesh_url, headers={"User-Agent": "horus-sdk/robot-description"})
+        with urllib.request.urlopen(request, timeout=240.0) as response, open(mesh_path, "wb") as output:
+            output.write(response.read())
+
+    if not os.path.isfile(NOVA_CARTER_STATIC_SHELL_URDF):
+        os.makedirs(os.path.dirname(NOVA_CARTER_STATIC_SHELL_URDF), exist_ok=True)
+        with open(NOVA_CARTER_STATIC_SHELL_URDF, "w", encoding="utf-8") as handle:
+            handle.write(NOVA_CARTER_STATIC_SHELL_URDF_XML)
+
+    _NOVA_CARTER_SOURCE_READY = True
+    return NOVA_CARTER_STATIC_SHELL_URDF
+
+
+def warm_nova_carter_robot_description_artifact() -> str:
+    description_urdf_path = ensure_nova_carter_description_source()
+
+    from horus.description.robot_description_resolver import RobotDescriptionResolver
+
+    warm_robot = Robot(name="nova_carter_warmup", robot_type=RobotType.WHEELED)
+    warm_robot.configure_robot_description(
+        urdf_path=description_urdf_path,
+        base_frame="base_link",
+        include_visual_meshes=True,
+        visual_mesh_triangle_budget=32000,
+    )
+
+    resolver = RobotDescriptionResolver()
+    artifact = resolver.resolve_for_robot(warm_robot)
+    if artifact is None:
+        raise RuntimeError(
+            f"Failed preparing Nova Carter robot description artifact: {resolver.last_error or 'unknown error'}"
+        )
+    return description_urdf_path
 
 
 def _topic_types_by_name(node) -> Dict[str, Tuple[str, ...]]:
@@ -697,11 +957,18 @@ def build_robot_and_dataviz(
     include_scan: bool,
     minimap_streaming_type: str,
     teleop_streaming_type: str,
+    description_urdf_path: str,
 ) -> Tuple[Robot, DataViz]:
     robot = Robot(
         name=probe.robot_name,
         robot_type=RobotType.WHEELED,
         dimensions=RobotDimensions(length=0.82, width=0.56, height=0.60),
+    )
+    robot.configure_robot_description(
+        urdf_path=description_urdf_path,
+        base_frame="base_link",
+        include_visual_meshes=True,
+        visual_mesh_triangle_budget=32000,
     )
     robot.add_metadata(
         "teleop_config",
@@ -922,6 +1189,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         _print_probe_summary(probes, include_scan)
 
+        cli.print_step("Preparing Nova Carter robot description meshes...")
+        description_urdf_path = warm_nova_carter_robot_description_artifact()
+        cli.print_success("Nova Carter robot description meshes are ready.")
+
         cli.print_step("Waiting for live compressed image topics...")
         wait_for_compressed_topics(
             probes=probes,
@@ -961,6 +1232,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 include_scan=include_scan,
                 minimap_streaming_type=minimap_streaming_type,
                 teleop_streaming_type=teleop_streaming_type,
+                description_urdf_path=description_urdf_path,
             )
             robots.append(robot)
             datavizs.append(dataviz)
