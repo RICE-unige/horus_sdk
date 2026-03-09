@@ -3,22 +3,22 @@
 
 Expected live topics per robot by default:
 - `/<robot>/tf`
-- `/<robot>/front_stereo_camera/left/image_raw`
+- `/<robot>/front_stereo_camera/left/image_raw/compressed`
+- `/<robot>/front_stereo_camera/left/camera_info`
 - `/<robot>/chassis/odom`
 - `/<robot>/front_2d_lidar/scan`
-- `/<robot>/cmd_vel`
 
 This demo:
 1. Probes required live topics and samples first messages.
-2. Starts `image_transport` republishers (raw -> compressed).
-3. Waits for compressed image topics to publish.
-4. Relays `/<robot>/tf` into a shared TF topic (default: `/tf`) with prefixed frame IDs.
+2. Uses the live compressed image topics directly.
+3. Relays `/<robot>/tf` into a shared TF topic (default: `/tf`) with prefixed frame IDs.
+4. Seeds `map -> <robot>/odom` using the Isaac hospital start layout.
 5. Registers robots in HORUS using compressed camera topics.
 """
 
 import argparse
+import math
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -48,12 +48,35 @@ GLOBAL_ROOT_FRAMES = {"map", "world"}
 
 
 @dataclass(frozen=True)
+class RootPose:
+    x: float
+    y: float
+    z: float
+    yaw_deg: float
+
+
+DEFAULT_ROOT_POSES: Dict[str, RootPose] = {
+    "carter1": RootPose(x=0.0, y=0.0, z=0.0, yaw_deg=180.0),
+    "carter2": RootPose(x=4.0, y=-1.0, z=0.0, yaw_deg=180.0),
+    "carter3": RootPose(x=7.0, y=3.0, z=0.0, yaw_deg=180.0),
+}
+
+
+@dataclass(frozen=True)
 class CameraProbeResult:
     topic: str
     frame_id: str
     width: int
     height: int
     encoding: str
+
+
+@dataclass(frozen=True)
+class CameraInfoProbeResult:
+    topic: str
+    frame_id: str
+    width: int
+    height: int
 
 
 @dataclass(frozen=True)
@@ -100,6 +123,10 @@ def _camera_compressed_topic(robot_name: str) -> str:
     return f"/{robot_name}/front_stereo_camera/left/image_raw/compressed"
 
 
+def _camera_info_topic(robot_name: str) -> str:
+    return f"/{robot_name}/front_stereo_camera/left/camera_info"
+
+
 def _odom_topic(robot_name: str) -> str:
     return f"/{robot_name}/chassis/odom"
 
@@ -136,6 +163,8 @@ def _topic_types_by_name(node) -> Dict[str, Tuple[str, ...]]:
 
 
 def _topic_types_from_ros2_cli(timeout_sec: float) -> Dict[str, Tuple[str, ...]]:
+    import subprocess
+
     try:
         result = subprocess.run(
             ["ros2", "topic", "list", "-t"],
@@ -203,36 +232,19 @@ def resolve_camera_frame_id(
     camera_header_frame: str,
     available_tf_frames: Sequence[str],
 ) -> str:
+    header_frame = str(camera_header_frame or "").strip().lstrip("/")
+    if header_frame:
+        return prefix_frame_id(header_frame, robot_name)
+
     normalized_frames = {
         str(frame).strip().lstrip("/")
         for frame in available_tf_frames
         if str(frame).strip()
     }
-    header_frame = str(camera_header_frame or "").strip().lstrip("/")
+    for candidate in ("front_stereo_camera_left_rgb", "front_stereo_camera_left_optical", "base_link"):
+        if candidate in normalized_frames:
+            return prefix_frame_id(candidate, robot_name)
 
-    candidates: List[str] = []
-    if header_frame:
-        candidates.append(header_frame)
-        if header_frame.endswith("_optical"):
-            candidates.append(header_frame[: -len("_optical")] + "_rgb")
-        if header_frame.endswith("_rgb"):
-            candidates.append(header_frame[: -len("_rgb")] + "_optical")
-
-    candidates.extend(
-        [
-            "front_stereo_camera_left_rgb",
-            "front_stereo_camera_left_optical",
-            "base_link",
-        ]
-    )
-
-    for candidate in candidates:
-        normalized_candidate = str(candidate or "").strip().lstrip("/")
-        if normalized_candidate and normalized_candidate in normalized_frames:
-            return prefix_frame_id(normalized_candidate, robot_name)
-
-    if header_frame:
-        return prefix_frame_id(header_frame, robot_name)
     return prefix_frame_id("base_link", robot_name)
 
 
@@ -244,7 +256,7 @@ def probe_live_robots(
 ) -> List[RobotProbeResult]:
     import rclpy
     from nav_msgs.msg import Odometry
-    from sensor_msgs.msg import Image, LaserScan
+    from sensor_msgs.msg import CameraInfo, CompressedImage, LaserScan
     from tf2_msgs.msg import TFMessage
 
     timeout_sec = max(0.5, float(timeout_sec))
@@ -252,9 +264,9 @@ def probe_live_robots(
 
     for robot_name in robot_names:
         expected_types[_tf_source_topic(robot_name)] = "tf2_msgs/msg/TFMessage"
-        expected_types[_camera_raw_topic(robot_name)] = "sensor_msgs/msg/Image"
+        expected_types[_camera_compressed_topic(robot_name)] = "sensor_msgs/msg/CompressedImage"
+        expected_types[_camera_info_topic(robot_name)] = "sensor_msgs/msg/CameraInfo"
         expected_types[_odom_topic(robot_name)] = "nav_msgs/msg/Odometry"
-        expected_types[_cmd_vel_topic(robot_name)] = "geometry_msgs/msg/Twist"
         if include_scan:
             expected_types[_scan_topic(robot_name)] = "sensor_msgs/msg/LaserScan"
 
@@ -264,6 +276,9 @@ def probe_live_robots(
     camera_results: Dict[str, Optional[CameraProbeResult]] = {
         name: None for name in robot_names
     }
+    camera_info_results: Dict[str, Optional[CameraInfoProbeResult]] = {
+        name: None for name in robot_names
+    }
     odom_results: Dict[str, Optional[OdomProbeResult]] = {name: None for name in robot_names}
     scan_results: Dict[str, Optional[ScanProbeResult]] = {name: None for name in robot_names}
     tf_frames: Dict[str, set[str]] = {name: set() for name in robot_names}
@@ -271,16 +286,37 @@ def probe_live_robots(
     subscriptions = []
 
     def make_camera_callback(name: str):
-        def _callback(msg: Image):
-            if camera_results[name] is not None:
+        def _callback(msg: CompressedImage):
+            if camera_results[name] is not None and camera_info_results[name] is not None:
                 return
             camera_results[name] = CameraProbeResult(
-                topic=_camera_raw_topic(name),
+                topic=_camera_compressed_topic(name),
+                frame_id=str(msg.header.frame_id or "").strip(),
+                width=int(max(1, camera_info_results[name].width if camera_info_results[name] else 1)),
+                height=int(max(1, camera_info_results[name].height if camera_info_results[name] else 1)),
+                encoding="jpeg",
+            )
+
+        return _callback
+
+    def make_camera_info_callback(name: str):
+        def _callback(msg: CameraInfo):
+            if camera_info_results[name] is not None:
+                return
+            camera_info_results[name] = CameraInfoProbeResult(
+                topic=_camera_info_topic(name),
                 frame_id=str(msg.header.frame_id or "").strip(),
                 width=int(max(1, msg.width)),
                 height=int(max(1, msg.height)),
-                encoding=str(msg.encoding or "").strip() or "rgb8",
             )
+            if camera_results[name] is not None:
+                camera_results[name] = CameraProbeResult(
+                    topic=camera_results[name].topic,
+                    frame_id=camera_results[name].frame_id or camera_info_results[name].frame_id,
+                    width=camera_info_results[name].width,
+                    height=camera_info_results[name].height,
+                    encoding=camera_results[name].encoding,
+                )
 
         return _callback
 
@@ -332,9 +368,17 @@ def probe_live_robots(
         for robot_name in robot_names:
             subscriptions.append(
                 node.create_subscription(
-                    Image,
-                    _camera_raw_topic(robot_name),
+                    CompressedImage,
+                    _camera_compressed_topic(robot_name),
                     make_camera_callback(robot_name),
+                    10,
+                )
+            )
+            subscriptions.append(
+                node.create_subscription(
+                    CameraInfo,
+                    _camera_info_topic(robot_name),
+                    make_camera_info_callback(robot_name),
                     10,
                 )
             )
@@ -370,7 +414,10 @@ def probe_live_robots(
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
             topic_problems = _missing_or_wrong_topics(last_topic_types, expected_types)
-            all_cameras = all(camera_results[name] is not None for name in robot_names)
+            all_cameras = all(
+                camera_results[name] is not None and camera_info_results[name] is not None
+                for name in robot_names
+            )
             all_odom = all(odom_results[name] is not None for name in robot_names)
             all_tf = all(tf_seen[name] for name in robot_names)
             all_scan = True
@@ -393,7 +440,11 @@ def probe_live_robots(
         for robot_name in robot_names:
             if camera_results[robot_name] is None:
                 raise RuntimeError(
-                    f"Timed out waiting for first image on {_camera_raw_topic(robot_name)}."
+                    f"Timed out waiting for first compressed image on {_camera_compressed_topic(robot_name)}."
+                )
+            if camera_info_results[robot_name] is None:
+                raise RuntimeError(
+                    f"Timed out waiting for first camera info on {_camera_info_topic(robot_name)}."
                 )
             if odom_results[robot_name] is None:
                 raise RuntimeError(
@@ -412,7 +463,10 @@ def probe_live_robots(
         for robot_name in robot_names:
             resolved_camera_frame = resolve_camera_frame_id(
                 robot_name=robot_name,
-                camera_header_frame=camera_results[robot_name].frame_id,  # type: ignore[union-attr]
+                camera_header_frame=(
+                    camera_info_results[robot_name].frame_id
+                    or camera_results[robot_name].frame_id  # type: ignore[union-attr]
+                ),
                 available_tf_frames=sorted(tf_frames[robot_name]),
             )
             probes.append(
@@ -421,7 +475,7 @@ def probe_live_robots(
                     tf_source_topic=_tf_source_topic(robot_name),
                     tf_output_topic=tf_output_topic,
                     cmd_vel_topic=_cmd_vel_topic(robot_name),
-                    camera_raw_topic=_camera_raw_topic(robot_name),
+                    camera_raw_topic="",
                     camera_compressed_topic=_camera_compressed_topic(robot_name),
                     camera_frame=resolved_camera_frame,
                     camera=camera_results[robot_name],  # type: ignore[arg-type]
@@ -442,64 +496,9 @@ def probe_live_robots(
             pass
 
 
-def start_image_transport_republishers(
-    probes: Sequence[RobotProbeResult],
-) -> List[subprocess.Popen]:
-    processes: List[subprocess.Popen] = []
-    for probe in probes:
-        command = [
-            "ros2",
-            "run",
-            "image_transport",
-            "republish",
-            "--ros-args",
-            "-r",
-            f"__node:={probe.robot_name}_image_republisher",
-            "-p",
-            "in_transport:=raw",
-            "-p",
-            "out_transport:=compressed",
-            "-r",
-            f"in:={probe.camera_raw_topic}",
-            "-r",
-            f"out/compressed:={probe.camera_compressed_topic}",
-        ]
-        cli.print_info(
-            f"Starting image republisher for {probe.robot_name}: "
-            f"{probe.camera_raw_topic} -> {probe.camera_compressed_topic}"
-        )
-        process = subprocess.Popen(command)
-        processes.append(process)
-
-    time.sleep(0.6)
-    for process in processes:
-        if process.poll() is not None:
-            raise RuntimeError(
-                f"image_transport republisher exited early with code {process.returncode}."
-            )
-    return processes
-
-
-def stop_processes(processes: Sequence[subprocess.Popen]) -> None:
-    for process in processes:
-        if process.poll() is None:
-            process.terminate()
-    deadline = time.monotonic() + 5.0
-    for process in processes:
-        if process.poll() is not None:
-            continue
-        remaining = max(0.0, deadline - time.monotonic())
-        try:
-            process.wait(timeout=max(0.1, remaining))
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=2.0)
-
-
 def wait_for_compressed_topics(
     probes: Sequence[RobotProbeResult],
     timeout_sec: float,
-    processes: Sequence[subprocess.Popen],
 ) -> None:
     import rclpy
     from sensor_msgs.msg import CompressedImage
@@ -530,12 +529,6 @@ def wait_for_compressed_topics(
 
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
-            for process in processes:
-                if process.poll() is not None:
-                    raise RuntimeError(
-                        "image_transport republisher exited unexpectedly while waiting "
-                        "for compressed images."
-                    )
             if all(received.values()):
                 return
             remaining = max(0.0, deadline - time.monotonic())
@@ -566,6 +559,7 @@ class PrefixedTfRelay:
         source_topic: str,
         output_topic: str,
         odom_frame: str,
+        root_pose: RootPose,
         map_frame: str = "map",
     ) -> None:
         import rclpy
@@ -582,6 +576,7 @@ class PrefixedTfRelay:
         self.odom_frame = (
             prefix_frame_id(odom_frame, self.robot_name) or f"{self.robot_name}/odom"
         )
+        self.root_pose = root_pose
         self.active = threading.Event()
 
         node_name = f"horus_hospital_tf_relay_{self.robot_name}_{uuid.uuid4().hex[:8]}"
@@ -626,13 +621,14 @@ class PrefixedTfRelay:
             root_tf.header.stamp = transforms[0].header.stamp
             root_tf.header.frame_id = self.map_frame
             root_tf.child_frame_id = self.odom_frame
-            root_tf.transform.translation.x = 0.0
-            root_tf.transform.translation.y = 0.0
-            root_tf.transform.translation.z = 0.0
+            root_tf.transform.translation.x = float(self.root_pose.x)
+            root_tf.transform.translation.y = float(self.root_pose.y)
+            root_tf.transform.translation.z = float(self.root_pose.z)
             root_tf.transform.rotation.x = 0.0
             root_tf.transform.rotation.y = 0.0
-            root_tf.transform.rotation.z = 0.0
-            root_tf.transform.rotation.w = 1.0
+            half_yaw_rad = math.radians(float(self.root_pose.yaw_deg)) * 0.5
+            root_tf.transform.rotation.z = math.sin(half_yaw_rad)
+            root_tf.transform.rotation.w = math.cos(half_yaw_rad)
             transforms.insert(0, root_tf)
 
         self.publisher.publish(self._tf_message_type(transforms=transforms))
@@ -705,7 +701,7 @@ def build_robot_and_dataviz(
     robot = Robot(
         name=probe.robot_name,
         robot_type=RobotType.WHEELED,
-        dimensions=RobotDimensions(length=0.75, width=0.50, height=0.55),
+        dimensions=RobotDimensions(length=0.82, width=0.56, height=0.60),
     )
     robot.add_metadata(
         "teleop_config",
@@ -733,7 +729,7 @@ def build_robot_and_dataviz(
 
     camera = Camera(
         name="front_camera",
-        frame_id=robot_tf_frame,
+        frame_id=probe.camera_frame or robot_tf_frame,
         topic=probe.camera_compressed_topic,
         resolution=(probe.camera.width, probe.camera.height),
         fps=DEFAULT_CAMERA_FPS,
@@ -755,14 +751,13 @@ def build_robot_and_dataviz(
     camera.add_metadata("webrtc_bitrate_kbps", 2000)
     camera.add_metadata("webrtc_framerate", 20)
     camera.add_metadata("webrtc_stun_server_url", "stun:stun.l.google.com:19302")
-    camera.add_metadata("image_scale", 0.072)
-    camera.add_metadata("focal_length_scale", 0.108)
-    camera.add_metadata("camera_source_frame_hint", probe.camera_frame)
+    camera.add_metadata("image_scale", 1.037)
+    camera.add_metadata("focal_length_scale", 0.55)
     camera.add_metadata("view_position_offset", [0.0, 0.0, 0.0])
     camera.add_metadata("view_rotation_offset", [0.0, 0.0, 0.0])
     camera.add_metadata("show_frustum", True)
-    camera.add_metadata("frustum_color", "#FFFF00")
-    camera.add_metadata("overhead_size", 1.0)
+    camera.add_metadata("frustum_color", "#E6E6E0A0")
+    camera.add_metadata("overhead_size", 10.0)
     camera.add_metadata("overhead_position_offset", [0.0, 2.0, 0.0])
     camera.add_metadata("overhead_face_camera", True)
     camera.add_metadata("overhead_rotation_offset", [90.0, 0.0, 0.0])
@@ -786,6 +781,7 @@ def build_robot_and_dataviz(
     dataviz = DataViz(name=f"{probe.robot_name}_hospital_live_viz")
     dataviz.add_sensor_visualization(camera, robot_name=probe.robot_name)
     if scan_sensor is not None:
+        scan_sensor.color = DataViz._deterministic_robot_laser_hex_color(probe.robot_name)
         dataviz.add_sensor_visualization(scan_sensor, robot_name=probe.robot_name)
 
     dataviz.add_robot_transform(
@@ -876,7 +872,7 @@ def _print_probe_summary(probes: Sequence[RobotProbeResult], include_scan: bool)
     cli.print_info(f"shared_tf_topic={tf_output_topic}")
     for probe in probes:
         cli.print_info(
-            f"[{probe.robot_name}] camera_raw={probe.camera_raw_topic} "
+            f"[{probe.robot_name}] camera_compressed={probe.camera_compressed_topic} "
             f"({probe.camera.width}x{probe.camera.height}, {probe.camera.encoding})"
         )
         cli.print_info(
@@ -907,7 +903,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.camera_teleop_streaming_type, "webrtc"
     )
 
-    compression_processes: List[subprocess.Popen] = []
     relay_runner: Optional[TfRelayRunner] = None
     rclpy_initialized = False
 
@@ -927,14 +922,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         _print_probe_summary(probes, include_scan)
 
-        cli.print_step("Starting image_transport republishers (raw -> compressed)...")
-        compression_processes = start_image_transport_republishers(probes)
-
-        cli.print_step("Waiting for compressed image topics...")
+        cli.print_step("Waiting for live compressed image topics...")
         wait_for_compressed_topics(
             probes=probes,
             timeout_sec=timeout_sec,
-            processes=compression_processes,
         )
         cli.print_success("Compressed camera topics are active.")
 
@@ -945,6 +936,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 source_topic=probe.tf_source_topic,
                 output_topic=probe.tf_output_topic,
                 odom_frame=probe.odom.frame_id or "odom",
+                root_pose=DEFAULT_ROOT_POSES.get(
+                    probe.robot_name,
+                    RootPose(x=0.0, y=0.0, z=0.0, yaw_deg=0.0),
+                ),
                 map_frame="map",
             )
             for probe in probes
@@ -994,9 +989,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if relay_runner is not None:
             cli.print_info("Stopping TF relays...")
             relay_runner.stop()
-        if compression_processes:
-            cli.print_info("Stopping image_transport republishers...")
-            stop_processes(compression_processes)
 
         if rclpy_initialized:
             try:
