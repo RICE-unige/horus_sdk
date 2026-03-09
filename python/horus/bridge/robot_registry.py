@@ -70,6 +70,11 @@ class RobotRegistryClient:
         self._sdk_replay_burst_attempts = 3
         self._sdk_replay_burst_initial_delay_s = 0.15
         self._sdk_replay_burst_inter_attempt_delay_s = 0.25
+        self._robot_description_chunk_begin_delay_s = 0.03
+        self._robot_description_chunk_item_delay_s = 0.006
+        self._robot_description_chunk_batch_size = 6
+        self._robot_description_chunk_batch_pause_s = 0.02
+        self._robot_description_chunk_end_delay_s = 0.05
         self._robot_description_resolver = RobotDescriptionResolver()
         self._robot_description_by_robot: Dict[str, Dict[str, Any]] = {}
         self._robot_description_by_id: Dict[str, Dict[str, Any]] = {}
@@ -655,7 +660,13 @@ class RobotRegistryClient:
             }
         )
         self.robot_description_chunk_begin_publisher.publish(begin)
+        begin_delay = max(0.0, float(getattr(self, "_robot_description_chunk_begin_delay_s", 0.03)))
+        if begin_delay > 0.0:
+            time.sleep(begin_delay)
 
+        item_delay = max(0.0, float(getattr(self, "_robot_description_chunk_item_delay_s", 0.0)))
+        batch_size = max(1, int(getattr(self, "_robot_description_chunk_batch_size", 1)))
+        batch_pause = max(0.0, float(getattr(self, "_robot_description_chunk_batch_pause_s", 0.0)))
         for index, chunk_data in enumerate(chunks):
             item = String()
             item.data = json.dumps(
@@ -3393,13 +3404,24 @@ class RobotRegistryClient:
             "timestamp": time.time()
         }
 
+        local_body_config = robot.get_metadata("local_body_model_config", {})
+        if isinstance(local_body_config, dict):
+            robot_model_id = str(local_body_config.get("robot_model_id", "") or "").strip().lower()
+            local_body_enabled = bool(local_body_config.get("enabled", False))
+            if local_body_enabled and robot_model_id:
+                config["robot_model_id"] = robot_model_id
+                config["has_visual_mesh_model"] = True
+
         if description_container is not None:
             artifact = description_container.get("artifact")
             if artifact is not None:
                 config["robot_description_manifest"] = artifact.to_manifest_payload()
-                # Inline payload fallback so MR can render descriptions even when
-                # chunk transport is unavailable in a given runtime setup.
-                config["robot_description_payload_json"] = artifact.payload_json
+                if bool(getattr(artifact.manifest, "supports_visual_meshes", False)):
+                    config["has_visual_mesh_model"] = True
+                # Keep inline payloads only when they stay reasonably small.
+                # Mesh-backed descriptions use the existing chunk transport path.
+                if len(str(artifact.payload_json or "")) <= 250000:
+                    config["robot_description_payload_json"] = artifact.payload_json
 
         if dimensions is not None:
             config["dimensions"] = dimensions
