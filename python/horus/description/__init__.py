@@ -6,18 +6,24 @@ from .robot_description_models import (
     CompiledCollision,
     CompiledJoint,
     CompiledLink,
+    CompiledVisual,
+    MeshAsset,
     RobotDescriptionArtifact,
-    RobotDescriptionManifestV1,
-    RobotDescriptionV1,
+    RobotDescriptionManifestV2,
+    RobotDescriptionV2,
 )
+from .robot_mesh_baker import RobotMeshBaker
 from .robot_description_resolver import RobotDescriptionResolver
 
 __all__ = [
     "CompiledCollision",
     "CompiledJoint",
     "CompiledLink",
+    "CompiledVisual",
+    "MeshAsset",
     "RobotDescriptionArtifact",
-    "RobotDescriptionManifestV1",
+    "RobotDescriptionManifestV2",
+    "RobotMeshBaker",
     "RobotDescriptionResolver",
-    "RobotDescriptionV1",
+    "RobotDescriptionV2",
 ]

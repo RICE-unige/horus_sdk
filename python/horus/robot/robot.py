@@ -50,6 +50,7 @@ class Robot:
 
     _DEFAULT_LOGICAL_NAME = "robot"
     _ROS_BINDING_METADATA_KEY = "ros_binding_config"
+    _LOCAL_BODY_MODEL_METADATA_KEY = "local_body_model_config"
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -406,6 +407,8 @@ class Robot:
         ros_param_name: str = "robot_description",
         chunk_size_bytes: int = 12000,
         is_transparent: bool = False,
+        include_visual_meshes: bool = True,
+        visual_mesh_triangle_budget: int = 36000,
         enabled: bool = True,
     ) -> None:
         """
@@ -419,6 +422,8 @@ class Robot:
             ros_param_name: ROS parameter name (default: robot_description).
             chunk_size_bytes: Chunk size used for SDK->MR transport.
             is_transparent: Render collision body as transparent in MR.
+            include_visual_meshes: Include baked visual meshes in the payload.
+            visual_mesh_triangle_budget: Combined triangle budget for the baked shell mesh.
             enabled: Enable robot description manifest + chunk transport.
         """
         self.add_metadata(
@@ -432,6 +437,29 @@ class Robot:
                 "ros_param_name": str(ros_param_name or "robot_description"),
                 "chunk_size_bytes": int(max(1024, min(64000, chunk_size_bytes))),
                 "is_transparent": bool(is_transparent),
+                "include_visual_meshes": bool(include_visual_meshes),
+                "visual_mesh_triangle_budget": int(max(1000, min(200000, visual_mesh_triangle_budget))),
+            },
+        )
+
+    def configure_local_body_model(
+        self,
+        robot_model_id: str,
+        enabled: bool = True,
+    ) -> None:
+        """
+        Configure a bundled MR-side robot body model by stable model identifier.
+
+        Args:
+            robot_model_id: Stable identifier for a model shipped with Horus MR.
+            enabled: Whether the bundled model should be advertised to MR.
+        """
+        normalized_model_id = str(robot_model_id or "").strip().lower()
+        self.add_metadata(
+            self._LOCAL_BODY_MODEL_METADATA_KEY,
+            {
+                "enabled": bool(enabled) and bool(normalized_model_id),
+                "robot_model_id": normalized_model_id,
             },
         )
 
