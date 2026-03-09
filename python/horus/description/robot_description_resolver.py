@@ -14,16 +14,19 @@ import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .robot_description_models import (
     CompiledCollision,
     CompiledJoint,
     CompiledLink,
+    CompiledVisual,
     RobotDescriptionArtifact,
-    RobotDescriptionManifestV1,
-    RobotDescriptionV1,
+    RobotDescriptionManifestV2,
+    RobotDescriptionV2,
 )
+from .robot_mesh_baker import RobotMeshBaker
 
 
 def _parse_vec3(raw_value: Optional[str], default_xyz: Tuple[float, float, float]) -> List[float]:
@@ -146,6 +149,16 @@ class _JointSourceData:
 
 
 @dataclass
+class _VisualSourceData:
+    link_name: str
+    mesh_uri: str
+    origin_xyz: List[float]
+    origin_rpy: List[float]
+    mesh_scale_xyz: List[float]
+    color_rgb: List[float]
+
+
+@dataclass
 class RobotDescriptionResolveConfig:
     enabled: bool = False
     source: str = "ros"
@@ -155,6 +168,8 @@ class RobotDescriptionResolveConfig:
     base_frame: str = "base_link"
     chunk_size_bytes: int = 12000
     is_transparent: bool = False
+    include_visual_meshes: bool = True
+    visual_mesh_triangle_budget: int = 36000
 
 
 class RobotDescriptionResolver:
@@ -165,6 +180,7 @@ class RobotDescriptionResolver:
     def __init__(self):
         self._artifact_by_hash: Dict[str, RobotDescriptionArtifact] = {}
         self._last_error: str = ""
+        self._mesh_baker = RobotMeshBaker()
 
     @property
     def last_error(self) -> str:
@@ -209,7 +225,7 @@ class RobotDescriptionResolver:
                 cached.encoded_payload[index:index + chunk_size]
                 for index in range(0, len(cached.encoded_payload), chunk_size)
             ] or [""]
-            variant_manifest = RobotDescriptionManifestV1(
+            variant_manifest = RobotDescriptionManifestV2(
                 version=cached.manifest.version,
                 description_id=cached.manifest.description_id,
                 source=cached.manifest.source,
@@ -219,6 +235,9 @@ class RobotDescriptionResolver:
                 collision_count=cached.manifest.collision_count,
                 supports_collision=cached.manifest.supports_collision,
                 supports_joints=cached.manifest.supports_joints,
+                supports_visual_meshes=cached.manifest.supports_visual_meshes,
+                mesh_asset_count=cached.manifest.mesh_asset_count,
+                mesh_asset_encoded_bytes=cached.manifest.mesh_asset_encoded_bytes,
                 is_transparent=requested_transparent,
                 encoding=cached.manifest.encoding,
                 chunk_size_bytes=chunk_size,
@@ -241,8 +260,13 @@ class RobotDescriptionResolver:
         links = payload.links
         joints = payload.joints
         collision_count = sum(len(link.collisions) for link in links)
-        manifest = RobotDescriptionManifestV1(
-            version="v1",
+        mesh_asset_count = len(payload.mesh_assets)
+        mesh_asset_encoded_bytes = sum(
+            len(asset.positions_b64) + len(asset.normals_b64) + len(asset.indices_b64)
+            for asset in payload.mesh_assets
+        )
+        manifest = RobotDescriptionManifestV2(
+            version="v2",
             description_id=description_id,
             source=config.source,
             base_frame=payload.base_frame,
@@ -251,6 +275,9 @@ class RobotDescriptionResolver:
             collision_count=collision_count,
             supports_collision=collision_count > 0,
             supports_joints=len(joints) > 0,
+            supports_visual_meshes=mesh_asset_count > 0,
+            mesh_asset_count=mesh_asset_count,
+            mesh_asset_encoded_bytes=mesh_asset_encoded_bytes,
             is_transparent=requested_transparent,
             encoding="json+gzip+base64",
             chunk_size_bytes=chunk_size,
@@ -274,6 +301,7 @@ class RobotDescriptionResolver:
 
         enabled = _coerce_bool(config.get("enabled", True), True)
         is_transparent = _coerce_bool(config.get("is_transparent", False), False)
+        include_visual_meshes = _coerce_bool(config.get("include_visual_meshes", True), True)
         source = str(config.get("source", "ros") or "ros").strip().lower()
         if source not in {"ros"}:
             source = "ros"
@@ -284,6 +312,12 @@ class RobotDescriptionResolver:
         except (TypeError, ValueError):
             chunk_size = 12000
 
+        visual_mesh_triangle_budget = config.get("visual_mesh_triangle_budget", 36000)
+        try:
+            visual_mesh_triangle_budget = int(visual_mesh_triangle_budget)
+        except (TypeError, ValueError):
+            visual_mesh_triangle_budget = 36000
+
         return RobotDescriptionResolveConfig(
             enabled=enabled,
             source=source,
@@ -293,6 +327,8 @@ class RobotDescriptionResolver:
             base_frame=str(config.get("base_frame", "base_link") or "base_link").strip() or "base_link",
             chunk_size_bytes=max(1024, min(64000, chunk_size)),
             is_transparent=is_transparent,
+            include_visual_meshes=include_visual_meshes,
+            visual_mesh_triangle_budget=max(1000, min(200000, visual_mesh_triangle_budget)),
         )
 
     def _resolve_urdf_xml(self, config: RobotDescriptionResolveConfig) -> Tuple[str, str]:
@@ -393,12 +429,14 @@ class RobotDescriptionResolver:
         robot: Any,
         urdf_xml: str,
         config: RobotDescriptionResolveConfig,
-    ) -> RobotDescriptionV1:
+    ) -> RobotDescriptionV2:
         root = ET.fromstring(urdf_xml)
-        robot_name = str(getattr(robot, "name", "") or "").strip() or str(root.attrib.get("name", "robot")).strip()
+        robot_name = str(root.attrib.get("name", "robot")).strip() or str(getattr(robot, "name", "") or "").strip() or "robot"
         fallback_proxy = self._default_mesh_proxy_size(robot)
+        package_root = self._resolve_package_root(config.urdf_path)
 
         links_local: Dict[str, List[CompiledCollision]] = {}
+        visuals_local: Dict[str, List[_VisualSourceData]] = {}
         link_names: List[str] = []
         for link_el in root.findall("link"):
             link_name = str(link_el.attrib.get("name", "")).strip()
@@ -411,7 +449,14 @@ class RobotDescriptionResolver:
                 if compiled is not None:
                     compiled_collisions.append(compiled)
 
+            compiled_visuals: List[_VisualSourceData] = []
+            for visual_el in link_el.findall("visual"):
+                compiled_visual = self._parse_visual(visual_el, link_name)
+                if compiled_visual is not None:
+                    compiled_visuals.append(compiled_visual)
+
             links_local[link_name] = compiled_collisions
+            visuals_local[link_name] = compiled_visuals
             link_names.append(link_name)
 
         source_joints: List[_JointSourceData] = []
@@ -471,6 +516,7 @@ class RobotDescriptionResolver:
 
         link_transforms = self._build_link_transforms(base_frame, source_joints)
         links: List[CompiledLink] = []
+        mesh_entries: List[Dict[str, object]] = []
         for link_name in link_names:
             local_collisions = links_local.get(link_name, [])
             link_rotation, link_translation = link_transforms.get(link_name, (_identity_rotation(), [0.0, 0.0, 0.0]))
@@ -494,6 +540,29 @@ class RobotDescriptionResolver:
                 )
                 compiled_collisions.append(world_collision)
             links.append(CompiledLink(name=link_name, collisions=compiled_collisions))
+
+            if config.include_visual_meshes:
+                for visual in visuals_local.get(link_name, []):
+                    source_path = self._resolve_mesh_path(
+                        mesh_uri=visual.mesh_uri,
+                        urdf_path=config.urdf_path,
+                        package_root=package_root,
+                    )
+                    if source_path is None:
+                        continue
+                    mesh_entries.append(
+                        {
+                            "link_name": link_name,
+                            "mesh_uri": visual.mesh_uri,
+                            "mesh_path": str(source_path),
+                            "origin_xyz": visual.origin_xyz,
+                            "origin_rpy": visual.origin_rpy,
+                            "link_xyz": link_translation,
+                            "link_rpy": _matrix_to_rpy(link_rotation),
+                            "mesh_scale_xyz": visual.mesh_scale_xyz,
+                            "color_rgb": visual.color_rgb,
+                        }
+                    )
 
         joints: List[CompiledJoint] = []
         for joint in source_joints:
@@ -519,12 +588,36 @@ class RobotDescriptionResolver:
                 )
             )
 
-        return RobotDescriptionV1(
-            version="v1",
+        visual_links: List[CompiledVisual] = []
+        mesh_assets = []
+        combined_asset = None
+        if config.include_visual_meshes and mesh_entries:
+            combined_asset = self._mesh_baker.build_combined_asset(
+                mesh_entries=mesh_entries,
+                description_id_seed=f"{config.urdf_path}:{config.base_frame}",
+                target_triangles=config.visual_mesh_triangle_budget,
+            )
+        if combined_asset is not None:
+            asset, _, _ = combined_asset
+            mesh_assets.append(asset)
+            visual_links.append(
+                CompiledVisual(
+                    name="body_shell",
+                    mesh_id=asset.mesh_id,
+                    origin_xyz=[0.0, 0.0, 0.0],
+                    origin_rpy=[0.0, 0.0, 0.0],
+                    color_rgb=list(asset.color_rgb),
+                )
+            )
+
+        return RobotDescriptionV2(
+            version="v2",
             robot_name=robot_name,
             base_frame=base_frame,
             links=links,
             joints=joints,
+            visual_links=visual_links,
+            mesh_assets=mesh_assets,
         )
 
     def _build_link_transforms(
@@ -654,6 +747,95 @@ class RobotDescriptionResolver:
                 proxy_size_xyz=proxy_size,
             )
 
+        return None
+
+    def _parse_visual(
+        self,
+        visual_el: ET.Element,
+        link_name: str,
+    ) -> Optional[_VisualSourceData]:
+        geometry_el = visual_el.find("geometry")
+        if geometry_el is None:
+            return None
+
+        mesh_el = geometry_el.find("mesh")
+        if mesh_el is None:
+            return None
+
+        mesh_uri = str(mesh_el.attrib.get("filename", "")).strip()
+        if not mesh_uri:
+            return None
+
+        origin_el = visual_el.find("origin")
+        origin_xyz = _parse_vec3(origin_el.attrib.get("xyz") if origin_el is not None else None, (0.0, 0.0, 0.0))
+        origin_rpy = _parse_vec3(origin_el.attrib.get("rpy") if origin_el is not None else None, (0.0, 0.0, 0.0))
+        mesh_scale = _parse_vec3(mesh_el.attrib.get("scale"), (1.0, 1.0, 1.0))
+
+        color_rgb: List[float] = []
+        material_el = visual_el.find("material")
+        if material_el is not None:
+            color_el = material_el.find("color")
+            if color_el is not None:
+                rgba_tokens = str(color_el.attrib.get("rgba", "")).replace(",", " ").split()
+                if len(rgba_tokens) >= 3:
+                    try:
+                        color_rgb = [
+                            max(0.0, min(1.0, float(rgba_tokens[0]))),
+                            max(0.0, min(1.0, float(rgba_tokens[1]))),
+                            max(0.0, min(1.0, float(rgba_tokens[2]))),
+                        ]
+                    except (TypeError, ValueError):
+                        color_rgb = []
+
+        return _VisualSourceData(
+            link_name=link_name,
+            mesh_uri=mesh_uri,
+            origin_xyz=origin_xyz,
+            origin_rpy=origin_rpy,
+            mesh_scale_xyz=mesh_scale,
+            color_rgb=color_rgb,
+        )
+
+    def _resolve_package_root(self, urdf_path: str) -> Optional[Path]:
+        candidate = Path(str(urdf_path or "")).expanduser()
+        if not candidate:
+            return None
+        start_dir = candidate.parent if candidate.suffix else candidate
+        current = start_dir.resolve()
+        while True:
+            if (current / "package.xml").is_file():
+                return current
+            if current.parent == current:
+                break
+            current = current.parent
+        return None
+
+    def _resolve_mesh_path(
+        self,
+        mesh_uri: str,
+        urdf_path: str,
+        package_root: Optional[Path],
+    ) -> Optional[Path]:
+        raw_uri = str(mesh_uri or "").strip()
+        if not raw_uri:
+            return None
+
+        if raw_uri.startswith("package://"):
+            package_relative = raw_uri[len("package://"):]
+            package_name, _, relative_path = package_relative.partition("/")
+            if package_root is not None and package_root.name == package_name and relative_path:
+                candidate = (package_root / relative_path).resolve()
+                if candidate.is_file():
+                    return candidate
+            return None
+
+        candidate = Path(raw_uri).expanduser()
+        if not candidate.is_absolute():
+            urdf_file = Path(str(urdf_path or "")).expanduser()
+            if urdf_file.is_file():
+                candidate = (urdf_file.parent / candidate).resolve()
+        if candidate.is_file():
+            return candidate
         return None
 
     def _default_mesh_proxy_size(self, robot: Any) -> Tuple[float, float, float]:

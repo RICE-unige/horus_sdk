@@ -1,4 +1,4 @@
-"""Tests for Robot Description V1 manifest payload wiring."""
+"""Tests for robot-description manifest payload wiring."""
 
 import os
 import tempfile
@@ -57,11 +57,13 @@ def test_robot_description_manifest_is_attached_when_urdf_config_present():
 
         assert "robot_description_manifest" in config
         manifest = config["robot_description_manifest"]
-        assert manifest["version"] == "v1"
+        assert manifest["version"] == "v2"
         assert manifest["source"] == "ros"
         assert manifest["base_frame"] == "base_link"
         assert manifest["supports_collision"] is True
         assert manifest["supports_joints"] is True
+        assert manifest["supports_visual_meshes"] is False
+        assert manifest["mesh_asset_count"] == 0
         assert manifest["is_transparent"] is False
         assert manifest["collision_count"] == 2
         assert manifest["joint_count"] == 1

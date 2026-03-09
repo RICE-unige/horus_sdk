@@ -669,7 +669,14 @@ class RobotRegistryClient:
                 }
             )
             self.robot_description_chunk_item_publisher.publish(item)
+            if item_delay > 0.0:
+                time.sleep(item_delay)
+            if batch_pause > 0.0 and (index + 1) < expected_chunks and ((index + 1) % batch_size) == 0:
+                time.sleep(batch_pause)
 
+        end_delay = max(0.0, float(getattr(self, "_robot_description_chunk_end_delay_s", 0.03)))
+        if end_delay > 0.0:
+            time.sleep(end_delay)
         end = String()
         end.data = json.dumps(
             {
