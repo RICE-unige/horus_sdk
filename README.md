@@ -178,8 +178,9 @@ Flat single-robot notes:
 ### 6) Hospital Carter live demo (compressed camera + prefixed TF)
 
 Use this with the live Isaac hospital scene publishing `carter1/2/3` topics.
-The demo auto-starts `image_transport` republishers for compressed camera feeds and relays
-`/<robot>/tf` into a single shared `/tf` topic with `<robot>/...` frame IDs.
+The demo uses the live compressed camera feeds directly and relays `/<robot>/tf` into a
+single shared `/tf` topic with `<robot>/...` frame IDs. It also seeds the shared
+`map -> <robot>/odom` transforms using the default hospital layout for `carter1/2/3`.
 
 ```bash
 cd ~/horus_sdk
@@ -190,14 +191,20 @@ Quick verification:
 
 ```bash
 ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
+ros2 topic echo /carter1/front_stereo_camera/left/camera_info --once
 ros2 topic echo /tf --once
 ```
 
 Expected topics created by the demo:
+- `/tf` (shared, with prefixed frames like `carter1/base_link`, `carter2/base_link`, `carter3/base_link`)
+
+Expected live topics consumed by the demo:
 - `/carter1/front_stereo_camera/left/image_raw/compressed`
 - `/carter2/front_stereo_camera/left/image_raw/compressed`
 - `/carter3/front_stereo_camera/left/image_raw/compressed`
-- `/tf` (shared, with prefixed frames like `carter1/base_link`, `carter2/base_link`, `carter3/base_link`)
+- `/carter1/front_stereo_camera/left/camera_info`
+- `/carter2/front_stereo_camera/left/camera_info`
+- `/carter3/front_stereo_camera/left/camera_info`
 
 Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
