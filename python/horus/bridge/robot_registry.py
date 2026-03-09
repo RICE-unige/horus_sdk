@@ -3026,6 +3026,77 @@ class RobotRegistryClient:
                 "encoding": str(getattr(sensor, "encoding", "bgr8")),
             }
 
+        def _build_sensor_viz_override_index():
+            overrides = {}
+            robot_name_key = str(getattr(robot, "name", "") or "").strip()
+
+            for visualization in getattr(dataviz, "visualizations", []) or []:
+                data_source = getattr(visualization, "data_source", None)
+                if data_source is None:
+                    continue
+
+                render_options = getattr(visualization, "render_options", {}) or {}
+                if not isinstance(render_options, dict) or not render_options:
+                    continue
+
+                source_robot_name = str(
+                    getattr(data_source, "robot_name", "") or robot_name_key
+                ).strip()
+                if source_robot_name != robot_name_key:
+                    continue
+
+                override = {}
+                color_override = render_options.get("color")
+                if color_override not in (None, ""):
+                    override["color"] = str(color_override)
+
+                point_size_override = render_options.get("point_size")
+                if point_size_override not in (None, ""):
+                    override["point_size"] = _coerce_float(point_size_override, 0.05)
+
+                if not override:
+                    continue
+
+                topic_key = str(getattr(data_source, "topic", "") or "").strip()
+                name_key = str(getattr(data_source, "name", "") or "").strip()
+                if topic_key:
+                    overrides[(source_robot_name, "topic", topic_key)] = override
+                if name_key:
+                    overrides.setdefault((source_robot_name, "name", name_key), override)
+
+            return overrides
+
+        sensor_viz_override_index = _build_sensor_viz_override_index()
+
+        def _build_sensor_viz_config(sensor):
+            viz_config = {
+                "color": getattr(sensor, "color", "white"),
+                "point_size": getattr(sensor, "point_size", 0.05),
+            }
+
+            robot_name_key = str(getattr(robot, "name", "") or "").strip()
+            topic_key = str(getattr(sensor, "topic", "") or "").strip()
+            name_key = str(getattr(sensor, "name", "") or "").strip()
+
+            override = None
+            if topic_key:
+                override = sensor_viz_override_index.get((robot_name_key, "topic", topic_key))
+            if override is None and name_key:
+                override = sensor_viz_override_index.get((robot_name_key, "name", name_key))
+
+            if isinstance(override, dict):
+                color_override = override.get("color")
+                if color_override not in (None, ""):
+                    viz_config["color"] = str(color_override)
+
+                if "point_size" in override:
+                    viz_config["point_size"] = _coerce_float(
+                        override.get("point_size"),
+                        viz_config["point_size"],
+                    )
+
+            return viz_config
+
         sensor_payloads = []
         for sensor in robot.sensors:
             payload = {
@@ -3034,10 +3105,7 @@ class RobotRegistryClient:
                 "topic": sensor.topic,
                 "frame": sensor.frame_id,
                 "metadata": sensor.metadata or {},
-                "viz_config": {
-                    "color": getattr(sensor, "color", "white"),
-                    "point_size": getattr(sensor, "point_size", 0.05),
-                },
+                "viz_config": _build_sensor_viz_config(sensor),
             }
             if sensor.sensor_type.value == "camera":
                 payload["camera_config"] = _build_camera_config(sensor)
