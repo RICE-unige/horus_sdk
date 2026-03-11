@@ -1,4 +1,4 @@
-"""
+﻿"""
 Robot object system for HORUS SDK
 """
 
@@ -408,7 +408,8 @@ class Robot:
         chunk_size_bytes: int = 12000,
         is_transparent: bool = False,
         include_visual_meshes: bool = True,
-        visual_mesh_triangle_budget: int = 36000,
+        visual_mesh_triangle_budget: int = 90000,
+        body_mesh_mode: str = "preview_mesh",
         enabled: bool = True,
     ) -> None:
         """
@@ -423,9 +424,19 @@ class Robot:
             chunk_size_bytes: Chunk size used for SDK->MR transport.
             is_transparent: Render collision body as transparent in MR.
             include_visual_meshes: Include baked visual meshes in the payload.
-            visual_mesh_triangle_budget: Combined triangle budget for the baked shell mesh.
+            visual_mesh_triangle_budget: Triangle budget for preview/runtime-high baked meshes.
+            body_mesh_mode: collision_only, preview_mesh, runtime_high_mesh, or max_quality_mesh alias.
             enabled: Enable robot description manifest + chunk transport.
         """
+        normalized_body_mesh_mode = str(body_mesh_mode or "preview_mesh").strip().lower()
+        if normalized_body_mesh_mode == "max_quality_mesh":
+            normalized_body_mesh_mode = "runtime_high_mesh"
+        if normalized_body_mesh_mode not in {"collision_only", "preview_mesh", "runtime_high_mesh"}:
+            normalized_body_mesh_mode = "preview_mesh"
+
+        if normalized_body_mesh_mode == "collision_only":
+            include_visual_meshes = False
+
         self.add_metadata(
             "robot_description_config",
             {
@@ -438,7 +449,8 @@ class Robot:
                 "chunk_size_bytes": int(max(1024, min(64000, chunk_size_bytes))),
                 "is_transparent": bool(is_transparent),
                 "include_visual_meshes": bool(include_visual_meshes),
-                "visual_mesh_triangle_budget": int(max(1000, min(200000, visual_mesh_triangle_budget))),
+                "visual_mesh_triangle_budget": int(max(2000, min(500000, visual_mesh_triangle_budget))),
+                "body_mesh_mode": normalized_body_mesh_mode,
             },
         )
 
@@ -626,6 +638,7 @@ def register_robots(
     show_dashboard: bool = True,
     timeout_sec: float = 10.0,
     workspace_scale: Optional[float] = None,
+    wait_for_app_before_register: bool = True,
     datavizs=None,
 ):
     """Register multiple robots using a shared registry session."""
@@ -638,6 +651,7 @@ def register_robots(
         keep_alive=keep_alive,
         show_dashboard=show_dashboard,
         workspace_scale=workspace_scale,
+        wait_for_app_before_register=wait_for_app_before_register,
     )
 
 
@@ -662,6 +676,7 @@ def _invoke_register_robot(
     keep_alive: bool,
     show_dashboard: bool,
     workspace_scale: Optional[float],
+    wait_for_app_before_register: bool,
 ):
     method = registry.register_robot
     kwargs: Dict[str, Any] = {}
@@ -677,6 +692,8 @@ def _invoke_register_robot(
         kwargs["show_dashboard"] = show_dashboard
     if workspace_scale is not None and "workspace_scale" in parameters:
         kwargs["workspace_scale"] = workspace_scale
+    if "wait_for_app_before_register" in parameters:
+        kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 
     return method(robot, dataviz, **kwargs)
 
@@ -689,6 +706,7 @@ def _invoke_register_robots(
     keep_alive: bool,
     show_dashboard: bool,
     workspace_scale: Optional[float],
+    wait_for_app_before_register: bool,
 ):
     method = registry.register_robots
     kwargs: Dict[str, Any] = {}
@@ -708,5 +726,8 @@ def _invoke_register_robots(
         kwargs["show_dashboard"] = show_dashboard
     if workspace_scale is not None and "workspace_scale" in parameters:
         kwargs["workspace_scale"] = workspace_scale
+    if "wait_for_app_before_register" in parameters:
+        kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 
     return method(robots, **kwargs)
+

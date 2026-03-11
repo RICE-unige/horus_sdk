@@ -1,4 +1,4 @@
-"""Robot description data models for SDK -> MR transport."""
+﻿"""Robot description data models for SDK -> MR transport."""
 
 from __future__ import annotations
 
@@ -61,6 +61,7 @@ class CompiledJoint:
 @dataclass
 class CompiledVisual:
     name: str
+    frame_id: str
     mesh_id: str
     origin_xyz: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     origin_rpy: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
@@ -84,11 +85,14 @@ class MeshAsset:
     bounds_min: List[float]
     bounds_max: List[float]
     color_rgb: List[float] = field(default_factory=list)
+    colors_b64: str = ""
 
     def to_dict(self) -> Dict:
         payload = asdict(self)
         if not payload.get("color_rgb"):
             payload.pop("color_rgb", None)
+        if not payload.get("colors_b64"):
+            payload.pop("colors_b64", None)
         return payload
 
 
