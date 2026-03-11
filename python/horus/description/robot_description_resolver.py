@@ -67,6 +67,15 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def _normalize_body_mesh_mode(value: Any) -> str:
+    normalized = str(value or "preview_mesh").strip().lower()
+    if normalized == "max_quality_mesh":
+        return "runtime_high_mesh"
+    if normalized in {"collision_only", "preview_mesh", "runtime_high_mesh"}:
+        return normalized
+    return "preview_mesh"
+
+
 def _rpy_to_matrix(roll: float, pitch: float, yaw: float) -> List[List[float]]:
     """Build ROS intrinsic XYZ (roll/pitch/yaw) rotation matrix."""
     sr, cr = math.sin(roll), math.cos(roll)
@@ -97,6 +106,14 @@ def _matrix_vector_multiply(m: List[List[float]], v: List[float]) -> List[float]
     ]
 
 
+def _matrix_transpose(m: List[List[float]]) -> List[List[float]]:
+    return [
+        [m[0][0], m[1][0], m[2][0]],
+        [m[0][1], m[1][1], m[2][1]],
+        [m[0][2], m[1][2], m[2][2]],
+    ]
+
+
 def _compose_transforms(
     parent_rotation: List[List[float]],
     parent_translation: List[float],
@@ -112,6 +129,23 @@ def _compose_transforms(
         parent_translation[2] + translated[2],
     ]
     return combined_rotation, combined_translation
+
+
+def _relative_transform(
+    parent_rotation: List[List[float]],
+    parent_translation: List[float],
+    child_rotation: List[List[float]],
+    child_translation: List[float],
+) -> Tuple[List[List[float]], List[float]]:
+    inverse_parent = _matrix_transpose(parent_rotation)
+    relative_rotation = _matrix_multiply(inverse_parent, child_rotation)
+    delta = [
+        child_translation[0] - parent_translation[0],
+        child_translation[1] - parent_translation[1],
+        child_translation[2] - parent_translation[2],
+    ]
+    relative_translation = _matrix_vector_multiply(inverse_parent, delta)
+    return relative_rotation, relative_translation
 
 
 def _matrix_to_rpy(rotation: List[List[float]]) -> List[float]:
@@ -169,7 +203,8 @@ class RobotDescriptionResolveConfig:
     chunk_size_bytes: int = 12000
     is_transparent: bool = False
     include_visual_meshes: bool = True
-    visual_mesh_triangle_budget: int = 36000
+    visual_mesh_triangle_budget: int = 90000
+    body_mesh_mode: str = "preview_mesh"
 
 
 class RobotDescriptionResolver:
@@ -179,15 +214,22 @@ class RobotDescriptionResolver:
 
     def __init__(self):
         self._artifact_by_hash: Dict[str, RobotDescriptionArtifact] = {}
+        self._artifact_by_resolve_key: Dict[str, RobotDescriptionArtifact] = {}
         self._last_error: str = ""
+        self._last_resolution_cache_status: str = "miss"
         self._mesh_baker = RobotMeshBaker()
 
     @property
     def last_error(self) -> str:
         return self._last_error
 
+    @property
+    def last_resolution_cache_status(self) -> str:
+        return self._last_resolution_cache_status
+
     def resolve_for_robot(self, robot: Any) -> Optional[RobotDescriptionArtifact]:
         self._last_error = ""
+        self._last_resolution_cache_status = "miss"
         config = self._parse_config(getattr(robot, "metadata", {}) or {})
         if not config.enabled:
             return None
@@ -196,6 +238,26 @@ class RobotDescriptionResolver:
         if not urdf_xml:
             self._last_error = error or "Failed to resolve URDF XML."
             return None
+
+        resolve_key = hashlib.sha256(
+            json.dumps(
+                {
+                    "urdf_xml": urdf_xml,
+                    "source": config.source,
+                    "base_frame": config.base_frame,
+                    "include_visual_meshes": bool(config.include_visual_meshes),
+                    "body_mesh_mode": config.body_mesh_mode,
+                    "visual_mesh_triangle_budget": int(config.visual_mesh_triangle_budget),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+        cached_by_resolve_key = self._artifact_by_resolve_key.get(resolve_key)
+        if cached_by_resolve_key is not None:
+            self._last_resolution_cache_status = "hit"
+            return self._build_variant_artifact(cached_by_resolve_key, config)
 
         try:
             payload = self._compile_robot_description_payload(robot, urdf_xml, config)
@@ -213,43 +275,8 @@ class RobotDescriptionResolver:
         requested_transparent = bool(config.is_transparent)
 
         if description_id in self._artifact_by_hash:
-            cached = self._artifact_by_hash[description_id]
-            if (
-                bool(cached.manifest.is_transparent) == requested_transparent
-                and int(cached.manifest.chunk_size_bytes) == chunk_size
-            ):
-                return cached
-
-            # Reuse cached encoded payload but allow per-registration render/style hints.
-            variant_chunks = [
-                cached.encoded_payload[index:index + chunk_size]
-                for index in range(0, len(cached.encoded_payload), chunk_size)
-            ] or [""]
-            variant_manifest = RobotDescriptionManifestV2(
-                version=cached.manifest.version,
-                description_id=cached.manifest.description_id,
-                source=cached.manifest.source,
-                base_frame=cached.manifest.base_frame,
-                link_count=cached.manifest.link_count,
-                joint_count=cached.manifest.joint_count,
-                collision_count=cached.manifest.collision_count,
-                supports_collision=cached.manifest.supports_collision,
-                supports_joints=cached.manifest.supports_joints,
-                supports_visual_meshes=cached.manifest.supports_visual_meshes,
-                mesh_asset_count=cached.manifest.mesh_asset_count,
-                mesh_asset_encoded_bytes=cached.manifest.mesh_asset_encoded_bytes,
-                is_transparent=requested_transparent,
-                encoding=cached.manifest.encoding,
-                chunk_size_bytes=chunk_size,
-            )
-            return RobotDescriptionArtifact(
-                manifest=variant_manifest,
-                payload_dict=cached.payload_dict,
-                payload_json=cached.payload_json,
-                encoded_payload=cached.encoded_payload,
-                chunks=variant_chunks,
-                urdf_path=config.urdf_path or cached.urdf_path,
-            )
+            self._last_resolution_cache_status = "hit"
+            return self._build_variant_artifact(self._artifact_by_hash[description_id], config)
 
         encoded_payload = self._encode_payload(payload_json)
         chunks = [
@@ -292,7 +319,52 @@ class RobotDescriptionResolver:
             urdf_path=config.urdf_path or None,
         )
         self._artifact_by_hash[description_id] = artifact
-        return artifact
+        self._artifact_by_resolve_key[resolve_key] = artifact
+        self._last_resolution_cache_status = "built"
+        return self._build_variant_artifact(artifact, config)
+
+    def _build_variant_artifact(
+        self,
+        cached: RobotDescriptionArtifact,
+        config: RobotDescriptionResolveConfig,
+    ) -> RobotDescriptionArtifact:
+        chunk_size = max(1024, int(config.chunk_size_bytes))
+        requested_transparent = bool(config.is_transparent)
+        if (
+            bool(cached.manifest.is_transparent) == requested_transparent
+            and int(cached.manifest.chunk_size_bytes) == chunk_size
+        ):
+            return cached
+
+        variant_chunks = [
+            cached.encoded_payload[index:index + chunk_size]
+            for index in range(0, len(cached.encoded_payload), chunk_size)
+        ] or [""]
+        variant_manifest = RobotDescriptionManifestV2(
+            version=cached.manifest.version,
+            description_id=cached.manifest.description_id,
+            source=cached.manifest.source,
+            base_frame=cached.manifest.base_frame,
+            link_count=cached.manifest.link_count,
+            joint_count=cached.manifest.joint_count,
+            collision_count=cached.manifest.collision_count,
+            supports_collision=cached.manifest.supports_collision,
+            supports_joints=cached.manifest.supports_joints,
+            supports_visual_meshes=cached.manifest.supports_visual_meshes,
+            mesh_asset_count=cached.manifest.mesh_asset_count,
+            mesh_asset_encoded_bytes=cached.manifest.mesh_asset_encoded_bytes,
+            is_transparent=requested_transparent,
+            encoding=cached.manifest.encoding,
+            chunk_size_bytes=chunk_size,
+        )
+        return RobotDescriptionArtifact(
+            manifest=variant_manifest,
+            payload_dict=cached.payload_dict,
+            payload_json=cached.payload_json,
+            encoded_payload=cached.encoded_payload,
+            chunks=variant_chunks,
+            urdf_path=config.urdf_path or cached.urdf_path,
+        )
 
     def _parse_config(self, metadata: Dict[str, Any]) -> RobotDescriptionResolveConfig:
         config = metadata.get("robot_description_config")
@@ -312,11 +384,18 @@ class RobotDescriptionResolver:
         except (TypeError, ValueError):
             chunk_size = 12000
 
-        visual_mesh_triangle_budget = config.get("visual_mesh_triangle_budget", 36000)
+        raw_body_mesh_mode = config.get("body_mesh_mode", "preview_mesh")
+        body_mesh_mode = _normalize_body_mesh_mode(raw_body_mesh_mode)
+
+        default_budget = 240000 if body_mesh_mode == "runtime_high_mesh" else 90000
+        visual_mesh_triangle_budget = config.get("visual_mesh_triangle_budget", default_budget)
         try:
             visual_mesh_triangle_budget = int(visual_mesh_triangle_budget)
         except (TypeError, ValueError):
-            visual_mesh_triangle_budget = 36000
+            visual_mesh_triangle_budget = default_budget
+
+        if body_mesh_mode == "collision_only":
+            include_visual_meshes = False
 
         return RobotDescriptionResolveConfig(
             enabled=enabled,
@@ -328,7 +407,8 @@ class RobotDescriptionResolver:
             chunk_size_bytes=max(1024, min(64000, chunk_size)),
             is_transparent=is_transparent,
             include_visual_meshes=include_visual_meshes,
-            visual_mesh_triangle_budget=max(1000, min(200000, visual_mesh_triangle_budget)),
+            visual_mesh_triangle_budget=max(2000, min(500000, visual_mesh_triangle_budget)),
+            body_mesh_mode=body_mesh_mode,
         )
 
     def _resolve_urdf_xml(self, config: RobotDescriptionResolveConfig) -> Tuple[str, str]:
@@ -515,8 +595,9 @@ class RobotDescriptionResolver:
                 base_frame = "base_link"
 
         link_transforms = self._build_link_transforms(base_frame, source_joints)
+        joints_by_child = {joint.child_link: joint for joint in source_joints if joint.child_link}
         links: List[CompiledLink] = []
-        mesh_entries: List[Dict[str, object]] = []
+        mesh_entries_by_group: Dict[str, List[Dict[str, object]]] = {}
         for link_name in link_names:
             local_collisions = links_local.get(link_name, [])
             link_rotation, link_translation = link_transforms.get(link_name, (_identity_rotation(), [0.0, 0.0, 0.0]))
@@ -542,6 +623,17 @@ class RobotDescriptionResolver:
             links.append(CompiledLink(name=link_name, collisions=compiled_collisions))
 
             if config.include_visual_meshes:
+                visual_group_root = self._resolve_visual_group_root(link_name, joints_by_child)
+                group_rotation, group_translation = link_transforms.get(
+                    visual_group_root,
+                    (_identity_rotation(), [0.0, 0.0, 0.0]),
+                )
+                relative_link_rotation, relative_link_translation = _relative_transform(
+                    group_rotation,
+                    group_translation,
+                    link_rotation,
+                    link_translation,
+                )
                 for visual in visuals_local.get(link_name, []):
                     source_path = self._resolve_mesh_path(
                         mesh_uri=visual.mesh_uri,
@@ -550,15 +642,15 @@ class RobotDescriptionResolver:
                     )
                     if source_path is None:
                         continue
-                    mesh_entries.append(
+                    mesh_entries_by_group.setdefault(visual_group_root, []).append(
                         {
                             "link_name": link_name,
                             "mesh_uri": visual.mesh_uri,
                             "mesh_path": str(source_path),
                             "origin_xyz": visual.origin_xyz,
                             "origin_rpy": visual.origin_rpy,
-                            "link_xyz": link_translation,
-                            "link_rpy": _matrix_to_rpy(link_rotation),
+                            "link_xyz": relative_link_translation,
+                            "link_rpy": _matrix_to_rpy(relative_link_rotation),
                             "mesh_scale_xyz": visual.mesh_scale_xyz,
                             "color_rgb": visual.color_rgb,
                         }
@@ -590,25 +682,95 @@ class RobotDescriptionResolver:
 
         visual_links: List[CompiledVisual] = []
         mesh_assets = []
-        combined_asset = None
-        if config.include_visual_meshes and mesh_entries:
-            combined_asset = self._mesh_baker.build_combined_asset(
-                mesh_entries=mesh_entries,
-                description_id_seed=f"{config.urdf_path}:{config.base_frame}",
-                target_triangles=config.visual_mesh_triangle_budget,
-            )
-        if combined_asset is not None:
-            asset, _, _ = combined_asset
-            mesh_assets.append(asset)
-            visual_links.append(
-                CompiledVisual(
-                    name="body_shell",
-                    mesh_id=asset.mesh_id,
-                    origin_xyz=[0.0, 0.0, 0.0],
-                    origin_rpy=[0.0, 0.0, 0.0],
-                    color_rgb=list(asset.color_rgb),
+        if config.include_visual_meshes and mesh_entries_by_group:
+            total_source_triangles = 0
+            group_source_triangles: Dict[str, int] = {}
+            for visual_group_root, mesh_entries in mesh_entries_by_group.items():
+                group_triangles = 0
+                for mesh_entry in mesh_entries:
+                    source_path = Path(str(mesh_entry.get("mesh_path") or "")).resolve()
+                    if not source_path.is_file():
+                        continue
+                    source_mesh = self._mesh_baker._load_source_mesh(source_path)
+                    if source_mesh is None:
+                        continue
+                    group_triangles += len(source_mesh.faces)
+                group_source_triangles[visual_group_root] = group_triangles
+                total_source_triangles += group_triangles
+
+            total_budget = None
+            if config.body_mesh_mode in {"preview_mesh", "runtime_high_mesh"}:
+                total_budget = int(config.visual_mesh_triangle_budget)
+
+            for _ in range(3):
+                attempt_visual_links: List[CompiledVisual] = []
+                attempt_mesh_assets = []
+                actual_total_triangles = 0
+
+                for visual_group_root, mesh_entries in mesh_entries_by_group.items():
+                    target_triangles = None
+                    if total_budget is not None and config.body_mesh_mode == "preview_mesh":
+                        source_triangles = max(0, group_source_triangles.get(visual_group_root, 0))
+                        proportional = int(
+                            math.ceil(total_budget * (float(source_triangles) / float(max(1, total_source_triangles))))
+                        )
+                        target_triangles = max(2000, min(60000, proportional))
+                    elif total_budget is not None and config.body_mesh_mode == "runtime_high_mesh":
+                        source_triangles = max(0, group_source_triangles.get(visual_group_root, 0))
+                        proportional = int(
+                            math.ceil(total_budget * (float(source_triangles) / float(max(1, total_source_triangles))))
+                        )
+                        target_triangles = max(5000, min(150000, proportional))
+
+                    combined_asset = None
+                    attempt_target = target_triangles
+                    for _ in range(4):
+                        combined_asset = self._mesh_baker.build_combined_asset(
+                            mesh_entries=mesh_entries,
+                            description_id_seed=f"{config.urdf_path}:{config.base_frame}:{visual_group_root}",
+                            target_triangles=attempt_target,
+                            mesh_mode=config.body_mesh_mode,
+                        )
+                        if combined_asset is None:
+                            break
+                        asset, _, _ = combined_asset
+                        if attempt_target is None or asset.triangle_count <= int(math.ceil(max(1, attempt_target) * 1.05)):
+                            break
+                        if config.body_mesh_mode == "runtime_high_mesh":
+                            attempt_target = max(5000, int(math.floor(attempt_target * 0.85)))
+                        else:
+                            attempt_target = max(2000, int(math.floor(attempt_target * 0.85)))
+                    if combined_asset is None:
+                        continue
+
+                    asset, _, _ = combined_asset
+                    actual_total_triangles += int(asset.triangle_count)
+                    attempt_mesh_assets.append(asset)
+                    attempt_visual_links.append(
+                        CompiledVisual(
+                            name=visual_group_root,
+                            frame_id=visual_group_root,
+                            mesh_id=asset.mesh_id,
+                            origin_xyz=[0.0, 0.0, 0.0],
+                            origin_rpy=[0.0, 0.0, 0.0],
+                            color_rgb=list(asset.color_rgb),
+                        )
+                    )
+
+                mesh_assets = attempt_mesh_assets
+                visual_links = attempt_visual_links
+
+                if total_budget is None or actual_total_triangles <= int(math.ceil(max(1, total_budget) * 1.05)):
+                    break
+
+                per_group_floor = 5000 if config.body_mesh_mode == "runtime_high_mesh" else 2000
+                next_budget = int(
+                    math.floor(float(total_budget) * (float(total_budget) / float(max(1, actual_total_triangles))) * 0.98)
                 )
-            )
+                next_budget = max(per_group_floor * max(1, len(mesh_entries_by_group)), next_budget)
+                if next_budget >= total_budget:
+                    break
+                total_budget = next_budget
 
         return RobotDescriptionV2(
             version="v2",
@@ -657,6 +819,21 @@ class RobotDescriptionResolver:
                 break
 
         return transforms
+
+    def _resolve_visual_group_root(
+        self,
+        link_name: str,
+        joints_by_child: Dict[str, _JointSourceData],
+    ) -> str:
+        current = str(link_name or "").strip()
+        if not current:
+            return current
+
+        while True:
+            joint = joints_by_child.get(current)
+            if joint is None or joint.type != "fixed" or not str(joint.parent_link or "").strip():
+                return current
+            current = str(joint.parent_link).strip()
 
     def _parse_collision(
         self,

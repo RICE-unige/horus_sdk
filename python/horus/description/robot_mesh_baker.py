@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import struct
 import subprocess
 import tempfile
@@ -29,6 +30,12 @@ def _pack_float32(values: np.ndarray) -> str:
 
 def _pack_int32(values: np.ndarray) -> str:
     return base64.b64encode(np.asarray(values, dtype=np.int32).tobytes()).decode("ascii")
+
+
+def _pack_color32(values: np.ndarray) -> str:
+    clipped = np.clip(np.asarray(values, dtype=np.float32), 0.0, 1.0)
+    packed = np.rint(clipped * 255.0).astype(np.uint8)
+    return base64.b64encode(packed.tobytes()).decode("ascii")
 
 
 def _normalize_vector_rows(values: np.ndarray) -> np.ndarray:
@@ -72,6 +79,7 @@ class SourceMeshData:
     vertices: np.ndarray
     faces: np.ndarray
     normals: Optional[np.ndarray]
+    color_rgb: Optional[np.ndarray]
 
 
 @dataclass(frozen=True)
@@ -87,8 +95,10 @@ class CombinedMeshData:
 class RobotMeshBaker:
     """Normalize URDF mesh sources into compact baked assets."""
 
-    _DEFAULT_TOTAL_TRIANGLE_BUDGET = 36000
-    _DEFAULT_MAX_TRIANGLES_PER_ASSET = 16000
+    _DEFAULT_TOTAL_TRIANGLE_BUDGET = 90000
+    _DEFAULT_MAX_TRIANGLES_PER_ASSET = 60000
+    _RUNTIME_HIGH_TOTAL_TRIANGLE_BUDGET = 240000
+    _RUNTIME_HIGH_MAX_TRIANGLES_PER_ASSET = 150000
 
     def __init__(self, cache_root: Optional[str] = None):
         self._cache_root = Path(
@@ -96,12 +106,14 @@ class RobotMeshBaker:
         )
         self._cache_root.mkdir(parents=True, exist_ok=True)
         self._source_cache: Dict[str, SourceMeshData] = {}
+        self._decimated_cache: Dict[str, SourceMeshData] = {}
 
     def build_combined_asset(
         self,
         mesh_entries: List[Dict[str, object]],
         description_id_seed: str,
-        target_triangles: int = _DEFAULT_TOTAL_TRIANGLE_BUDGET,
+        target_triangles: Optional[int] = _DEFAULT_TOTAL_TRIANGLE_BUDGET,
+        mesh_mode: str = "preview_mesh",
     ) -> Optional[Tuple[MeshAsset, List[float], List[float]]]:
         if not mesh_entries:
             return None
@@ -109,20 +121,45 @@ class RobotMeshBaker:
         combined_vertices: List[np.ndarray] = []
         combined_faces: List[np.ndarray] = []
         combined_normals: List[np.ndarray] = []
+        combined_colors: List[np.ndarray] = []
         color_accumulator = np.zeros(3, dtype=np.float64)
         color_samples = 0
         vertex_offset = 0
 
-        target_triangles = max(1000, int(target_triangles))
-        per_entry_budget = max(
-            512,
-            min(
-                self._DEFAULT_MAX_TRIANGLES_PER_ASSET,
-                int(math.ceil(target_triangles / max(1, len(mesh_entries)))),
-            ),
-        )
+        normalized_mode = str(mesh_mode or "preview_mesh").strip().lower()
+        if normalized_mode == "max_quality_mesh":
+            normalized_mode = "runtime_high_mesh"
+        if normalized_mode not in {"preview_mesh", "runtime_high_mesh", "collision_only"}:
+            normalized_mode = "preview_mesh"
 
+        target_triangles = None if target_triangles is None else max(2000, int(target_triangles))
+        if normalized_mode == "runtime_high_mesh" and target_triangles is None:
+            target_triangles = self._RUNTIME_HIGH_TOTAL_TRIANGLE_BUDGET
+        elif normalized_mode == "preview_mesh" and target_triangles is None:
+            target_triangles = self._DEFAULT_TOTAL_TRIANGLE_BUDGET
+
+        if normalized_mode == "runtime_high_mesh":
+            per_asset_min = 5000
+            per_asset_max = self._RUNTIME_HIGH_MAX_TRIANGLES_PER_ASSET
+        else:
+            per_asset_min = 2000
+            per_asset_max = self._DEFAULT_MAX_TRIANGLES_PER_ASSET
+
+        source_triangle_counts: List[int] = []
+        resolved_sources: List[Optional[SourceMeshData]] = []
         for entry in mesh_entries:
+            source_path = Path(str(entry.get("mesh_path") or "")).resolve()
+            if not source_path.is_file():
+                resolved_sources.append(None)
+                source_triangle_counts.append(0)
+                continue
+            source_mesh = self._load_source_mesh(source_path)
+            resolved_sources.append(source_mesh)
+            source_triangle_counts.append(len(source_mesh.faces) if source_mesh is not None else 0)
+
+        total_source_triangles = max(0, sum(source_triangle_counts))
+
+        for entry, raw_source_mesh, raw_triangle_count in zip(mesh_entries, resolved_sources, source_triangle_counts):
             source_uri = str(entry.get("mesh_uri") or "").strip()
             if not source_uri:
                 continue
@@ -131,17 +168,28 @@ class RobotMeshBaker:
             if not source_path.is_file():
                 continue
 
-            source_mesh = self._load_source_mesh(source_path)
+            if raw_source_mesh is None:
+                raw_source_mesh = self._load_source_mesh(source_path)
+                raw_triangle_count = len(raw_source_mesh.faces) if raw_source_mesh is not None else 0
+            if raw_source_mesh is None:
+                continue
+
+            target_for_entry = None
+            if target_triangles is not None and total_source_triangles > 0:
+                proportional_target = int(math.ceil(target_triangles * (float(raw_triangle_count) / float(total_source_triangles))))
+                target_for_entry = max(per_asset_min, min(per_asset_max, proportional_target))
+                if raw_triangle_count <= target_for_entry:
+                    target_for_entry = None
+
+            source_mesh = self._load_source_mesh(source_path, target_faces=target_for_entry)
+            if source_mesh is None:
+                source_mesh = raw_source_mesh
             if source_mesh is None:
                 continue
 
             vertices = source_mesh.vertices
             faces = source_mesh.faces
             normals = source_mesh.normals
-
-            if len(faces) > per_entry_budget:
-                vertices, faces = self._simplify_mesh(vertices, faces, per_entry_budget)
-                normals = None
 
             if normals is None or len(normals) != len(vertices):
                 normals = self._compute_vertex_normals(vertices, faces)
@@ -167,9 +215,20 @@ class RobotMeshBaker:
             vertex_offset += len(world_vertices)
 
             entry_color = entry.get("color_rgb")
+            source_color = None
             if isinstance(entry_color, (list, tuple)) and len(entry_color) >= 3:
-                color_accumulator += np.asarray(entry_color[:3], dtype=np.float64)
+                source_color = np.asarray(entry_color[:3], dtype=np.float32)
+            elif source_mesh.color_rgb is not None and len(source_mesh.color_rgb) >= 3:
+                source_color = np.asarray(source_mesh.color_rgb[:3], dtype=np.float32)
+
+            if source_color is None:
+                source_color = np.asarray([0.78, 0.78, 0.76], dtype=np.float32)
+            else:
+                color_accumulator += source_color.astype(np.float64)
                 color_samples += 1
+
+            entry_colors = np.tile(np.concatenate([np.clip(source_color, 0.0, 1.0), np.array([1.0], dtype=np.float32)]), (len(world_vertices), 1))
+            combined_colors.append(entry_colors.astype(np.float32, copy=False))
 
         if not combined_vertices or not combined_faces:
             return None
@@ -177,6 +236,7 @@ class RobotMeshBaker:
         vertices = np.concatenate(combined_vertices, axis=0)
         faces = np.concatenate(combined_faces, axis=0)
         normals = _normalize_vector_rows(np.concatenate(combined_normals, axis=0))
+        colors = np.concatenate(combined_colors, axis=0) if combined_colors else None
         bounds_min = vertices.min(axis=0)
         bounds_max = vertices.max(axis=0)
         mean_color = None
@@ -185,6 +245,8 @@ class RobotMeshBaker:
 
         payload_seed = {
             "description_id_seed": description_id_seed,
+            "mesh_mode": normalized_mode,
+            "target_triangles": int(target_triangles) if target_triangles is not None else 0,
             "mesh_entries": [
                 {
                     "mesh_uri": str(entry.get("mesh_uri") or ""),
@@ -214,27 +276,91 @@ class RobotMeshBaker:
             bounds_min=_float_list(bounds_min.astype(np.float32)),
             bounds_max=_float_list(bounds_max.astype(np.float32)),
             color_rgb=_float_list(mean_color) if mean_color is not None else [],
+            colors_b64=_pack_color32(colors.reshape(-1, 4)) if colors is not None else "",
         )
         return asset, _float_list(bounds_min.astype(np.float32)), _float_list(bounds_max.astype(np.float32))
 
-    def _load_source_mesh(self, source_path: Path) -> Optional[SourceMeshData]:
+    def _load_source_mesh(self, source_path: Path, target_faces: Optional[int] = None) -> Optional[SourceMeshData]:
         source_hash = self._hash_file(source_path)
         cache_key = f"{source_path.suffix.lower()}:{source_hash}"
         cached = self._source_cache.get(cache_key)
-        if cached is not None:
+        if cached is None:
+            normalized_path = self._normalize_to_obj_if_needed(source_path)
+            if normalized_path is None or not normalized_path.is_file():
+                return None
+
+            vertices, faces, color_rgb = self._parse_obj_mesh(normalized_path)
+            if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
+                return None
+
+            cached = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=color_rgb)
+            self._source_cache[cache_key] = cached
+
+        if target_faces is None or len(cached.faces) <= int(target_faces):
             return cached
+
+        decimated_key = f"{cache_key}:decimate:{int(target_faces)}"
+        decimated = self._decimated_cache.get(decimated_key)
+        if decimated is not None:
+            return decimated
 
         normalized_path = self._normalize_to_obj_if_needed(source_path)
         if normalized_path is None or not normalized_path.is_file():
-            return None
+            return cached
 
-        vertices, faces = self._parse_obj_mesh(normalized_path)
+        decimated_path = self._decimate_obj_with_blender(normalized_path, int(target_faces))
+        if decimated_path is None or not decimated_path.is_file():
+            return cached
+
+        vertices, faces, _ = self._parse_obj_mesh(decimated_path)
         if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
-            return None
+            return cached
 
-        source_mesh = SourceMeshData(vertices=vertices, faces=faces, normals=None)
-        self._source_cache[cache_key] = source_mesh
-        return source_mesh
+        decimated = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=cached.color_rgb)
+        self._decimated_cache[decimated_key] = decimated
+        return decimated
+
+    def _resolve_blender_path(self) -> Optional[str]:
+        blender_path = os.environ.get("HORUS_SDK_BLENDER_PATH", "").strip()
+        if blender_path and os.path.isfile(blender_path):
+            return blender_path
+
+        direct_blender = shutil.which("blender")
+        if direct_blender:
+            return direct_blender
+
+        windows_root = Path("/mnt/c/Program Files/Blender Foundation")
+        if windows_root.is_dir():
+            candidates = sorted(windows_root.glob("Blender */blender.exe"), reverse=True)
+            for candidate in candidates:
+                if candidate.is_file():
+                    return str(candidate)
+
+        return None
+
+    @staticmethod
+    def _is_windows_executable_path(path_value: str) -> bool:
+        normalized = str(path_value or "").strip().lower()
+        return normalized.endswith(".exe")
+
+    def _to_blender_cli_path(self, blender_path: str, path_value: Path) -> str:
+        if not self._is_windows_executable_path(blender_path):
+            return str(path_value)
+
+        try:
+            converted = subprocess.run(
+                ["wslpath", "-w", str(path_value)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            windows_path = converted.stdout.strip()
+            if windows_path:
+                return windows_path
+        except Exception:
+            pass
+        return str(path_value)
 
     def _normalize_to_obj_if_needed(self, source_path: Path) -> Optional[Path]:
         suffix = source_path.suffix.lower()
@@ -243,8 +369,8 @@ class RobotMeshBaker:
         if suffix == ".stl":
             return self._convert_stl_to_obj(source_path)
 
-        blender_path = os.environ.get("HORUS_SDK_BLENDER_PATH", "").strip()
-        if not blender_path or not os.path.isfile(blender_path):
+        blender_path = self._resolve_blender_path()
+        if not blender_path:
             return None
 
         output_path = self._cache_root / f"{self._hash_file(source_path)}.obj"
@@ -261,7 +387,9 @@ class RobotMeshBaker:
                         "argv = sys.argv[sys.argv.index('--') + 1:]",
                         "src, dst = argv[0], argv[1]",
                         "bpy.ops.wm.read_factory_settings(use_empty=True)",
-                        "bpy.ops.wm.obj_import(filepath=src) if src.lower().endswith('.obj') else bpy.ops.wm.collada_import(filepath=src)",
+                        "if src.lower().endswith('.obj'): bpy.ops.wm.obj_import(filepath=src)",
+                        "elif src.lower().endswith('.stl'): bpy.ops.wm.stl_import(filepath=src)",
+                        "else: bpy.ops.wm.collada_import(filepath=src)",
                         "bpy.ops.wm.obj_export(filepath=dst, export_materials=False)",
                     ]
                 ),
@@ -274,16 +402,82 @@ class RobotMeshBaker:
                     blender_path,
                     "--background",
                     "--python",
-                    str(script_path),
+                    self._to_blender_cli_path(blender_path, script_path),
                     "--",
-                    str(source_path),
-                    str(output_path),
+                    self._to_blender_cli_path(blender_path, source_path),
+                    self._to_blender_cli_path(blender_path, output_path),
                 ],
                 cwd=tmp_dir,
                 check=False,
                 capture_output=True,
                 text=True,
                 timeout=240.0,
+            )
+        if process.returncode != 0 or not output_path.is_file():
+            return None
+        return output_path
+
+    def _decimate_obj_with_blender(self, source_path: Path, target_faces: int) -> Optional[Path]:
+        blender_path = self._resolve_blender_path()
+        if not blender_path:
+            return None
+
+        target_faces = max(64, int(target_faces))
+        output_path = self._cache_root / f"{self._hash_file(source_path)}_decimate_{target_faces}.obj"
+        if output_path.is_file():
+            return output_path
+
+        script_path = self._cache_root / "blender_obj_decimate.py"
+        if not script_path.is_file():
+            script_path.write_text(
+                "\n".join(
+                    [
+                        "import bpy",
+                        "import sys",
+                        "argv = sys.argv[sys.argv.index('--') + 1:]",
+                        "src, dst, target = argv[0], argv[1], max(1, int(argv[2]))",
+                        "bpy.ops.wm.read_factory_settings(use_empty=True)",
+                        "if src.lower().endswith('.obj'): bpy.ops.wm.obj_import(filepath=src)",
+                        "elif src.lower().endswith('.stl'): bpy.ops.wm.stl_import(filepath=src)",
+                        "else: bpy.ops.wm.collada_import(filepath=src)",
+                        "mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']",
+                        "if not mesh_objects: raise RuntimeError('No mesh objects imported for decimation.')",
+                        "bpy.ops.object.select_all(action='DESELECT')",
+                        "for obj in mesh_objects: obj.select_set(True)",
+                        "bpy.context.view_layer.objects.active = mesh_objects[0]",
+                        "if len(mesh_objects) > 1: bpy.ops.object.join()",
+                        "obj = bpy.context.view_layer.objects.active",
+                        "poly_count = max(1, len(obj.data.polygons))",
+                        "if poly_count > target:",
+                        "    ratio = max(0.001, min(1.0, float(target) / float(poly_count)))",
+                        "    modifier = obj.modifiers.new(name='HorusDecimate', type='DECIMATE')",
+                        "    modifier.decimate_type = 'COLLAPSE'",
+                        "    modifier.ratio = ratio",
+                        "    modifier.use_collapse_triangulate = True",
+                        "    bpy.ops.object.modifier_apply(modifier=modifier.name)",
+                        "bpy.ops.wm.obj_export(filepath=dst, export_materials=False)",
+                    ]
+                ),
+                encoding='utf-8',
+            )
+
+        with tempfile.TemporaryDirectory(prefix='horus_mesh_decimate_') as tmp_dir:
+            process = subprocess.run(
+                [
+                    blender_path,
+                    '--background',
+                    '--python',
+                    self._to_blender_cli_path(blender_path, script_path),
+                    '--',
+                    self._to_blender_cli_path(blender_path, source_path),
+                    self._to_blender_cli_path(blender_path, output_path),
+                    str(target_faces),
+                ],
+                cwd=tmp_dir,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=600.0,
             )
         if process.returncode != 0 or not output_path.is_file():
             return None
@@ -378,9 +572,15 @@ class RobotMeshBaker:
                 handle.write(f"f {face[0]} {face[1]} {face[2]}\n")
         return output_path
 
-    def _parse_obj_mesh(self, source_path: Path) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    def _parse_obj_mesh(
+        self,
+        source_path: Path,
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
         vertices: List[Tuple[float, float, float]] = []
         faces: List[Tuple[int, int, int]] = []
+        color_rgb: Optional[np.ndarray] = None
+        material_colors: Dict[str, np.ndarray] = {}
+        active_material: Optional[str] = None
 
         with source_path.open("r", encoding="utf-8", errors="ignore") as handle:
             for raw_line in handle:
@@ -393,6 +593,15 @@ class RobotMeshBaker:
                     parts = line.split()
                     if len(parts) >= 4:
                         vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                    continue
+                if line.startswith("mtllib "):
+                    mtllib_name = line.split(maxsplit=1)[1].strip()
+                    material_colors.update(self._parse_mtl_colors(source_path.parent / mtllib_name))
+                    continue
+                if line.startswith("usemtl "):
+                    active_material = line.split(maxsplit=1)[1].strip()
+                    if color_rgb is None and active_material in material_colors:
+                        color_rgb = material_colors[active_material]
                     continue
                 if line.startswith("f "):
                     tokens = line.split()[1:]
@@ -408,12 +617,39 @@ class RobotMeshBaker:
                     faces.extend(_triangulate_face(face_indices))
 
         if not vertices or not faces:
-            return None, None
+            return None, None, None
 
         return (
             np.asarray(vertices, dtype=np.float32),
             np.asarray(faces, dtype=np.int32),
+            color_rgb.astype(np.float32, copy=False) if color_rgb is not None else None,
         )
+
+    def _parse_mtl_colors(self, mtl_path: Path) -> Dict[str, np.ndarray]:
+        if not mtl_path.is_file():
+            return {}
+
+        material_colors: Dict[str, np.ndarray] = {}
+        current_name: Optional[str] = None
+        with mtl_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("newmtl "):
+                    current_name = line.split(maxsplit=1)[1].strip()
+                    continue
+                if line.startswith("Kd ") and current_name:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        try:
+                            material_colors[current_name] = np.asarray(
+                                [float(parts[1]), float(parts[2]), float(parts[3])],
+                                dtype=np.float32,
+                            )
+                        except Exception:
+                            pass
+        return material_colors
 
     def _simplify_mesh(
         self,
