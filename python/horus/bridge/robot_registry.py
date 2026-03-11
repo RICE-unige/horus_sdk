@@ -152,7 +152,7 @@ class RobotRegistryClient:
             qos_profile = QoSProfile(
                 reliability=ReliabilityPolicy.RELIABLE,
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                depth=1
+                depth=256
             )
 
             self.publisher = self.node.create_publisher(
@@ -242,10 +242,6 @@ class RobotRegistryClient:
             import traceback
             traceback.print_exc()
             self.ros_initialized = False
-
-        
-        # Give ROS time to initialize
-        time.sleep(1.0)
 
     def _is_port_open(self, port: int) -> bool:
         """Check whether localhost:port is accepting TCP connections."""
@@ -818,9 +814,11 @@ class RobotRegistryClient:
             "total": 0,
             "host_count": 0,
             "joiner_count": 0,
+            "private_count": 0,
             "single_count": 0,
             "host_created_count": 0,
             "joiner_joined_count": 0,
+            "private_ready_count": 0,
             "alignment_pending_count": 0,
             "alignment_ready_count": 0,
             "workspace_ready_count": 0,
@@ -858,6 +856,16 @@ class RobotRegistryClient:
                     "workspace_ready",
                 }:
                     summary["joiner_joined_count"] += 1
+            elif role == "private":
+                summary["private_count"] += 1
+                if state in {
+                    "private_selected",
+                    "private_workspace_ready",
+                    "workspace_ready",
+                    "workspace_synced",
+                    "registry_synced",
+                }:
+                    summary["private_ready_count"] += 1
             elif role == "single":
                 summary["single_count"] += 1
 
@@ -879,10 +887,11 @@ class RobotRegistryClient:
         summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
 
         if summary["total"] <= 0:
-            return "Single Operator / No presence"
+            return "No operator presence"
 
         host_count = int(summary.get("host_count", 0) or 0)
         joiner_count = int(summary.get("joiner_count", 0) or 0)
+        private_count = int(summary.get("private_count", 0) or 0)
         alignment_pending = int(summary.get("alignment_pending_count", 0) or 0)
         alignment_ready = int(summary.get("alignment_ready_count", 0) or 0)
         workspace_ready = int(summary.get("workspace_ready_count", 0) or 0)
@@ -890,10 +899,16 @@ class RobotRegistryClient:
 
         if host_count <= 0 and joiner_count > 0:
             base = f"Joiners only ({joiner_count})"
+            if private_count > 0:
+                base += f" + {private_count} Private" + ("" if private_count == 1 else "s")
         elif host_count > 0:
             base = "Host Created" if int(summary.get("host_created_count", 0) or 0) > 0 else "Host Detected"
             if joiner_count > 0:
                 base += f" + {joiner_count} Joiner" + ("" if joiner_count == 1 else "s")
+            if private_count > 0:
+                base += f" + {private_count} Private" + ("" if private_count == 1 else "s")
+        elif private_count > 0:
+            base = f"Private Workspace: {private_count}"
         else:
             base = f"Operators: {summary['total']}"
 
@@ -925,6 +940,11 @@ class RobotRegistryClient:
                     details.append(f"Joiners Joined: {summary['joiner_joined_count']}")
                 else:
                     details.append(f"Joiners: {summary['joiner_count']}")
+            if summary["private_count"] > 0:
+                if summary.get("private_ready_count", 0) > 0:
+                    details.append(f"Private Ready: {summary['private_ready_count']}")
+                else:
+                    details.append(f"Private: {summary['private_count']}")
             if summary.get("alignment_ready_count", 0) > 0:
                 details.append(f"Alignment Ready: {summary['alignment_ready_count']}")
             elif summary.get("alignment_pending_count", 0) > 0:
@@ -1987,6 +2007,7 @@ class RobotRegistryClient:
         keep_alive: bool = False,
         show_dashboard: bool = True,
         workspace_scale: Optional[float] = None,
+        wait_for_app_before_register: bool = True,
     ) -> Tuple[bool, Dict]:
         """
         Register robot with HORUS backend using internal CLI and automatic bridge management.
@@ -1998,6 +2019,7 @@ class RobotRegistryClient:
             keep_alive: If True, blocks and maintains the dashboard after registration, 
                        handling monitoring and re-registration automatically.
             show_dashboard: If False, perform a quiet registration without the UI dashboard.
+            wait_for_app_before_register: When False, seed registration before the app connects.
         """
         from horus.utils import cli
 
@@ -2013,16 +2035,7 @@ class RobotRegistryClient:
         board.set_silent(show_dashboard)
 
         try:
-            # 1. Bridge Detection (Infrastructure must be external)
-            bridge_running = self._ensure_bridge_running()
-            if not bridge_running:
-                return False, {"error": "Bridge Start Failed"}
-
-            # Display Connect Info using Dashboard
-            local_ip = self._get_local_ip()
-            bridge_state = "Active" if bridge_running else "Error"
-            
-            # 2. Build configuration dict
+            cli.print_info("Building robot registration payload...")
             global_visualizations = self._build_global_visualizations_payload([dataviz])
             config = self._build_robot_config_dict(
                 robot,
@@ -2030,8 +2043,19 @@ class RobotRegistryClient:
                 global_visualizations=global_visualizations,
                 workspace_scale=workspace_scale,
             )
+            cli.print_info(f"Registration payload ready for '{robot.name}'.")
             config_json = json.dumps(config)
             camera_topic_profiles = self._extract_camera_topic_profiles(config)
+
+            # 1. Bridge Detection (Infrastructure must be external)
+            bridge_running = self._ensure_bridge_running()
+            if not bridge_running:
+                return False, {"error": "Bridge Start Failed"}
+            cli.print_info("Bridge ready. Entering registration phase.")
+
+            # Display Connect Info using Dashboard
+            local_ip = self._get_local_ip()
+            bridge_state = "Active" if bridge_running else "Error"
             
             data_topics = self._collect_topics(dataviz)
             control_topics = self._collect_control_topics(config)
@@ -2078,6 +2102,7 @@ class RobotRegistryClient:
             
             registration_success = False
             final_ack = {}
+            seeded_before_app = False
 
             if not show_dashboard:
                 start_time = time.time()
@@ -2155,6 +2180,14 @@ class RobotRegistryClient:
                     # --- Registration Phase ---
                     if not registration_success:
                         if not is_connected:
+                            if not wait_for_app_before_register and not seeded_before_app:
+                                self.publisher.publish(msg)
+                                last_register_publish = time.time()
+                                seeded_before_app = True
+                                dashboard.update_registration("Published")
+                                dashboard.update_status("Registration seeded; waiting for Horus App...")
+                                dashboard.tick()
+                                continue
                             if seen_heartbeat:
                                 dashboard.update_registration("Waiting for App")
                                 dashboard.update_status("")
@@ -2294,6 +2327,7 @@ class RobotRegistryClient:
         keep_alive: bool = True,
         show_dashboard: bool = True,
         workspace_scale: Optional[float] = None,
+        wait_for_app_before_register: bool = True,
     ) -> Tuple[bool, Dict]:
         """Register multiple robots with a single session."""
         from horus.utils import cli
@@ -2316,13 +2350,7 @@ class RobotRegistryClient:
             if len(datavizs) != len(robots):
                 return False, {"error": "Robot/dataviz length mismatch"}
 
-            bridge_running = self._ensure_bridge_running()
-            if not bridge_running:
-                return False, {"error": "Bridge Start Failed"}
-
-            local_ip = self._get_local_ip()
-            bridge_state = "Active" if bridge_running else "Error"
-
+            cli.print_info("Building robot registration payloads...")
             entries = []
             entry_by_name = {}
             core_topics = [
@@ -2369,6 +2397,15 @@ class RobotRegistryClient:
                 robot_topics = self._merge_topics(robot_topics, entry_data_topics)
                 robot_topics = self._merge_topics(robot_topics, entry_camera_topics)
                 control_topics = self._merge_topics(control_topics, entry_control_topics)
+            cli.print_info(f"Built {len(entries)} robot registration payload(s).")
+
+            bridge_running = self._ensure_bridge_running()
+            if not bridge_running:
+                return False, {"error": "Bridge Start Failed"}
+            cli.print_info("Bridge ready. Entering registration phase.")
+
+            local_ip = self._get_local_ip()
+            bridge_state = "Active" if bridge_running else "Error"
 
             robot_topics = self._merge_topics(robot_topics, control_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
@@ -2436,6 +2473,8 @@ class RobotRegistryClient:
                 return False, {"error": "Registration timeout"}
 
             def register_all(dashboard=None, force: bool = False):
+                if dashboard is not None:
+                    dashboard.update_status("Seeding registrations...")
                 for robot, dataviz, msg in entries:
                     state = robot_states.get(robot.name, "pending")
                     if not force and state == "registered":
@@ -2447,6 +2486,11 @@ class RobotRegistryClient:
                         return False, ack
                     handle_ack(ack)
                 return True, {"success": True}
+
+            def seed_all_registrations() -> None:
+                cli.print_info(f"Seeding registrations for {len(entries)} robot(s)...")
+                for _, _, msg in entries:
+                    self.publisher.publish(msg)
 
             def update_dashboard_topics(dashboard, is_connected: bool, registration_done: bool):
                 if dashboard is None:
@@ -2509,6 +2553,7 @@ class RobotRegistryClient:
                 had_connection_drop = False
 
                 update_dashboard_topics(dashboard, False, False)
+                seeded_before_app = False
 
                 while True:
                     try:
@@ -2546,6 +2591,18 @@ class RobotRegistryClient:
                             dashboard.update_status(f"Replay complete ({published} robots, {attempts} attempts)")
 
                     if not is_connected:
+                        if not wait_for_app_before_register and not seeded_before_app:
+                            seed_all_registrations()
+                            seeded_before_app = True
+                            last_register_attempt = time.time()
+                            dashboard.update_registration("Published")
+                            dashboard.update_status("Registrations seeded; waiting for Horus App...")
+                            if (time.time() - last_topics_update) >= 1.0:
+                                update_dashboard_topics(dashboard, is_connected, registration_done)
+                                last_topics_update = time.time()
+                            last_connection_state = is_connected
+                            dashboard.tick()
+                            continue
                         if last_connection_state:
                             had_connection_drop = True
                         if seen_heartbeat:
@@ -2727,6 +2784,19 @@ class RobotRegistryClient:
         if not hasattr(self, "_robot_description_by_id") or self._robot_description_by_id is None:
             self._robot_description_by_id = {}
 
+        robot_name = str(getattr(robot, "name", "") or "").strip()
+        if robot_name and robot_name in self._robot_description_by_robot:
+            cached_container = self._robot_description_by_robot.get(robot_name)
+            if isinstance(cached_container, dict) and cached_container.get("artifact") is not None:
+                cached_artifact = cached_container.get("artifact")
+                cli.print_info(
+                    f"Using cached robot-description artifact for '{robot_name}' "
+                    f"(groups={int(getattr(cached_artifact.manifest, 'mesh_asset_count', 0) or 0)}, "
+                    f"bytes={int(getattr(cached_artifact.manifest, 'mesh_asset_encoded_bytes', 0) or 0)}, "
+                    f"chunks={int(len(getattr(cached_artifact, 'chunks', []) or []))})."
+                )
+                return cached_container
+
         artifact = self._robot_description_resolver.resolve_for_robot(robot)
         if artifact is None:
             reason = ""
@@ -2747,7 +2817,22 @@ class RobotRegistryClient:
                 )
             return None
 
-        robot_name = str(getattr(robot, "name", "") or "").strip()
+        cache_status = str(getattr(self._robot_description_resolver, "last_resolution_cache_status", "miss") or "miss")
+        if robot_name:
+            artifact_groups = int(getattr(artifact.manifest, "mesh_asset_count", 0) or 0)
+            artifact_bytes = int(getattr(artifact.manifest, "mesh_asset_encoded_bytes", 0) or 0)
+            artifact_chunks = int(len(getattr(artifact, "chunks", []) or []))
+            if cache_status == "hit":
+                cli.print_info(
+                    f"Using cached robot-description artifact for '{robot_name}' "
+                    f"(groups={artifact_groups}, bytes={artifact_bytes}, chunks={artifact_chunks})."
+                )
+            else:
+                cli.print_info(
+                    f"Built robot-description artifact for '{robot_name}' "
+                    f"(groups={artifact_groups}, bytes={artifact_bytes}, chunks={artifact_chunks})."
+                )
+
         container = {
             "robot_name": robot_name,
             "artifact": artifact,
@@ -3384,7 +3469,6 @@ class RobotRegistryClient:
             if command_override:
                 drive_topic = command_override
 
-        self._remove_robot_description_cache(str(getattr(robot, "name", "") or ""))
         description_container = self._resolve_robot_description_artifact(robot)
 
         config = {
