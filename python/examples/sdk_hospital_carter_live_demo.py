@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
-"""Register live Isaac hospital Carter robots with compressed camera + prefixed TF.
+"""Register live Carter robots against the shared SLAM/Nav graph.
 
 Expected live topics per robot by default:
-- `/<robot>/tf`
+- shared `/tf`
+- shared `/tf_static`
+- shared `/shared_map`
 - `/<robot>/front_stereo_camera/left/image_raw/compressed`
 - `/<robot>/front_stereo_camera/left/camera_info`
 - `/<robot>/chassis/odom`
 - `/<robot>/front_2d_lidar/scan`
+- `/<robot>/plan_smoothed`
+- `/<robot>/received_global_plan`
+- Nav2 actions under `/<robot>/navigate_to_pose` and `/<robot>/navigate_through_poses`
 
 This demo:
 1. Probes required live topics and samples first messages.
 2. Uses the live compressed image topics directly.
-3. Relays `/<robot>/tf` into a shared TF topic (default: `/tf`) with prefixed frame IDs.
-4. Seeds `map -> <robot>/odom` using the Isaac hospital start layout.
-5. Registers robots in HORUS using compressed camera topics.
+3. Uses the shared `/tf` and `/tf_static` graph from `carter_multi_nav`.
+4. Registers one shared occupancy grid from `/shared_map`.
+5. Bridges HORUS go-to / waypoint topics onto per-robot Nav2 actions.
 """
 
 import argparse
+import json
 import math
 import os
 import subprocess
@@ -46,6 +52,8 @@ except ImportError:
 DEFAULT_ROBOT_NAMES = ("carter1", "carter2", "carter3")
 DEFAULT_CAMERA_FPS = 20
 DEFAULT_TF_TOPIC = "/tf"
+DEFAULT_TF_STATIC_TOPIC = "/tf_static"
+DEFAULT_SHARED_MAP_TOPIC = "/shared_map"
 GLOBAL_ROOT_FRAMES = {"map", "world"}
 NOVA_CARTER_REPO_URL = "https://github.com/NVIDIA-ISAAC-ROS/nova_carter.git"
 NOVA_CARTER_MEDIA_BASE_URL = "https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/nova_carter/main"
@@ -65,6 +73,10 @@ NOVA_CARTER_STATIC_SHELL_URDF = os.path.join(
     "horus_nova_carter_static_shell.urdf",
 )
 _NOVA_CARTER_SOURCE_READY = False
+
+DEFAULT_CARTER_BODY_MESH_MODE = "runtime_high_mesh"
+DEFAULT_CARTER_PREVIEW_TRIANGLE_BUDGET = 90000
+DEFAULT_CARTER_RUNTIME_HIGH_TRIANGLE_BUDGET = 240000
 
 NOVA_CARTER_STATIC_SHELL_URDF_XML = """<?xml version="1.0"?>
 <robot name="nova_carter_static_shell">
@@ -197,21 +209,6 @@ NOVA_CARTER_STATIC_SHELL_URDF_XML = """<?xml version="1.0"?>
 
 
 @dataclass(frozen=True)
-class RootPose:
-    x: float
-    y: float
-    z: float
-    yaw_deg: float
-
-
-DEFAULT_ROOT_POSES: Dict[str, RootPose] = {
-    "carter1": RootPose(x=0.0, y=0.0, z=0.0, yaw_deg=180.0),
-    "carter2": RootPose(x=4.0, y=-1.0, z=0.0, yaw_deg=180.0),
-    "carter3": RootPose(x=7.0, y=3.0, z=0.0, yaw_deg=180.0),
-}
-
-
-@dataclass(frozen=True)
 class CameraProbeResult:
     topic: str
     frame_id: str
@@ -249,15 +246,29 @@ class ScanProbeResult:
 @dataclass(frozen=True)
 class RobotProbeResult:
     robot_name: str
-    tf_source_topic: str
-    tf_output_topic: str
+    tf_topic: str
     cmd_vel_topic: str
+    goal_topic: str
+    goal_cancel_topic: str
+    goal_status_topic: str
+    waypoint_path_topic: str
+    waypoint_status_topic: str
+    global_path_topic: str
+    controller_path_topic: str
     camera_raw_topic: str
     camera_compressed_topic: str
     camera_frame: str
     camera: CameraProbeResult
     odom: OdomProbeResult
     scan: Optional[ScanProbeResult]
+
+
+@dataclass(frozen=True)
+class NavGraphProbeResult:
+    shared_tf_topic: str
+    shared_tf_static_topic: str
+    shared_map_topic: str
+    probes: List[RobotProbeResult]
 
 
 def _tf_source_topic(robot_name: str) -> str:
@@ -288,6 +299,34 @@ def _cmd_vel_topic(robot_name: str) -> str:
     return f"/{robot_name}/cmd_vel"
 
 
+def _goal_pose_topic(robot_name: str) -> str:
+    return f"/{robot_name}/goal_pose"
+
+
+def _goal_cancel_topic(robot_name: str) -> str:
+    return f"/{robot_name}/goal_cancel"
+
+
+def _goal_status_topic(robot_name: str) -> str:
+    return f"/{robot_name}/goal_status"
+
+
+def _waypoint_path_topic(robot_name: str) -> str:
+    return f"/{robot_name}/waypoint_path"
+
+
+def _waypoint_status_topic(robot_name: str) -> str:
+    return f"/{robot_name}/waypoint_status"
+
+
+def _plan_smoothed_topic(robot_name: str) -> str:
+    return f"/{robot_name}/plan_smoothed"
+
+
+def _received_global_plan_topic(robot_name: str) -> str:
+    return f"/{robot_name}/received_global_plan"
+
+
 def _normalize_transport(value: str, default: str) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in ("ros", "webrtc"):
@@ -302,6 +341,64 @@ def _parse_robot_names(raw_value: str) -> List[str]:
         if token and token not in names:
             names.append(token)
     return names or list(DEFAULT_ROBOT_NAMES)
+
+
+def _normalize_body_mesh_mode(raw_value: Optional[str]) -> str:
+    normalized = str(raw_value or DEFAULT_CARTER_BODY_MESH_MODE).strip().lower()
+    if normalized == "max_quality_mesh":
+        return "runtime_high_mesh"
+    if normalized in {"collision_only", "preview_mesh", "runtime_high_mesh"}:
+        return normalized
+    return DEFAULT_CARTER_BODY_MESH_MODE
+
+
+def _nova_carter_media_path_needs_download(path: str) -> bool:
+    if not os.path.isfile(path):
+        return True
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+            first_line = handle.readline().strip()
+    except OSError:
+        return True
+    return first_line.startswith("version https://git-lfs.github.com/spec/v1")
+
+
+def _download_nova_carter_media_file(relative_path: str) -> str:
+    normalized_relative = str(relative_path or "").strip().lstrip("/")
+    if not normalized_relative:
+        raise RuntimeError("Invalid Nova Carter media path.")
+    local_path = os.path.join(NOVA_CARTER_CACHE_ROOT, normalized_relative)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    if _nova_carter_media_path_needs_download(local_path):
+        cli.print_step(f"Downloading Nova Carter asset '{normalized_relative}'...")
+        asset_url = f"{NOVA_CARTER_MEDIA_BASE_URL}/{normalized_relative}"
+        request = urllib.request.Request(asset_url, headers={"User-Agent": "horus-sdk/robot-description"})
+        with urllib.request.urlopen(request, timeout=240.0) as response, open(local_path, "wb") as output:
+            output.write(response.read())
+    return local_path
+
+
+def _extract_obj_mtllib_names(mesh_path: str) -> List[str]:
+    names: List[str] = []
+    try:
+        with open(mesh_path, "r", encoding="utf-8", errors="ignore") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if line.startswith("mtllib "):
+                    candidate = line.split(maxsplit=1)[1].strip()
+                    if candidate and candidate not in names:
+                        names.append(candidate)
+    except OSError:
+        return []
+    return names
+
+
+def _ensure_nova_carter_mesh_with_sidecars(mesh_name: str) -> str:
+    mesh_relative = f"nova_carter_description/meshes/{mesh_name}"
+    mesh_path = _download_nova_carter_media_file(mesh_relative)
+    for mtllib_name in _extract_obj_mtllib_names(mesh_path):
+        _download_nova_carter_media_file(f"nova_carter_description/meshes/{mtllib_name}")
+    return mesh_path
 
 
 def ensure_nova_carter_description_source() -> str:
@@ -365,24 +462,7 @@ def ensure_nova_carter_description_source() -> str:
     meshes_dir = os.path.join(package_dir, "meshes")
     os.makedirs(meshes_dir, exist_ok=True)
     for mesh_name in NOVA_CARTER_REQUIRED_MESHES:
-        mesh_path = os.path.join(meshes_dir, mesh_name)
-        needs_download = True
-        if os.path.isfile(mesh_path):
-            try:
-                with open(mesh_path, "r", encoding="utf-8", errors="ignore") as handle:
-                    first_line = handle.readline().strip()
-                needs_download = first_line.startswith("version https://git-lfs.github.com/spec/v1")
-            except OSError:
-                needs_download = True
-
-        if not needs_download:
-            continue
-
-        cli.print_step(f"Downloading Nova Carter mesh '{mesh_name}'...")
-        mesh_url = f"{NOVA_CARTER_MEDIA_BASE_URL}/nova_carter_description/meshes/{mesh_name}"
-        request = urllib.request.Request(mesh_url, headers={"User-Agent": "horus-sdk/robot-description"})
-        with urllib.request.urlopen(request, timeout=240.0) as response, open(mesh_path, "wb") as output:
-            output.write(response.read())
+        _ensure_nova_carter_mesh_with_sidecars(mesh_name)
 
     if not os.path.isfile(NOVA_CARTER_STATIC_SHELL_URDF):
         os.makedirs(os.path.dirname(NOVA_CARTER_STATIC_SHELL_URDF), exist_ok=True)
@@ -393,17 +473,26 @@ def ensure_nova_carter_description_source() -> str:
     return NOVA_CARTER_STATIC_SHELL_URDF
 
 
-def warm_nova_carter_robot_description_artifact() -> str:
+def warm_nova_carter_robot_description_artifact(
+    body_mesh_mode_override: Optional[str] = None,
+    visual_mesh_triangle_budget_override: Optional[int] = None,
+) -> Tuple[str, Dict[str, int | str]]:
     description_urdf_path = ensure_nova_carter_description_source()
 
     from horus.description.robot_description_resolver import RobotDescriptionResolver
 
     warm_robot = Robot(name="nova_carter_warmup", robot_type=RobotType.WHEELED)
+    body_mesh_mode, visual_mesh_triangle_budget = resolve_carter_body_mesh_settings(
+        body_mesh_mode_override=body_mesh_mode_override,
+        visual_mesh_triangle_budget_override=visual_mesh_triangle_budget_override,
+    )
     warm_robot.configure_robot_description(
         urdf_path=description_urdf_path,
         base_frame="base_link",
         include_visual_meshes=True,
-        visual_mesh_triangle_budget=32000,
+        visual_mesh_triangle_budget=visual_mesh_triangle_budget,
+        body_mesh_mode=body_mesh_mode,
+        chunk_size_bytes=48000,
     )
 
     resolver = RobotDescriptionResolver()
@@ -412,7 +501,64 @@ def warm_nova_carter_robot_description_artifact() -> str:
         raise RuntimeError(
             f"Failed preparing Nova Carter robot description artifact: {resolver.last_error or 'unknown error'}"
         )
-    return description_urdf_path
+
+    payload = artifact.payload_dict or {}
+    mesh_assets = payload.get("mesh_assets") or []
+    total_triangles = sum(int(asset.get("triangle_count") or 0) for asset in mesh_assets)
+    stats = {
+        "body_mesh_mode": body_mesh_mode,
+        "triangle_budget": int(visual_mesh_triangle_budget),
+        "triangle_count": int(total_triangles),
+        "mesh_asset_count": int(len(mesh_assets)),
+        "chunk_count": int(len(getattr(artifact, "chunks", []) or [])),
+        "encoded_bytes": int(len(str(getattr(artifact, "encoded_payload", "") or ""))),
+        "cache_status": str(getattr(resolver, "last_resolution_cache_status", "miss") or "miss"),
+    }
+
+    if body_mesh_mode == "runtime_high_mesh":
+        allowed = max(int(math.ceil(visual_mesh_triangle_budget * 1.05)), int(visual_mesh_triangle_budget) + 5000)
+        if total_triangles > allowed:
+            raise RuntimeError(
+                f"Runtime-high mesh artifact exceeds Quest-safe cap: triangles={total_triangles} budget={visual_mesh_triangle_budget}."
+            )
+
+    return description_urdf_path, stats
+
+
+def resolve_carter_body_mesh_settings(
+    body_mesh_mode_override: Optional[str] = None,
+    visual_mesh_triangle_budget_override: Optional[int] = None,
+) -> Tuple[str, int]:
+    raw_mode = str(
+        body_mesh_mode_override
+        or os.environ.get("HORUS_CARTER_BODY_MESH_MODE", DEFAULT_CARTER_BODY_MESH_MODE)
+        or DEFAULT_CARTER_BODY_MESH_MODE
+    ).strip().lower()
+    if raw_mode == "max_quality_mesh":
+        cli.print_warning(
+            "body_mesh_mode='max_quality_mesh' is deprecated; using 'runtime_high_mesh' instead."
+        )
+    if raw_mode not in {"collision_only", "preview_mesh", "runtime_high_mesh", "max_quality_mesh"}:
+        raw_mode = DEFAULT_CARTER_BODY_MESH_MODE
+    raw_mode = _normalize_body_mesh_mode(raw_mode)
+
+    default_budget = (
+        DEFAULT_CARTER_PREVIEW_TRIANGLE_BUDGET
+        if raw_mode == "preview_mesh"
+        else DEFAULT_CARTER_RUNTIME_HIGH_TRIANGLE_BUDGET
+    )
+    raw_budget = (
+        visual_mesh_triangle_budget_override
+        if visual_mesh_triangle_budget_override is not None
+        else os.environ.get("HORUS_CARTER_VISUAL_MESH_TRIANGLE_BUDGET", default_budget)
+    )
+    try:
+        triangle_budget = int(raw_budget)
+    except (TypeError, ValueError):
+        triangle_budget = default_budget
+
+    triangle_budget = max(2000, min(500000, triangle_budget))
+    return raw_mode, triangle_budget
 
 
 def _topic_types_by_name(node) -> Dict[str, Tuple[str, ...]]:
@@ -494,13 +640,19 @@ def resolve_camera_frame_id(
 ) -> str:
     header_frame = str(camera_header_frame or "").strip().lstrip("/")
     if header_frame:
+        if header_frame.startswith(f"{robot_name}/"):
+            return header_frame
         return prefix_frame_id(header_frame, robot_name)
 
-    normalized_frames = {
-        str(frame).strip().lstrip("/")
-        for frame in available_tf_frames
-        if str(frame).strip()
-    }
+    normalized_frames = set()
+    normalized_robot = str(robot_name or "").strip().strip("/")
+    for frame in available_tf_frames:
+        value = str(frame).strip().lstrip("/")
+        if not value:
+            continue
+        normalized_frames.add(value)
+        if normalized_robot and value.startswith(f"{normalized_robot}/"):
+            normalized_frames.add(value[len(normalized_robot) + 1 :])
     for candidate in ("front_stereo_camera_left_rgb", "front_stereo_camera_left_optical", "base_link"):
         if candidate in normalized_frames:
             return prefix_frame_id(candidate, robot_name)
@@ -508,25 +660,32 @@ def resolve_camera_frame_id(
     return prefix_frame_id("base_link", robot_name)
 
 
-def probe_live_robots(
+def probe_live_nav_graph(
     robot_names: Sequence[str],
-    tf_output_topic: str,
+    shared_tf_topic: str,
+    shared_tf_static_topic: str,
+    shared_map_topic: str,
     include_scan: bool,
     timeout_sec: float,
-) -> List[RobotProbeResult]:
+) -> NavGraphProbeResult:
     import rclpy
     from nav_msgs.msg import Odometry
+    from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import CameraInfo, CompressedImage, LaserScan
     from tf2_msgs.msg import TFMessage
 
     timeout_sec = max(0.5, float(timeout_sec))
     expected_types: Dict[str, str] = {}
+    expected_types[shared_tf_topic] = "tf2_msgs/msg/TFMessage"
+    expected_types[shared_tf_static_topic] = "tf2_msgs/msg/TFMessage"
+    expected_types[shared_map_topic] = "nav_msgs/msg/OccupancyGrid"
 
     for robot_name in robot_names:
-        expected_types[_tf_source_topic(robot_name)] = "tf2_msgs/msg/TFMessage"
         expected_types[_camera_compressed_topic(robot_name)] = "sensor_msgs/msg/CompressedImage"
         expected_types[_camera_info_topic(robot_name)] = "sensor_msgs/msg/CameraInfo"
         expected_types[_odom_topic(robot_name)] = "nav_msgs/msg/Odometry"
+        expected_types[_plan_smoothed_topic(robot_name)] = "nav_msgs/msg/Path"
+        expected_types[_received_global_plan_topic(robot_name)] = "nav_msgs/msg/Path"
         if include_scan:
             expected_types[_scan_topic(robot_name)] = "sensor_msgs/msg/LaserScan"
 
@@ -608,21 +767,27 @@ def probe_live_robots(
 
         return _callback
 
-    def make_tf_callback(name: str):
-        def _callback(msg: TFMessage):
-            transforms = list(getattr(msg, "transforms", []))
-            if not transforms:
-                return
-            tf_seen[name] = True
-            for transform in transforms:
-                parent_frame = str(transform.header.frame_id or "").strip().lstrip("/")
-                child_frame = str(transform.child_frame_id or "").strip().lstrip("/")
-                if parent_frame:
-                    tf_frames[name].add(parent_frame)
-                if child_frame:
-                    tf_frames[name].add(child_frame)
+    def _record_tf_frames(msg: TFMessage):
+        transforms = list(getattr(msg, "transforms", []))
+        if not transforms:
+            return
+        for transform in transforms:
+            parent_frame = str(transform.header.frame_id or "").strip().lstrip("/")
+            child_frame = str(transform.child_frame_id or "").strip().lstrip("/")
+            for frame in (parent_frame, child_frame):
+                if not frame:
+                    continue
+                for name in robot_names:
+                    prefix = f"{name}/"
+                    if frame.startswith(prefix):
+                        tf_frames[name].add(frame)
+                        tf_seen[name] = True
 
-        return _callback
+    def _dynamic_tf_callback(msg: TFMessage):
+        _record_tf_frames(msg)
+
+    def _static_tf_callback(msg: TFMessage):
+        _record_tf_frames(msg)
 
     try:
         for robot_name in robot_names:
@@ -650,14 +815,6 @@ def probe_live_robots(
                     10,
                 )
             )
-            subscriptions.append(
-                node.create_subscription(
-                    TFMessage,
-                    _tf_source_topic(robot_name),
-                    make_tf_callback(robot_name),
-                    10,
-                )
-            )
             if include_scan:
                 subscriptions.append(
                     node.create_subscription(
@@ -667,6 +824,35 @@ def probe_live_robots(
                         10,
                     )
                 )
+
+        dynamic_tf_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=100,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        static_tf_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=100,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        subscriptions.append(
+            node.create_subscription(
+                TFMessage,
+                shared_tf_topic,
+                _dynamic_tf_callback,
+                dynamic_tf_qos,
+            )
+        )
+        subscriptions.append(
+            node.create_subscription(
+                TFMessage,
+                shared_tf_static_topic,
+                _static_tf_callback,
+                static_tf_qos,
+            )
+        )
 
         last_topic_types = _topic_types_from_ros2_cli(timeout_sec=min(2.0, timeout_sec))
         last_topic_types.update(_topic_types_by_name(node))
@@ -712,7 +898,7 @@ def probe_live_robots(
                 )
             if not tf_seen[robot_name]:
                 raise RuntimeError(
-                    f"Timed out waiting for TF messages on {_tf_source_topic(robot_name)}."
+                    f"Timed out waiting for shared TF frames for '{robot_name}' on {shared_tf_topic}/{shared_tf_static_topic}."
                 )
             if include_scan and scan_results[robot_name] is None:
                 raise RuntimeError(
@@ -732,9 +918,15 @@ def probe_live_robots(
             probes.append(
                 RobotProbeResult(
                     robot_name=robot_name,
-                    tf_source_topic=_tf_source_topic(robot_name),
-                    tf_output_topic=tf_output_topic,
+                    tf_topic=shared_tf_topic,
                     cmd_vel_topic=_cmd_vel_topic(robot_name),
+                    goal_topic=_goal_pose_topic(robot_name),
+                    goal_cancel_topic=_goal_cancel_topic(robot_name),
+                    goal_status_topic=_goal_status_topic(robot_name),
+                    waypoint_path_topic=_waypoint_path_topic(robot_name),
+                    waypoint_status_topic=_waypoint_status_topic(robot_name),
+                    global_path_topic=_plan_smoothed_topic(robot_name),
+                    controller_path_topic=_received_global_plan_topic(robot_name),
                     camera_raw_topic="",
                     camera_compressed_topic=_camera_compressed_topic(robot_name),
                     camera_frame=resolved_camera_frame,
@@ -743,7 +935,12 @@ def probe_live_robots(
                     scan=scan_results[robot_name] if include_scan else None,
                 )
             )
-        return probes
+        return NavGraphProbeResult(
+            shared_tf_topic=shared_tf_topic,
+            shared_tf_static_topic=shared_tf_static_topic,
+            shared_map_topic=shared_map_topic,
+            probes=probes,
+        )
     finally:
         for subscription in subscriptions:
             try:
@@ -810,107 +1007,372 @@ def wait_for_compressed_topics(
             pass
 
 
-class PrefixedTfRelay:
-    """Relay one robot TF stream to prefixed frame IDs."""
+@dataclass
+class _TaskBridgeState:
+    goal_client: object
+    waypoint_client: object
+    goal_status_publisher: object
+    waypoint_status_publisher: object
+    active_goal_handle: Optional[object] = None
+    active_waypoint_handle: Optional[object] = None
+    active_goal_pose: Optional[object] = None
+    active_waypoint_total: int = 0
+    last_waypoint_remaining: Optional[int] = None
 
-    def __init__(
-        self,
-        robot_name: str,
-        source_topic: str,
-        output_topic: str,
-        odom_frame: str,
-        root_pose: RootPose,
-        map_frame: str = "map",
-    ) -> None:
+
+class CarterNavTaskBridge:
+    """Bridge HORUS task topics onto the live Carter Nav2 actions."""
+
+    def __init__(self, probes: Sequence[RobotProbeResult], status_frame_id: str = "map") -> None:
         import rclpy
-        from geometry_msgs.msg import TransformStamped
+        from action_msgs.msg import GoalStatus
+        from geometry_msgs.msg import PoseStamped
+        from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
+        from nav_msgs.msg import Path
+        from rclpy.action import ActionClient
         from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-        from tf2_msgs.msg import TFMessage
+        from std_msgs.msg import String
 
-        self._transform_type = TransformStamped
-        self._tf_message_type = TFMessage
-        self.robot_name = str(robot_name or "").strip()
-        self.source_topic = str(source_topic or "").strip()
-        self.output_topic = str(output_topic or "").strip()
-        self.map_frame = str(map_frame or "").strip() or "map"
-        self.odom_frame = (
-            prefix_frame_id(odom_frame, self.robot_name) or f"{self.robot_name}/odom"
-        )
-        self.root_pose = root_pose
-        self.active = threading.Event()
+        self._goal_status_enum = GoalStatus
+        self._navigate_to_pose_type = NavigateToPose
+        self._navigate_through_poses_type = NavigateThroughPoses
+        self._string_type = String
+        self.status_frame_id = str(status_frame_id or "").strip() or "map"
+        self._lock = threading.Lock()
 
-        node_name = f"horus_hospital_tf_relay_{self.robot_name}_{uuid.uuid4().hex[:8]}"
+        node_name = f"horus_carter_nav_task_bridge_{uuid.uuid4().hex[:8]}"
         self.node = rclpy.create_node(node_name)
-        qos = QoSProfile(
+
+        command_qos = QoSProfile(
+            depth=10,
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
-            depth=100,
-        )
-        self.publisher = self.node.create_publisher(
-            self._tf_message_type, self.output_topic, qos
-        )
-        self.subscription = self.node.create_subscription(
-            self._tf_message_type, self.source_topic, self._on_message, qos
         )
 
-    def _on_message(self, msg) -> None:
-        transforms = []
-        has_root_transform = False
-        for transform in getattr(msg, "transforms", []):
-            parent_frame = prefix_frame_id(transform.header.frame_id, self.robot_name)
-            child_frame = prefix_frame_id(transform.child_frame_id, self.robot_name)
-            if not parent_frame or not child_frame:
-                continue
+        self._subscriptions = []
+        self._states: Dict[str, _TaskBridgeState] = {}
+        for probe in probes:
+            goal_client = ActionClient(
+                self.node,
+                NavigateToPose,
+                f"/{probe.robot_name}/navigate_to_pose",
+            )
+            waypoint_client = ActionClient(
+                self.node,
+                NavigateThroughPoses,
+                f"/{probe.robot_name}/navigate_through_poses",
+            )
+            goal_status_pub = self.node.create_publisher(String, probe.goal_status_topic, command_qos)
+            waypoint_status_pub = self.node.create_publisher(String, probe.waypoint_status_topic, command_qos)
 
-            if parent_frame == self.map_frame and child_frame == self.odom_frame:
-                has_root_transform = True
+            self._states[probe.robot_name] = _TaskBridgeState(
+                goal_client=goal_client,
+                waypoint_client=waypoint_client,
+                goal_status_publisher=goal_status_pub,
+                waypoint_status_publisher=waypoint_status_pub,
+            )
 
-            rewritten = self._transform_type()
-            rewritten.header.stamp = transform.header.stamp
-            rewritten.header.frame_id = parent_frame
-            rewritten.child_frame_id = child_frame
-            rewritten.transform.translation = transform.transform.translation
-            rewritten.transform.rotation = transform.transform.rotation
-            transforms.append(rewritten)
+            self._subscriptions.append(
+                self.node.create_subscription(
+                    PoseStamped,
+                    probe.goal_topic,
+                    self._make_goal_callback(probe.robot_name),
+                    command_qos,
+                )
+            )
+            self._subscriptions.append(
+                self.node.create_subscription(
+                    String,
+                    probe.goal_cancel_topic,
+                    self._make_cancel_callback(probe.robot_name),
+                    command_qos,
+                )
+            )
+            self._subscriptions.append(
+                self.node.create_subscription(
+                    Path,
+                    probe.waypoint_path_topic,
+                    self._make_waypoint_callback(probe.robot_name),
+                    command_qos,
+                )
+            )
 
-        if not transforms:
-            return
+    def wait_until_ready(self, timeout_sec: float) -> bool:
+        deadline = time.monotonic() + max(0.5, float(timeout_sec))
+        while time.monotonic() < deadline:
+            if not self.missing_servers():
+                return True
+            time.sleep(0.1)
+        return not self.missing_servers()
 
-        if not has_root_transform and self.odom_frame != self.map_frame:
-            root_tf = self._transform_type()
-            root_tf.header.stamp = transforms[0].header.stamp
-            root_tf.header.frame_id = self.map_frame
-            root_tf.child_frame_id = self.odom_frame
-            root_tf.transform.translation.x = float(self.root_pose.x)
-            root_tf.transform.translation.y = float(self.root_pose.y)
-            root_tf.transform.translation.z = float(self.root_pose.z)
-            root_tf.transform.rotation.x = 0.0
-            root_tf.transform.rotation.y = 0.0
-            half_yaw_rad = math.radians(float(self.root_pose.yaw_deg)) * 0.5
-            root_tf.transform.rotation.z = math.sin(half_yaw_rad)
-            root_tf.transform.rotation.w = math.cos(half_yaw_rad)
-            transforms.insert(0, root_tf)
-
-        self.publisher.publish(self._tf_message_type(transforms=transforms))
-        self.active.set()
+    def missing_servers(self) -> List[str]:
+        missing: List[str] = []
+        for robot_name, state in self._states.items():
+            if not state.goal_client.wait_for_server(timeout_sec=0.0):
+                missing.append(f"/{robot_name}/navigate_to_pose")
+            if not state.waypoint_client.wait_for_server(timeout_sec=0.0):
+                missing.append(f"/{robot_name}/navigate_through_poses")
+        return missing
 
     def destroy(self) -> None:
+        for subscription in self._subscriptions:
+            try:
+                self.node.destroy_subscription(subscription)
+            except Exception:
+                pass
+        for state in self._states.values():
+            try:
+                state.goal_client.destroy()
+            except Exception:
+                pass
+            try:
+                state.waypoint_client.destroy()
+            except Exception:
+                pass
         try:
             self.node.destroy_node()
         except Exception:
             pass
 
+    def _yaw_from_pose(self, pose_msg) -> float:
+        orientation = pose_msg.pose.orientation
+        siny_cosp = 2.0 * ((orientation.w * orientation.z) + (orientation.x * orientation.y))
+        cosy_cosp = 1.0 - (2.0 * ((orientation.y * orientation.y) + (orientation.z * orientation.z)))
+        return math.atan2(siny_cosp, cosy_cosp)
 
-class TfRelayRunner:
-    """Run multiple TF relay nodes on one executor thread."""
+    def _publish_goal_status(self, robot_name: str, state_text: str, goal_pose=None, error_msg: str = "") -> None:
+        state = self._states.get(robot_name)
+        if state is None:
+            return
+        payload = {
+            "robot_name": robot_name,
+            "status": state_text,
+            "state": state_text,
+            "frame_id": self.status_frame_id,
+            "ts_unix_ms": int(time.time() * 1000.0),
+        }
+        if goal_pose is not None:
+            payload["goal_pose"] = {
+                "x": round(float(goal_pose.pose.position.x), 4),
+                "y": round(float(goal_pose.pose.position.y), 4),
+                "yaw": round(self._yaw_from_pose(goal_pose), 4),
+            }
+        if error_msg:
+            payload["error"] = str(error_msg)
+        msg = self._string_type()
+        msg.data = json.dumps(payload, separators=(",", ":"))
+        state.goal_status_publisher.publish(msg)
 
-    def __init__(self, relays: Sequence[PrefixedTfRelay]) -> None:
-        from rclpy.executors import MultiThreadedExecutor
+    def _publish_waypoint_status(
+        self,
+        robot_name: str,
+        state_text: str,
+        current_index: int,
+        total: int,
+        error_msg: str = "",
+    ) -> None:
+        state = self._states.get(robot_name)
+        if state is None:
+            return
+        payload = {
+            "robot_name": robot_name,
+            "status": state_text,
+            "state": state_text,
+            "current_index": int(current_index),
+            "total": int(max(0, total)),
+            "frame_id": self.status_frame_id,
+            "ts_unix_ms": int(time.time() * 1000.0),
+        }
+        if error_msg:
+            payload["error"] = str(error_msg)
+        msg = self._string_type()
+        msg.data = json.dumps(payload, separators=(",", ":"))
+        state.waypoint_status_publisher.publish(msg)
 
-        self.relays = list(relays)
-        self.executor = MultiThreadedExecutor(num_threads=max(2, len(self.relays)))
-        for relay in self.relays:
-            self.executor.add_node(relay.node)
+    def _cancel_active_handles(self, robot_name: str, cancel_waypoint: bool = True, cancel_goal: bool = True) -> None:
+        with self._lock:
+            state = self._states[robot_name]
+            goal_handle = state.active_goal_handle if cancel_goal else None
+            waypoint_handle = state.active_waypoint_handle if cancel_waypoint else None
+        if goal_handle is not None:
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception:
+                pass
+        if waypoint_handle is not None:
+            try:
+                waypoint_handle.cancel_goal_async()
+            except Exception:
+                pass
+
+    def _make_goal_callback(self, robot_name: str):
+        def _callback(msg):
+            self._cancel_active_handles(robot_name, cancel_waypoint=True, cancel_goal=True)
+            with self._lock:
+                self._states[robot_name].active_goal_pose = msg
+            self._publish_goal_status(robot_name, "goal_sent", goal_pose=msg)
+            goal_msg = self._navigate_to_pose_type.Goal()
+            goal_msg.pose = msg
+            goal_msg.behavior_tree = ""
+            future = self._states[robot_name].goal_client.send_goal_async(goal_msg)
+            future.add_done_callback(lambda f: self._on_goal_response(robot_name, f))
+
+        return _callback
+
+    def _on_goal_response(self, robot_name: str, future) -> None:
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self._publish_goal_status(robot_name, "goal_failed", error_msg=str(exc))
+            return
+
+        if goal_handle is None or not goal_handle.accepted:
+            self._publish_goal_status(robot_name, "goal_failed", error_msg="navigate_to_pose goal rejected")
+            return
+
+        with self._lock:
+            state = self._states[robot_name]
+            state.active_goal_handle = goal_handle
+            goal_pose = state.active_goal_pose
+        self._publish_goal_status(robot_name, "goal_active", goal_pose=goal_pose)
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(lambda f, handle=goal_handle: self._on_goal_result(robot_name, handle, f))
+
+    def _on_goal_result(self, robot_name: str, goal_handle, future) -> None:
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self._publish_goal_status(robot_name, "goal_failed", error_msg=str(exc))
+            return
+
+        with self._lock:
+            state = self._states[robot_name]
+            goal_pose = state.active_goal_pose
+            if state.active_goal_handle is goal_handle:
+                state.active_goal_handle = None
+                state.active_goal_pose = None
+
+        status_code = getattr(wrapped, "status", None)
+        result = getattr(wrapped, "result", None)
+        error_msg = getattr(result, "error_msg", "") if result is not None else ""
+        if status_code == self._goal_status_enum.STATUS_SUCCEEDED:
+            self._publish_goal_status(robot_name, "goal_reached", goal_pose=goal_pose)
+        elif status_code == self._goal_status_enum.STATUS_CANCELED:
+            self._publish_goal_status(robot_name, "goal_cancelled", goal_pose=goal_pose)
+        else:
+            self._publish_goal_status(robot_name, "goal_failed", goal_pose=goal_pose, error_msg=error_msg)
+
+    def _make_cancel_callback(self, robot_name: str):
+        def _callback(_msg):
+            with self._lock:
+                state = self._states[robot_name]
+                goal_pose = state.active_goal_pose
+                waypoint_total = state.active_waypoint_total
+                has_waypoint = state.active_waypoint_handle is not None
+            self._cancel_active_handles(robot_name, cancel_waypoint=True, cancel_goal=True)
+            if goal_pose is not None:
+                self._publish_goal_status(robot_name, "goal_cancelled", goal_pose=goal_pose)
+            if has_waypoint:
+                self._publish_waypoint_status(robot_name, "path_cancelled", current_index=-1, total=waypoint_total)
+
+        return _callback
+
+    def _make_waypoint_callback(self, robot_name: str):
+        def _callback(msg):
+            poses = list(getattr(msg, "poses", []))
+            if not poses:
+                self._publish_waypoint_status(robot_name, "path_failed", current_index=-1, total=0, error_msg="empty path")
+                return
+
+            self._cancel_active_handles(robot_name, cancel_waypoint=True, cancel_goal=True)
+            total = len(poses)
+            with self._lock:
+                state = self._states[robot_name]
+                state.active_waypoint_total = total
+                state.last_waypoint_remaining = None
+            self._publish_waypoint_status(robot_name, "path_sent", current_index=0, total=total)
+
+            goal_msg = self._navigate_through_poses_type.Goal()
+            goal_msg.poses = poses
+            goal_msg.behavior_tree = ""
+            future = self._states[robot_name].waypoint_client.send_goal_async(
+                goal_msg,
+                feedback_callback=lambda feedback: self._on_waypoint_feedback(robot_name, feedback),
+            )
+            future.add_done_callback(lambda f: self._on_waypoint_response(robot_name, f))
+
+        return _callback
+
+    def _on_waypoint_response(self, robot_name: str, future) -> None:
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self._publish_waypoint_status(robot_name, "path_failed", current_index=-1, total=0, error_msg=str(exc))
+            return
+
+        with self._lock:
+            state = self._states[robot_name]
+            total = state.active_waypoint_total
+
+        if goal_handle is None or not goal_handle.accepted:
+            self._publish_waypoint_status(robot_name, "path_failed", current_index=-1, total=total, error_msg="navigate_through_poses goal rejected")
+            return
+
+        with self._lock:
+            self._states[robot_name].active_waypoint_handle = goal_handle
+        self._publish_waypoint_status(robot_name, "path_active", current_index=0, total=total)
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(lambda f, handle=goal_handle: self._on_waypoint_result(robot_name, handle, f))
+
+    def _on_waypoint_feedback(self, robot_name: str, feedback_msg) -> None:
+        feedback = getattr(feedback_msg, "feedback", None)
+        if feedback is None:
+            return
+        remaining = int(max(0, getattr(feedback, "number_of_poses_remaining", 0)))
+        with self._lock:
+            state = self._states[robot_name]
+            total = state.active_waypoint_total
+            if state.last_waypoint_remaining == remaining:
+                return
+            state.last_waypoint_remaining = remaining
+        current_index = max(0, total - remaining)
+        self._publish_waypoint_status(robot_name, "path_active", current_index=current_index, total=total)
+
+    def _on_waypoint_result(self, robot_name: str, goal_handle, future) -> None:
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self._publish_waypoint_status(robot_name, "path_failed", current_index=-1, total=0, error_msg=str(exc))
+            return
+
+        with self._lock:
+            state = self._states[robot_name]
+            total = state.active_waypoint_total
+            if state.active_waypoint_handle is goal_handle:
+                state.active_waypoint_handle = None
+                state.active_waypoint_total = 0
+                state.last_waypoint_remaining = None
+
+        status_code = getattr(wrapped, "status", None)
+        result = getattr(wrapped, "result", None)
+        error_msg = getattr(result, "error_msg", "") if result is not None else ""
+        if status_code == self._goal_status_enum.STATUS_SUCCEEDED:
+            self._publish_waypoint_status(robot_name, "path_completed", current_index=total, total=total)
+        elif status_code == self._goal_status_enum.STATUS_CANCELED:
+            self._publish_waypoint_status(robot_name, "path_cancelled", current_index=-1, total=total)
+        else:
+            self._publish_waypoint_status(robot_name, "path_failed", current_index=-1, total=total, error_msg=error_msg)
+
+
+class TaskBridgeRunner:
+    """Run the Carter Nav task bridge on a background executor thread."""
+
+    def __init__(self, bridge: CarterNavTaskBridge) -> None:
+        from rclpy.executors import SingleThreadedExecutor
+
+        self.bridge = bridge
+        self.executor = SingleThreadedExecutor()
+        self.executor.add_node(self.bridge.node)
         self._stop_requested = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -927,25 +1389,16 @@ class TfRelayRunner:
         while not self._stop_requested.is_set() and rclpy.ok():
             self.executor.spin_once(timeout_sec=0.1)
 
-    def wait_until_active(self, timeout_sec: float) -> bool:
-        deadline = time.monotonic() + max(0.5, float(timeout_sec))
-        while time.monotonic() < deadline:
-            if all(relay.active.is_set() for relay in self.relays):
-                return True
-            time.sleep(0.05)
-        return all(relay.active.is_set() for relay in self.relays)
-
     def stop(self) -> None:
         self._stop_requested.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
-        for relay in self.relays:
-            try:
-                self.executor.remove_node(relay.node)
-            except Exception:
-                pass
-            relay.destroy()
+        try:
+            self.executor.remove_node(self.bridge.node)
+        except Exception:
+            pass
+        self.bridge.destroy()
         try:
             self.executor.shutdown(timeout_sec=1.0)
         except Exception:
@@ -958,6 +1411,8 @@ def build_robot_and_dataviz(
     minimap_streaming_type: str,
     teleop_streaming_type: str,
     description_urdf_path: str,
+    body_mesh_mode: str,
+    visual_mesh_triangle_budget: int,
 ) -> Tuple[Robot, DataViz]:
     robot = Robot(
         name=probe.robot_name,
@@ -968,7 +1423,9 @@ def build_robot_and_dataviz(
         urdf_path=description_urdf_path,
         base_frame="base_link",
         include_visual_meshes=True,
-        visual_mesh_triangle_budget=32000,
+        visual_mesh_triangle_budget=visual_mesh_triangle_budget,
+        body_mesh_mode=body_mesh_mode,
+        chunk_size_bytes=48000,
     )
     robot.add_metadata(
         "teleop_config",
@@ -985,8 +1442,25 @@ def build_robot_and_dataviz(
     robot.add_metadata(
         "task_config",
         {
-            "go_to_point": {"enabled": False},
-            "waypoint": {"enabled": False},
+            "go_to_point": {
+                "enabled": True,
+                "goal_topic": probe.goal_topic,
+                "cancel_topic": probe.goal_cancel_topic,
+                "status_topic": probe.goal_status_topic,
+                "frame_id": "map",
+                "position_tolerance_m": 0.20,
+                "yaw_tolerance_deg": 12.0,
+                "min_altitude_m": 0.0,
+                "max_altitude_m": 1.0,
+            },
+            "waypoint": {
+                "enabled": True,
+                "path_topic": probe.waypoint_path_topic,
+                "status_topic": probe.waypoint_status_topic,
+                "frame_id": "map",
+                "position_tolerance_m": 0.20,
+                "yaw_tolerance_deg": 12.0,
+            },
         },
     )
 
@@ -1053,7 +1527,7 @@ def build_robot_and_dataviz(
 
     dataviz.add_robot_transform(
         robot_name=probe.robot_name,
-        topic=probe.tf_output_topic,
+        topic=probe.tf_topic,
         frame_id=robot_tf_frame,
     )
     dataviz.add_robot_velocity_data(
@@ -1066,6 +1540,16 @@ def build_robot_and_dataviz(
         topic=probe.odom.topic,
         frame_id="map",
     )
+    dataviz.add_robot_global_path(
+        robot_name=probe.robot_name,
+        topic=probe.global_path_topic,
+        frame_id="map",
+    )
+    dataviz.add_robot_local_path(
+        robot_name=probe.robot_name,
+        topic=probe.controller_path_topic,
+        frame_id="map",
+    )
 
     return robot, dataviz
 
@@ -1073,8 +1557,8 @@ def build_robot_and_dataviz(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Register live hospital Carter robots with compressed camera transport "
-            "and prefixed TF relay."
+            "Register live hospital Carter robots against the shared SLAM/Nav graph "
+            "with teleop, go-to, waypoint, occupancy grid, and robot-description body visuals."
         )
     )
     parser.add_argument(
@@ -1097,7 +1581,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tf-topic",
         default=DEFAULT_TF_TOPIC,
-        help=f"Shared prefixed TF output topic (default: {DEFAULT_TF_TOPIC}).",
+        help=f"Shared TF topic from the Carter nav graph (default: {DEFAULT_TF_TOPIC}).",
+    )
+    parser.add_argument(
+        "--tf-static-topic",
+        default=DEFAULT_TF_STATIC_TOPIC,
+        help=f"Shared static TF topic from the Carter nav graph (default: {DEFAULT_TF_STATIC_TOPIC}).",
+    )
+    parser.add_argument(
+        "--shared-map-topic",
+        default=DEFAULT_SHARED_MAP_TOPIC,
+        help=f"Shared occupancy grid topic from the Carter nav graph (default: {DEFAULT_SHARED_MAP_TOPIC}).",
     )
     parser.add_argument(
         "--camera-minimap-streaming-type",
@@ -1131,13 +1625,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Skip LaserScan sensor registration.",
     )
+    parser.add_argument(
+        "--body-mesh-mode",
+        choices=["collision_only", "preview_mesh", "runtime_high_mesh", "max_quality_mesh"],
+        default=None,
+        help=(
+            "Robot body delivery mode. CLI overrides HORUS_CARTER_BODY_MESH_MODE. "
+            "Default: env or runtime_high_mesh."
+        ),
+    )
+    parser.add_argument(
+        "--visual-mesh-triangle-budget",
+        type=int,
+        default=None,
+        help=(
+            "Triangle budget used for preview mesh baking. "
+            "CLI overrides HORUS_CARTER_VISUAL_MESH_TRIANGLE_BUDGET."
+        ),
+    )
     return parser
 
 
-def _print_probe_summary(probes: Sequence[RobotProbeResult], include_scan: bool) -> None:
-    tf_output_topic = probes[0].tf_output_topic if probes else DEFAULT_TF_TOPIC
-    cli.print_info(f"shared_tf_topic={tf_output_topic}")
-    for probe in probes:
+def _print_probe_summary(nav_graph: NavGraphProbeResult, include_scan: bool) -> None:
+    cli.print_info(f"shared_tf_topic={nav_graph.shared_tf_topic}")
+    cli.print_info(f"shared_tf_static_topic={nav_graph.shared_tf_static_topic}")
+    cli.print_info(f"shared_map_topic={nav_graph.shared_map_topic}")
+    for probe in nav_graph.probes:
         cli.print_info(
             f"[{probe.robot_name}] camera_compressed={probe.camera_compressed_topic} "
             f"({probe.camera.width}x{probe.camera.height}, {probe.camera.encoding})"
@@ -1146,21 +1659,31 @@ def _print_probe_summary(probes: Sequence[RobotProbeResult], include_scan: bool)
             f"[{probe.robot_name}] camera_frame={probe.camera_frame}"
         )
         cli.print_info(
-            f"[{probe.robot_name}] tf_source={probe.tf_source_topic} "
+            f"[{probe.robot_name}] tf={probe.tf_topic} "
             f"odom={probe.odom.topic} cmd_vel={probe.cmd_vel_topic}"
         )
         if include_scan and probe.scan is not None:
             cli.print_info(
                 f"[{probe.robot_name}] scan={probe.scan.topic} frame={probe.scan.frame_id}"
             )
+        cli.print_info(
+            f"[{probe.robot_name}] goal={probe.goal_topic} waypoint={probe.waypoint_path_topic} "
+            f"global_path={probe.global_path_topic} controller_path={probe.controller_path_topic}"
+        )
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     robot_names = _parse_robot_names(args.robot_names)
-    tf_output_topic = str(args.tf_topic or "").strip() or DEFAULT_TF_TOPIC
-    if not tf_output_topic.startswith("/"):
-        tf_output_topic = "/" + tf_output_topic.lstrip("/")
+    shared_tf_topic = str(args.tf_topic or "").strip() or DEFAULT_TF_TOPIC
+    if not shared_tf_topic.startswith("/"):
+        shared_tf_topic = "/" + shared_tf_topic.lstrip("/")
+    shared_tf_static_topic = str(args.tf_static_topic or "").strip() or DEFAULT_TF_STATIC_TOPIC
+    if not shared_tf_static_topic.startswith("/"):
+        shared_tf_static_topic = "/" + shared_tf_static_topic.lstrip("/")
+    shared_map_topic = str(args.shared_map_topic or "").strip() or DEFAULT_SHARED_MAP_TOPIC
+    if not shared_map_topic.startswith("/"):
+        shared_map_topic = "/" + shared_map_topic.lstrip("/")
     include_scan = bool(args.with_scan)
     timeout_sec = max(0.5, float(args.probe_timeout_sec))
     minimap_streaming_type = _normalize_transport(
@@ -1170,7 +1693,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         args.camera_teleop_streaming_type, "webrtc"
     )
 
-    relay_runner: Optional[TfRelayRunner] = None
+    task_bridge_runner: Optional[TaskBridgeRunner] = None
     rclpy_initialized = False
 
     try:
@@ -1180,70 +1703,86 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             rclpy.init()
             rclpy_initialized = True
 
-        cli.print_step("Probing live hospital Carter topics...")
-        probes = probe_live_robots(
+        cli.print_step("Probing live hospital Carter nav graph...")
+        nav_graph = probe_live_nav_graph(
             robot_names=robot_names,
-            tf_output_topic=tf_output_topic,
+            shared_tf_topic=shared_tf_topic,
+            shared_tf_static_topic=shared_tf_static_topic,
+            shared_map_topic=shared_map_topic,
             include_scan=include_scan,
             timeout_sec=timeout_sec,
         )
-        _print_probe_summary(probes, include_scan)
+        cli.print_success("Carter nav graph detected.")
+        _print_probe_summary(nav_graph, include_scan)
 
         cli.print_step("Preparing Nova Carter robot description meshes...")
-        description_urdf_path = warm_nova_carter_robot_description_artifact()
+        body_mesh_mode, visual_mesh_triangle_budget = resolve_carter_body_mesh_settings(
+            body_mesh_mode_override=args.body_mesh_mode,
+            visual_mesh_triangle_budget_override=args.visual_mesh_triangle_budget,
+        )
+        cli.print_info(
+            f"carter_body_mesh_mode={body_mesh_mode} "
+            f"visual_mesh_triangle_budget={visual_mesh_triangle_budget}"
+        )
+        description_urdf_path, warm_stats = warm_nova_carter_robot_description_artifact(
+            body_mesh_mode_override=body_mesh_mode,
+            visual_mesh_triangle_budget_override=visual_mesh_triangle_budget,
+        )
+        cli.print_info(
+            "Nova Carter artifact stats: "
+            f"groups={warm_stats['mesh_asset_count']} triangles={warm_stats['triangle_count']} "
+            f"chunks={warm_stats['chunk_count']} bytes={warm_stats['encoded_bytes']} "
+            f"cache={warm_stats['cache_status']}"
+        )
         cli.print_success("Nova Carter robot description meshes are ready.")
 
         cli.print_step("Waiting for live compressed image topics...")
         wait_for_compressed_topics(
-            probes=probes,
+            probes=nav_graph.probes,
             timeout_sec=timeout_sec,
         )
         cli.print_success("Compressed camera topics are active.")
 
-        cli.print_step("Starting per-robot prefixed TF relays...")
-        relays = [
-            PrefixedTfRelay(
-                robot_name=probe.robot_name,
-                source_topic=probe.tf_source_topic,
-                output_topic=probe.tf_output_topic,
-                odom_frame=probe.odom.frame_id or "odom",
-                root_pose=DEFAULT_ROOT_POSES.get(
-                    probe.robot_name,
-                    RootPose(x=0.0, y=0.0, z=0.0, yaw_deg=0.0),
-                ),
-                map_frame="map",
-            )
-            for probe in probes
-        ]
-        relay_runner = TfRelayRunner(relays)
-        relay_runner.start()
-        if not relay_runner.wait_until_active(timeout_sec=timeout_sec):
+        cli.print_step("Starting Carter Nav task bridges...")
+        task_bridge = CarterNavTaskBridge(nav_graph.probes, status_frame_id="map")
+        task_bridge_runner = TaskBridgeRunner(task_bridge)
+        task_bridge_runner.start()
+        if not task_bridge.wait_until_ready(timeout_sec=timeout_sec):
             raise RuntimeError(
-                "Timed out waiting for TF relay activation on topics: "
-                + ", ".join(probe.tf_output_topic for probe in probes)
+                "Timed out waiting for Nav2 action servers: "
+                + ", ".join(task_bridge.missing_servers())
             )
-        cli.print_success("Prefixed TF relays are active.")
+        cli.print_success("Task bridges are active.")
 
         robots: List[Robot] = []
         datavizs: List[DataViz] = []
-        for probe in probes:
+        for probe in nav_graph.probes:
             robot, dataviz = build_robot_and_dataviz(
                 probe=probe,
                 include_scan=include_scan,
                 minimap_streaming_type=minimap_streaming_type,
                 teleop_streaming_type=teleop_streaming_type,
                 description_urdf_path=description_urdf_path,
+                body_mesh_mode=body_mesh_mode,
+                visual_mesh_triangle_budget=visual_mesh_triangle_budget,
             )
             robots.append(robot)
             datavizs.append(dataviz)
+        if datavizs:
+            datavizs[0].add_occupancy_grid(
+                topic=nav_graph.shared_map_topic,
+                frame_id="map",
+            )
 
         cli.print_step(f"Registering {len(robots)} robot(s) with HORUS...")
+        cli.print_info("Bridge ready state will be followed by immediate registration seeding.")
         success, result = register_robots(
             robots,
             datavizs=datavizs,
             keep_alive=bool(args.keep_alive),
             show_dashboard=True,
             workspace_scale=float(args.workspace_scale),
+            wait_for_app_before_register=False,
         )
         if not success:
             cli.print_error(f"Registration failed: {result}")
@@ -1258,9 +1797,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cli.print_error(str(exc))
         return 1
     finally:
-        if relay_runner is not None:
-            cli.print_info("Stopping TF relays...")
-            relay_runner.stop()
+        if task_bridge_runner is not None:
+            cli.print_info("Stopping Carter Nav task bridges...")
+            task_bridge_runner.stop()
 
         if rclpy_initialized:
             try:
