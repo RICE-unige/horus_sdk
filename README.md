@@ -14,6 +14,7 @@
 > [!IMPORTANT]
 > This repository owns the SDK/client orchestration layer of HORUS.
 > The ROS 2 bridge runtime is maintained in [`horus_ros2`](https://github.com/RICE-unige/horus_ros2), and the MR release/distribution repository is [`horus`](https://github.com/RICE-unige/horus).
+> Adjacent future services for copilot orchestration and scene understanding are now being developed separately in [`compass`](https://github.com/Omotoye/compass) and [`lenses`](https://github.com/Omotoye/lenses).
 
 ## Research Focus
 
@@ -31,6 +32,8 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | SDK + registration payloads | `horus_sdk` | Robot config modeling, metadata, monitor UX |
 | ROS 2 bridge runtime | `horus_ros2` | TCP/WebRTC bridge, ROS topic/service routing |
 | MR app runtime | `horus` | Unity Quest scene, workspace flow, in-headset UX |
+| Copilot/orchestration service | `compass` | Future conversational planning, approvals, and backend execution orchestration |
+| Scene understanding service | `lenses` | Future perception, scene graph generation, and semantic context |
 
 ## Repository Map
 
@@ -608,15 +611,15 @@ The MR roadmap introduces upcoming requirements that depend on SDK payload and o
 - Session recording + after-action replay data contracts.
 - Resource-aware streaming policy signals (quality tiers, priority, stream caps).
 - Persistent mission objects (pins/annotations/evidence/task assignment).
-- Safety and semantic perception signals for teleop and supervision.
-- Multi-operator and copilot-oriented orchestration scenarios.
+- Safety and semantic-perception signals for teleop and supervision, with future scene-context sources expected from `lenses`.
+- Multi-operator and copilot-oriented orchestration scenarios, with future copilot workflows expected from `compass`.
 
 SDK roadmap and examples should evolve to provide the metadata, presets, and validation scripts needed for these MR milestones.
 
 ## Roadmap
 
 > [!NOTE]
-> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes description-driven visual mesh bodies with quality modes, Carter nav shared-map integration, private-operator presence tracking, marker-only mesh stability flow, octomap mode integration, and flat single-robot ROS-binding compatibility.
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes description-driven visual mesh bodies with quality modes, Carter nav shared-map integration, private-operator presence tracking, marker-only mesh stability flow, octomap mode integration, flat single-robot ROS-binding compatibility, and the separate initialization of `compass` and `lenses` as adjacent future services.
 
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
@@ -634,9 +637,9 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Persistent Mission Objects | :white_circle: Planned | - | Add shared mission-object schema (pins, notes, attachments, assignees, lifecycle). |
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
-| Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
+| Semantic Perception Layers | :white_circle: Planned | No semantic scene-context contract is integrated into `horus_sdk` yet; `lenses` now exists separately as the future scene-understanding producer. | Add semantic layer payloads with confidence, uncertainty, spatial anchoring, and scene-context references aligned with `lenses` outputs. |
 | Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility now tracks shared-host, shared-join, and private-workspace operators; multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, replay-triggered map republish burst hooks for joiner map reliability, and direct private-operator replay support are integrated. | Add richer operator identity/lease observability summaries, explicit ownership metadata schemas, and stronger rejoin/replay validation suites. |
-| AI Copilot Orchestration | :white_circle: Planned | - | Define copilot action-scoping contracts, approval/guardrail metadata, and operator-visible intervention traces. |
+| AI Copilot Orchestration | :white_circle: Planned | No copilot contract is integrated into `horus_sdk` yet; `compass` now exists separately as the future copilot/orchestration service. | Define copilot action-scoping contracts, approval/guardrail metadata, operator-visible intervention traces, and the first stable `horus_sdk <-> compass` contract boundary. |
 
 ## 📖 Citation
 
@@ -679,6 +682,13 @@ Developed by **RICE Lab**, University of Genoa.
 1. Reproduce behavior with explicit command lines.
 2. Include before/after impact on registration and dashboard states.
 3. Add or update focused tests when changing serialization/state logic.
+
+## Related Repositories
+
+- MR runtime: <https://github.com/RICE-unige/horus>
+- ROS 2 bridge runtime: <https://github.com/RICE-unige/horus_ros2>
+- Copilot/orchestration service: <https://github.com/Omotoye/compass>
+- Scene-understanding service: <https://github.com/Omotoye/lenses>
 
 ## License
 
