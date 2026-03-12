@@ -175,16 +175,25 @@ Flat single-robot notes:
 - The fake runtime covers teleop, go-to-point, waypoint, odometry, collision-risk, nav-path, camera, and flat TF validation in one workflow.
 - Ambiguous multi-robot flat-root registration is intentionally rejected on the MR side instead of being guessed.
 
-### 6) Hospital Carter live demo (compressed camera + prefixed TF)
+### 6) Hospital Carter live demo (shared nav graph + shared map + description body mesh)
 
-Use this with the live Isaac hospital scene publishing `carter1/2/3` topics.
-The demo uses the live compressed camera feeds directly and relays `/<robot>/tf` into a
-single shared `/tf` topic with `<robot>/...` frame IDs. It also seeds the shared
-`map -> <robot>/odom` transforms using the default hospital layout for `carter1/2/3`.
+Use this with the live Carter navigation stack when it already publishes the shared world view:
+- `/tf`
+- `/tf_static`
+- `/shared_map`
+- per-robot Nav2 actions and path topics under `/<robot>/...`
+
+The current demo is nav-aware. It consumes the shared TF/map graph directly, registers one shared occupancy grid from `/shared_map`, bridges HORUS go-to/waypoint topics into Nav2 actions, and uses the description-driven robot body path instead of local prefabs.
 
 ```bash
 cd ~/horus_sdk
-python3 python/examples/sdk_hospital_carter_live_demo.py --workspace-scale 0.1
+python3 python/examples/sdk_hospital_carter_live_demo.py \
+  --robot-names carter1,carter2,carter3 \
+  --workspace-scale 0.1 \
+  --tf-topic /tf \
+  --tf-static-topic /tf_static \
+  --shared-map-topic /shared_map \
+  --body-mesh-mode runtime_high_mesh
 ```
 
 Quick verification:
@@ -193,25 +202,52 @@ Quick verification:
 ros2 topic echo /carter1/front_stereo_camera/left/image_raw/compressed --once
 ros2 topic echo /carter1/front_stereo_camera/left/camera_info --once
 ros2 topic echo /tf --once
+ros2 topic echo /tf_static --once
+ros2 topic echo /shared_map --once
+ros2 action list | grep navigate
 ```
 
-Expected topics created by the demo:
-- `/tf` (shared, with prefixed frames like `carter1/base_link`, `carter2/base_link`, `carter3/base_link`)
+Expected HORUS-facing task topics created by the demo:
+- `/<robot>/goal_pose`
+- `/<robot>/goal_cancel`
+- `/<robot>/goal_status`
+- `/<robot>/waypoint_path`
+- `/<robot>/waypoint_status`
 
 Expected live topics consumed by the demo:
+- `/tf`
+- `/tf_static`
+- `/shared_map`
 - `/carter1/front_stereo_camera/left/image_raw/compressed`
 - `/carter2/front_stereo_camera/left/image_raw/compressed`
 - `/carter3/front_stereo_camera/left/image_raw/compressed`
 - `/carter1/front_stereo_camera/left/camera_info`
 - `/carter2/front_stereo_camera/left/camera_info`
 - `/carter3/front_stereo_camera/left/camera_info`
+- `/carter1/chassis/odom`
+- `/carter2/chassis/odom`
+- `/carter3/chassis/odom`
+- `/carter1/plan_smoothed`
+- `/carter2/plan_smoothed`
+- `/carter3/plan_smoothed`
+- `/carter1/received_global_plan`
+- `/carter2/received_global_plan`
+- `/carter3/received_global_plan`
+- `/<robot>/navigate_to_pose`
+- `/<robot>/navigate_through_poses`
+
+Body mesh modes:
+- `--body-mesh-mode collision_only`: collision/joint overlays only
+- `--body-mesh-mode preview_mesh`: Quest-friendly preview body
+- `--body-mesh-mode runtime_high_mesh`: highest Quest-safe body quality
+- `--body-mesh-mode max_quality_mesh`: compatibility alias for `runtime_high_mesh`
 
 Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
 - `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
 - Robot-description DataViz channels are exposed separately in MR (`CollisionMeshData`, `JointAxesData`) and use manifest support flags.
 
-Robot Description V1 (collision + joints) demo quick start:
+Robot description demo quick start (collision + joints + visual meshes):
 
 ```bash
 cd ~/horus_sdk
@@ -227,6 +263,10 @@ Notes:
 - Use `--wheeled-urdf` / `--legged-urdf` to override the resolved Jackal/Go1 paths.
 - Use `--robot-profile real_models` with `--anymal-urdf` / `--h1-urdf` (plus existing `--wheeled-urdf` / `--legged-urdf`) for real-model profile overrides.
 - Collision-body transparency is SDK-driven for V1 (`is_transparent` in manifest). Demo defaults to opaque; use `--collision-transparent` to switch.
+- Visual body meshes are now delivered through the same description transport with body mesh modes:
+  - `collision_only`
+  - `preview_mesh`
+  - `runtime_high_mesh`
 
 Real-model profile demo (Anymal C + Jackal + Go1 + Unitree H1, 3D map off by default):
 
@@ -379,13 +419,14 @@ Camera dashboard notes:
 ## Multi-Operator SDK Baseline
 
 Current SDK support for the multi-operator runtime includes:
-- dashboard `Operators` summary and presence-stage visibility for host/joiner alignment/workspace progression,
+- dashboard `Operators` summary and presence-stage visibility for shared-host, shared-join, and private-workspace progression,
 - dedicated host-side test flow via `python/examples/sdk_multi_operator_host_demo.py`,
 - SDK registry replay protocol publishing for joiner baseline reconstruction:
   - `/horus/multi_operator/sdk_registration_replay_request`
   - `/horus/multi_operator/sdk_registry_replay_begin`
   - `/horus/multi_operator/sdk_registry_replay_item`
   - `/horus/multi_operator/sdk_registry_replay_end`
+- private-operator presence reporting and direct collaborative registration/replay support without shared workspace sync,
 - bridge auto-start strategy hardening that prefers the current shell ROS 2 workspace before helper fallback (with mismatch diagnostics).
 
 > [!NOTE]
@@ -563,7 +604,7 @@ Current Unity MR baseline relevant to SDK integration:
 The MR roadmap introduces upcoming requirements that depend on SDK payload and orchestration maturity:
 - 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-leader teleop).
 - Expanded sensor visualization requirements (battery, velocity, LaserScan, PointCloud).
-- Robot description evolution from collision/joint V1 to visual-mesh workflows with known-robot catalogs.
+- Robot description evolution from runtime visual-mesh delivery toward known-robot local hero meshes and unknown-robot ingestion policy.
 - Session recording + after-action replay data contracts.
 - Resource-aware streaming policy signals (quality tiers, priority, stream caps).
 - Persistent mission objects (pins/annotations/evidence/task assignment).
@@ -575,7 +616,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 ## Roadmap
 
 > [!NOTE]
-> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes marker-only mesh stability flow, octomap mode integration, and flat single-robot ROS-binding compatibility.
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features; current baseline includes description-driven visual mesh bodies with quality modes, Carter nav shared-map integration, private-operator presence tracking, marker-only mesh stability flow, octomap mode integration, and flat single-robot ROS-binding compatibility.
 
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
@@ -584,7 +625,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | ROS Binding Compatibility | :large_orange_diamond: In progress | Optional ROS-binding metadata is integrated for prefixed and flat single-robot workflows, with resolved registration payloads, dashboard topic ownership overrides for root topics, and explicit flat demo scripts. | Extend example coverage beyond flat single-robot ground flow and document backend metadata conventions more formally. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
 | 3D Map Contracts | :large_orange_diamond: In progress | Shared `--map-3d-mode` workflow is integrated in the real-model demo pair with pointcloud, mesh, and octomap global visualization payload wiring, greedy voxel meshing, snapshot-first Quest defaults, marker-only mesh transport coercion for runtime stability, and replay-time bounded republish bursts for deterministic late-join map delivery. | Expand native octomap interoperability beyond metadata-only publish path and add renderer policy hints (decimation/quality tiers) for runtime tuning. |
-| Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint schema, manifest hashing, chunked request/reply transport, and demo/validation scripts are integrated. | Add visual-mesh metadata contracts (known-robot model IDs + mesh policy hints) and extend validation to mixed mesh+collision modes. |
+| Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint/visual-mesh schema, manifest hashing, chunked request/reply transport, body mesh modes (`collision_only`, `preview_mesh`, `runtime_high_mesh`), source-color recovery, and demo/validation scripts are integrated. | Add known-robot local hero-mesh fallback policy and extend validation to mixed mesh+collision deployments and more source mesh formats. |
 | Tasking (2D/3D) | :large_orange_diamond: In progress | Typed Go-To/Waypoint schemas are integrated with altitude-bounds support for aerial robots, plus fake TF validation scripts for ground and drone ops suites. | Add explicit payload contracts for Draw Path, Go-To Label, and subset-based Multi-Robot Go-To policies. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
 | After-Action Replay | :white_circle: Planned | - | Add replay manifest schema and deterministic timeline reconstruction inputs. |
@@ -594,7 +635,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
 | Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
-| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility, multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, and replay-triggered map republish burst hooks for joiner map reliability are integrated. | Add operator identity/lease observability summaries, explicit ownership metadata schemas, and stronger rejoin/replay validation suites. |
+| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility now tracks shared-host, shared-join, and private-workspace operators; multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, replay-triggered map republish burst hooks for joiner map reliability, and direct private-operator replay support are integrated. | Add richer operator identity/lease observability summaries, explicit ownership metadata schemas, and stronger rejoin/replay validation suites. |
 | AI Copilot Orchestration | :white_circle: Planned | - | Define copilot action-scoping contracts, approval/guardrail metadata, and operator-visible intervention traces. |
 
 ## 📖 Citation
