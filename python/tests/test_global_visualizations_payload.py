@@ -346,3 +346,64 @@ def test_global_visualization_dedupes_octomap_across_multiple_robots():
     global_payload = client._build_global_visualizations_payload([dataviz_a, dataviz_b])
     octomap_entries = [entry for entry in global_payload if entry.get("type") == "octomap"]
     assert len(octomap_entries) == 1
+
+
+def test_semantic_box_serialized_as_global_visualization():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_semantic_box(
+        semantic_id="injured_person_1",
+        label="Injured Person",
+        center=(1.25, -0.45, 0.0),
+        size=(0.8, 0.6, 1.7),
+        frame_id="map",
+        rotation_offset_euler=(0.0, 0.0, 12.0),
+    )
+
+    client = _build_client()
+    config = client._build_robot_config_dict(robot, dataviz)
+    semantic_entries = [
+        entry for entry in config["global_visualizations"] if entry.get("type") == "semantic_box"
+    ]
+    assert len(semantic_entries) == 1
+
+    semantic_entry = semantic_entries[0]
+    assert semantic_entry["scope"] == "global"
+    assert semantic_entry["topic"] == "/horus/semantic_boxes/injured_person_1"
+    assert semantic_entry["frame"] == "map"
+    assert semantic_entry["semantic_box"]["id"] == "injured_person_1"
+    assert semantic_entry["semantic_box"]["label"] == "Injured Person"
+    assert semantic_entry["semantic_box"]["center"] == {"x": 1.25, "y": -0.45, "z": 0.0}
+    assert semantic_entry["semantic_box"]["size"] == {"x": 0.8, "y": 0.6, "z": 1.7}
+    assert semantic_entry["semantic_box"]["rotation_offset_euler"] == {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 12.0,
+    }
+
+
+def test_global_visualization_dedupes_semantic_boxes_by_id_and_frame():
+    robot_a = Robot(name="bot_a", robot_type=RobotType.WHEELED)
+    dataviz_a = robot_a.create_dataviz()
+    dataviz_a.add_semantic_box(
+        semantic_id="stairs_1",
+        label="Stairs",
+        center=(0.0, 0.0, 0.0),
+        size=(1.0, 2.0, 0.4),
+        frame_id="map",
+    )
+
+    robot_b = Robot(name="bot_b", robot_type=RobotType.WHEELED)
+    dataviz_b = robot_b.create_dataviz()
+    dataviz_b.add_semantic_box(
+        semantic_id="stairs_1",
+        label="Stairs",
+        center=(3.0, 2.0, 0.0),
+        size=(1.2, 2.2, 0.45),
+        frame_id="map",
+    )
+
+    client = _build_client()
+    global_payload = client._build_global_visualizations_payload([dataviz_a, dataviz_b])
+    semantic_entries = [entry for entry in global_payload if entry.get("type") == "semantic_box"]
+    assert len(semantic_entries) == 1
