@@ -7,7 +7,7 @@ import hashlib
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..sensors import SensorInstance
 
@@ -57,6 +57,7 @@ class VisualizationType(Enum):
     MESH = "mesh"
     OCTOMAP = "octomap"
     HEATMAP = "heatmap"
+    SEMANTIC_BOX = "semantic_box"
 
 
 @dataclass
@@ -705,6 +706,59 @@ class DataViz:
             viz_type=VisualizationType.TRANSFORM_TREE,
             data_source=data_source,
             render_options=render_options or {},
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_semantic_box(
+        self,
+        semantic_id: str,
+        label: str,
+        center: Tuple[float, float, float],
+        size: Tuple[float, float, float],
+        frame_id: str = "map",
+        rotation_offset_euler: Optional[Tuple[float, float, float]] = None,
+        enabled: bool = True,
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add a static semantic perception box as a global map overlay."""
+        semantic_id = str(semantic_id or "").strip()
+        if not semantic_id:
+            raise ValueError("semantic_id cannot be empty")
+
+        label = str(label or "").strip()
+        if not label:
+            raise ValueError("label cannot be empty")
+
+        if center is None or len(center) != 3:
+            raise ValueError("center must be a 3-tuple")
+        if size is None or len(size) != 3:
+            raise ValueError("size must be a 3-tuple")
+
+        options = dict(render_options or {})
+        options["id"] = semantic_id
+        options["label"] = label
+        options["center"] = [float(center[0]), float(center[1]), float(center[2])]
+        options["size"] = [float(size[0]), float(size[1]), float(size[2])]
+        options["rotation_offset_euler"] = [
+            float(rotation_offset_euler[0]) if rotation_offset_euler else 0.0,
+            float(rotation_offset_euler[1]) if rotation_offset_euler else 0.0,
+            float(rotation_offset_euler[2]) if rotation_offset_euler else 0.0,
+        ]
+
+        data_source = EnvironmentDataSource(
+            name=f"semantic_box_{semantic_id}",
+            source_type=DataSourceType.GLOBAL_MARKERS,
+            topic=f"/horus/semantic_boxes/{semantic_id}",
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.SEMANTIC_BOX,
+            data_source=data_source,
+            enabled=bool(enabled),
+            render_options=options,
+            layer_priority=4,
         )
 
         self._add_or_update_visualization(viz_config)

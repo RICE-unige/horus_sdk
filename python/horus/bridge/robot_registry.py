@@ -1820,6 +1820,29 @@ class RobotRegistryClient:
             )
             payload["octomap"] = octomap_payload
 
+        if viz_type_value == "semantic_box":
+            semantic_id = str(render_options.get("id", "") or "").strip()
+            semantic_label = str(render_options.get("label", "") or "").strip()
+            if not semantic_id or not semantic_label:
+                return None
+
+            payload["semantic_box"] = {
+                "id": semantic_id,
+                "label": semantic_label,
+                "center": self._payload_coerce_vec3(
+                    render_options.get("center"),
+                    (0.0, 0.0, 0.0),
+                ),
+                "size": self._payload_coerce_vec3(
+                    render_options.get("size"),
+                    (0.25, 0.25, 0.25),
+                ),
+                "rotation_offset_euler": self._payload_coerce_vec3(
+                    render_options.get("rotation_offset_euler"),
+                    (0.0, 0.0, 0.0),
+                ),
+            }
+
         return payload
 
     def _build_global_visualizations_payload(self, datavizs: list) -> list:
@@ -1850,11 +1873,19 @@ class RobotRegistryClient:
                 if not payload:
                     continue
 
-                key = (
-                    str(payload.get("type", "")),
-                    str(payload.get("topic", "")),
-                    str(payload.get("frame", "")),
-                )
+                if str(payload.get("type", "")) == "semantic_box":
+                    semantic_payload = payload.get("semantic_box") or {}
+                    key = (
+                        str(payload.get("type", "")),
+                        str(semantic_payload.get("id", "")),
+                        str(payload.get("frame", "")),
+                    )
+                else:
+                    key = (
+                        str(payload.get("type", "")),
+                        str(payload.get("topic", "")),
+                        str(payload.get("frame", "")),
+                    )
                 if key in deduped:
                     continue
 
@@ -3451,11 +3482,19 @@ class RobotRegistryClient:
             global_visualizations = []
             seen_global = set()
             for payload in fallback_global_visualizations:
-                key = (
-                    str(payload.get("type", "")),
-                    str(payload.get("topic", "")),
-                    str(payload.get("frame", "")),
-                )
+                if str(payload.get("type", "")) == "semantic_box":
+                    semantic_payload = payload.get("semantic_box") or {}
+                    key = (
+                        str(payload.get("type", "")),
+                        str(semantic_payload.get("id", "")),
+                        str(payload.get("frame", "")),
+                    )
+                else:
+                    key = (
+                        str(payload.get("type", "")),
+                        str(payload.get("topic", "")),
+                        str(payload.get("frame", "")),
+                    )
                 if key in seen_global:
                     continue
                 seen_global.add(key)
