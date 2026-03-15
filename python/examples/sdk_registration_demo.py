@@ -28,6 +28,10 @@ DEFAULT_LENGTH = 0.8
 DEFAULT_WIDTH = 0.6
 DEFAULT_HEIGHT = 0.4
 
+DEFAULT_AERIAL_LENGTH = 0.45
+DEFAULT_AERIAL_WIDTH = 0.45
+DEFAULT_AERIAL_HEIGHT = 0.20
+
 # Ensure we can import 'horus' package regardless of where script is run from
 script_dir = os.path.dirname(os.path.abspath(__file__))
 package_root = os.path.join(script_dir, "..")
@@ -361,6 +365,19 @@ def resolve_robot_names(args):
     return [f"{args.robot_name}_{idx + 1}" for idx in range(args.robot_count)]
 
 
+def resolve_dimensions(args, idx: int, robot_type: RobotType):
+    if robot_type == RobotType.AERIAL:
+        length = DEFAULT_AERIAL_LENGTH if abs(float(args.length) - DEFAULT_LENGTH) < 1e-6 else max(0.01, float(args.length))
+        width = DEFAULT_AERIAL_WIDTH if abs(float(args.width) - DEFAULT_WIDTH) < 1e-6 else max(0.01, float(args.width))
+        height = DEFAULT_AERIAL_HEIGHT if abs(float(args.height) - DEFAULT_HEIGHT) < 1e-6 else max(0.01, float(args.height))
+        return length, width, height
+
+    length = args.length + (0.1 * idx)
+    width = args.width + (0.05 * idx)
+    height = args.height + (0.03 * idx)
+    return length, width, height
+
+
 def start_fake_tf_process(args, robot_names):
     fake_tf_script = os.path.join(script_dir, "fake_tf_publisher.py")
     if args.with_3d_map:
@@ -440,9 +457,7 @@ def main():
     datavizs = []
     robot_type = resolve_robot_type(args.teleop_profile)
     for idx, name in enumerate(robot_names):
-        length = args.length + (0.1 * idx)
-        width = args.width + (0.05 * idx)
-        height = args.height + (0.03 * idx)
+        length, width, height = resolve_dimensions(args, idx, robot_type)
         robot = Robot(
             # Name should match the TF prefix (e.g. test_bot_1/base_link)
             name=name,
@@ -536,6 +551,18 @@ def main():
             robot.add_sensor(camera)
 
         dataviz = robot.create_dataviz()
+        robot.add_path_planning_to_dataviz(
+            dataviz,
+            global_path_topic=f"/{name}/global_path",
+            local_path_topic=f"/{name}/local_path",
+        )
+        robot.add_navigation_safety_to_dataviz(
+            dataviz,
+            odom_topic=f"/{name}/odom",
+            include_velocity=True,
+            include_trail=True,
+            include_collision=False,
+        )
         if args.with_occupancy_grid:
             occupancy_render_options = {
                 "show_unknown_space": bool(args.occupancy_show_unknown_space),

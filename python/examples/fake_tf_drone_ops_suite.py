@@ -649,7 +649,10 @@ class DroneOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
         target_altitude = self._clamp_altitude(target_altitude)
         current_altitude = self._robot_altitudes.get(robot_name, self.height)
         dz = target_altitude - current_altitude
-        tolerance = self.goal_altitude_tolerance_m if mode == "taking_off" else self.waypoint_altitude_tolerance_m
+        if mode == "taking_off":
+            tolerance = self.goal_altitude_tolerance_m
+        else:
+            tolerance = min(self.goal_altitude_tolerance_m, self.waypoint_altitude_tolerance_m, 0.03)
 
         # During takeoff/land command execution we keep horizontal motion idle.
         robot.vx = 0.0
@@ -920,7 +923,7 @@ def build_drone_ops_parser():
     parser.add_argument(
         "--land-altitude",
         type=float,
-        default=0.25,
+        default=0.0,
         help="Target altitude in map meters when /<robot>/land is received.",
     )
     return parser
@@ -1018,3 +1021,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
