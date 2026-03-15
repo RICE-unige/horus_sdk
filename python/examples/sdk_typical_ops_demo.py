@@ -205,6 +205,15 @@ def build_parser():
     return parser
 
 
+def resolve_robot_type(teleop_profile: str) -> RobotType:
+    profile = str(teleop_profile or "wheeled").strip().lower()
+    if profile == "legged":
+        return RobotType.LEGGED
+    if profile == "aerial":
+        return RobotType.AERIAL
+    return RobotType.WHEELED
+
+
 def build_camera(name: str, args, resolution: Tuple[int, int]) -> Camera:
     width, height = resolution
     image_type = args.camera_image_type.strip().lower()
@@ -274,7 +283,7 @@ def main():
     for index, name in enumerate(robot_names):
         robot = Robot(
             name=name,
-            robot_type=RobotType.WHEELED,
+            robot_type=resolve_robot_type(args.teleop_profile),
             dimensions=RobotDimensions(
                 length=0.8 + (0.1 * index),
                 width=0.6 + (0.05 * index),

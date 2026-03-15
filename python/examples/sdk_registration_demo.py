@@ -24,6 +24,10 @@ import argparse
 import subprocess
 import time
 
+DEFAULT_LENGTH = 0.8
+DEFAULT_WIDTH = 0.6
+DEFAULT_HEIGHT = 0.4
+
 # Ensure we can import 'horus' package regardless of where script is run from
 script_dir = os.path.dirname(os.path.abspath(__file__))
 package_root = os.path.join(script_dir, "..")
@@ -87,9 +91,9 @@ def build_parser():
         action="store_false",
         help="Exit after registering robots.",
     )
-    parser.add_argument("--length", type=float, default=0.8, help="Robot length in meters")
-    parser.add_argument("--width", type=float, default=0.6, help="Robot width in meters")
-    parser.add_argument("--height", type=float, default=0.4, help="Robot height in meters")
+    parser.add_argument("--length", type=float, default=DEFAULT_LENGTH, help="Robot length in meters")
+    parser.add_argument("--width", type=float, default=DEFAULT_WIDTH, help="Robot width in meters")
+    parser.add_argument("--height", type=float, default=DEFAULT_HEIGHT, help="Robot height in meters")
     parser.add_argument(
         "--with-camera",
         dest="with_camera",
@@ -336,6 +340,15 @@ def build_parser():
     return parser
 
 
+def resolve_robot_type(teleop_profile: str) -> RobotType:
+    profile = str(teleop_profile or "wheeled").strip().lower()
+    if profile == "legged":
+        return RobotType.LEGGED
+    if profile == "aerial":
+        return RobotType.AERIAL
+    return RobotType.WHEELED
+
+
 def resolve_robot_names(args):
     if args.robot_names:
         names = [name.strip() for name in args.robot_names.split(",") if name.strip()]
@@ -425,6 +438,7 @@ def main():
     cli.print_step("Defining Robot Configuration...")
     robots = []
     datavizs = []
+    robot_type = resolve_robot_type(args.teleop_profile)
     for idx, name in enumerate(robot_names):
         length = args.length + (0.1 * idx)
         width = args.width + (0.05 * idx)
@@ -432,7 +446,7 @@ def main():
         robot = Robot(
             # Name should match the TF prefix (e.g. test_bot_1/base_link)
             name=name,
-            robot_type=RobotType.WHEELED,
+            robot_type=robot_type,
             dimensions=RobotDimensions(
                 length=length,
                 width=width,
@@ -611,3 +625,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
