@@ -9,16 +9,17 @@ Expected live topics per robot by default:
 - `/<robot>/front_stereo_camera/left/camera_info`
 - `/<robot>/chassis/odom`
 - `/<robot>/front_2d_lidar/scan`
-- `/<robot>/plan_smoothed`
-- `/<robot>/received_global_plan`
+- `/rviz/<robot>/plan`
+- `/rviz/<robot>/local_plan`
 - Nav2 actions under `/<robot>/navigate_to_pose` and `/<robot>/navigate_through_poses`
 
 This demo:
 1. Probes required live topics and samples first messages.
 2. Uses the live compressed image topics directly.
 3. Uses the shared `/tf` and `/tf_static` graph from `carter_multi_nav`.
-4. Registers one shared occupancy grid from `/shared_map`.
-5. Bridges HORUS go-to / waypoint topics onto per-robot Nav2 actions.
+4. Registers one shared occupancy grid from `/shared_map` in `map`.
+5. Uses the RViz-relayed global and local plans from `global_odom`.
+6. Bridges HORUS go-to / waypoint topics onto per-robot Nav2 actions.
 """
 
 import argparse
@@ -54,7 +55,9 @@ DEFAULT_CAMERA_FPS = 20
 DEFAULT_TF_TOPIC = "/tf"
 DEFAULT_TF_STATIC_TOPIC = "/tf_static"
 DEFAULT_SHARED_MAP_TOPIC = "/shared_map"
-GLOBAL_ROOT_FRAMES = {"map", "world"}
+DEFAULT_SHARED_MAP_FRAME = "map"
+DEFAULT_RVIZ_ROOT_FRAME = "global_odom"
+GLOBAL_ROOT_FRAMES = {"map", "world", DEFAULT_RVIZ_ROOT_FRAME}
 NOVA_CARTER_REPO_URL = "https://github.com/NVIDIA-ISAAC-ROS/nova_carter.git"
 NOVA_CARTER_MEDIA_BASE_URL = "https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/nova_carter/main"
 NOVA_CARTER_CACHE_ROOT = os.path.expanduser("~/.cache/horus/robot_description_sources/nova_carter")
@@ -319,12 +322,12 @@ def _waypoint_status_topic(robot_name: str) -> str:
     return f"/{robot_name}/waypoint_status"
 
 
-def _plan_smoothed_topic(robot_name: str) -> str:
-    return f"/{robot_name}/plan_smoothed"
+def _rviz_global_plan_topic(robot_name: str) -> str:
+    return f"/rviz/{robot_name}/plan"
 
 
-def _received_global_plan_topic(robot_name: str) -> str:
-    return f"/{robot_name}/received_global_plan"
+def _rviz_local_plan_topic(robot_name: str) -> str:
+    return f"/rviz/{robot_name}/local_plan"
 
 
 def _normalize_transport(value: str, default: str) -> str:
@@ -684,8 +687,8 @@ def probe_live_nav_graph(
         expected_types[_camera_compressed_topic(robot_name)] = "sensor_msgs/msg/CompressedImage"
         expected_types[_camera_info_topic(robot_name)] = "sensor_msgs/msg/CameraInfo"
         expected_types[_odom_topic(robot_name)] = "nav_msgs/msg/Odometry"
-        expected_types[_plan_smoothed_topic(robot_name)] = "nav_msgs/msg/Path"
-        expected_types[_received_global_plan_topic(robot_name)] = "nav_msgs/msg/Path"
+        expected_types[_rviz_global_plan_topic(robot_name)] = "nav_msgs/msg/Path"
+        expected_types[_rviz_local_plan_topic(robot_name)] = "nav_msgs/msg/Path"
         if include_scan:
             expected_types[_scan_topic(robot_name)] = "sensor_msgs/msg/LaserScan"
 
@@ -925,8 +928,8 @@ def probe_live_nav_graph(
                     goal_status_topic=_goal_status_topic(robot_name),
                     waypoint_path_topic=_waypoint_path_topic(robot_name),
                     waypoint_status_topic=_waypoint_status_topic(robot_name),
-                    global_path_topic=_plan_smoothed_topic(robot_name),
-                    controller_path_topic=_received_global_plan_topic(robot_name),
+                    global_path_topic=_rviz_global_plan_topic(robot_name),
+                    controller_path_topic=_rviz_local_plan_topic(robot_name),
                     camera_raw_topic="",
                     camera_compressed_topic=_camera_compressed_topic(robot_name),
                     camera_frame=resolved_camera_frame,
@@ -1519,6 +1522,8 @@ def build_robot_and_dataviz(
         )
         robot.add_sensor(scan_sensor)
 
+    odom_frame = prefix_frame_id(probe.odom.frame_id, probe.robot_name) or robot_tf_frame
+
     dataviz = DataViz(name=f"{probe.robot_name}_hospital_live_viz")
     dataviz.add_sensor_visualization(camera, robot_name=probe.robot_name)
     if scan_sensor is not None:
@@ -1533,22 +1538,22 @@ def build_robot_and_dataviz(
     dataviz.add_robot_velocity_data(
         robot_name=probe.robot_name,
         topic=probe.odom.topic,
-        frame_id="map",
+        frame_id=odom_frame,
     )
     dataviz.add_robot_odometry_trail(
         robot_name=probe.robot_name,
         topic=probe.odom.topic,
-        frame_id="map",
+        frame_id=odom_frame,
     )
     dataviz.add_robot_global_path(
         robot_name=probe.robot_name,
         topic=probe.global_path_topic,
-        frame_id="map",
+        frame_id=DEFAULT_RVIZ_ROOT_FRAME,
     )
     dataviz.add_robot_local_path(
         robot_name=probe.robot_name,
         topic=probe.controller_path_topic,
-        frame_id="map",
+        frame_id=DEFAULT_RVIZ_ROOT_FRAME,
     )
 
     return robot, dataviz
@@ -1660,7 +1665,8 @@ def _print_probe_summary(nav_graph: NavGraphProbeResult, include_scan: bool) -> 
         )
         cli.print_info(
             f"[{probe.robot_name}] tf={probe.tf_topic} "
-            f"odom={probe.odom.topic} cmd_vel={probe.cmd_vel_topic}"
+            f"odom={probe.odom.topic} frame={prefix_frame_id(probe.odom.frame_id, probe.robot_name)} "
+            f"cmd_vel={probe.cmd_vel_topic}"
         )
         if include_scan and probe.scan is not None:
             cli.print_info(
@@ -1668,7 +1674,8 @@ def _print_probe_summary(nav_graph: NavGraphProbeResult, include_scan: bool) -> 
             )
         cli.print_info(
             f"[{probe.robot_name}] goal={probe.goal_topic} waypoint={probe.waypoint_path_topic} "
-            f"global_path={probe.global_path_topic} controller_path={probe.controller_path_topic}"
+            f"rviz_global_path={probe.global_path_topic} rviz_local_path={probe.controller_path_topic} "
+            f"path_frame={DEFAULT_RVIZ_ROOT_FRAME}"
         )
 
 
@@ -1771,7 +1778,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if datavizs:
             datavizs[0].add_occupancy_grid(
                 topic=nav_graph.shared_map_topic,
-                frame_id="map",
+                frame_id=DEFAULT_SHARED_MAP_FRAME,
             )
 
         cli.print_step(f"Registering {len(robots)} robot(s) with HORUS...")
