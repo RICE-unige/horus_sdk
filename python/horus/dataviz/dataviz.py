@@ -271,9 +271,10 @@ class DataViz:
         self,
         sensor: SensorInstance,
         robot_name: str,
+        enabled: bool = True,
         render_options: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add a sensor-based visualization with automatic color assignment"""
+        """Add a sensor-based visualization with automatic color assignment."""
         if render_options is None:
             render_options = {}
 
@@ -294,7 +295,10 @@ class DataViz:
 
         # Create and add visualization
         viz_config = VisualizationConfig(
-            viz_type=viz_type, data_source=data_source, render_options=render_options
+            viz_type=viz_type,
+            data_source=data_source,
+            enabled=bool(enabled),
+            render_options=render_options,
         )
 
         self._add_or_update_visualization(viz_config)
