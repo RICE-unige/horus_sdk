@@ -3139,6 +3139,12 @@ class RobotRegistryClient:
                 "view_rotation_offset": _coerce_vec3(
                     metadata.get("view_rotation_offset"), (0.0, 0.0, 0.0)
                 ),
+                "projected_position_offset": _coerce_vec3(
+                    metadata.get("projected_position_offset"), (0.0, 0.0, 0.0)
+                ),
+                "projected_scale_multiplier": _coerce_vec3(
+                    metadata.get("projected_scale_multiplier"), (1.0, 1.0, 1.0)
+                ),
                 "show_frustum": _coerce_bool(metadata.get("show_frustum"), True),
                 "frustum_color": str(metadata.get("frustum_color", "#FFFF00")),
                 "overhead_size": _coerce_float(metadata.get("overhead_size"), 1.0),

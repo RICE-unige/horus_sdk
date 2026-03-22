@@ -5,7 +5,7 @@ Sensor system for robot data visualization in HORUS SDK
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Sequence, Union
 
 
 class SensorType(Enum):
@@ -222,6 +222,60 @@ class Camera(BaseSensor):
     def get_resolution_str(self) -> str:
         """Get resolution as string"""
         return f"{self.resolution[0]}x{self.resolution[1]}"
+
+    @staticmethod
+    def _coerce_vec3(value: Sequence[float], field_name: str) -> list[float]:
+        if value is None or len(value) != 3:
+            raise ValueError(f"{field_name} must contain exactly 3 values")
+        return [float(value[0]), float(value[1]), float(value[2])]
+
+    def configure_projected_view(
+        self,
+        *,
+        position_offset: Optional[Sequence[float]] = None,
+        rotation_offset: Optional[Sequence[float]] = None,
+        scale_multiplier: Optional[Sequence[float]] = None,
+        image_scale: Optional[float] = None,
+        focal_length_scale: Optional[float] = None,
+        projection_target_frame: Optional[str] = None,
+        show_frustum: Optional[bool] = None,
+        frustum_color: Optional[str] = None,
+    ) -> None:
+        """Configure projected-view placement and sizing metadata for HORUS."""
+        self.add_metadata("display_mode", "projected")
+
+        if position_offset is not None:
+            self.add_metadata(
+                "projected_position_offset",
+                self._coerce_vec3(position_offset, "position_offset"),
+            )
+
+        if rotation_offset is not None:
+            self.add_metadata(
+                "view_rotation_offset",
+                self._coerce_vec3(rotation_offset, "rotation_offset"),
+            )
+
+        if scale_multiplier is not None:
+            self.add_metadata(
+                "projected_scale_multiplier",
+                self._coerce_vec3(scale_multiplier, "scale_multiplier"),
+            )
+
+        if image_scale is not None:
+            self.add_metadata("image_scale", float(image_scale))
+
+        if focal_length_scale is not None:
+            self.add_metadata("focal_length_scale", float(focal_length_scale))
+
+        if projection_target_frame is not None:
+            self.add_metadata("projection_target_frame", str(projection_target_frame))
+
+        if show_frustum is not None:
+            self.add_metadata("show_frustum", bool(show_frustum))
+
+        if frustum_color is not None:
+            self.add_metadata("frustum_color", str(frustum_color))
 
 
 @dataclass
