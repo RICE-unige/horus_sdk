@@ -3565,10 +3565,24 @@ class RobotRegistryClient:
             if candidate is not None and math.isfinite(candidate) and candidate > 0.0:
                 normalized_workspace_scale = candidate
 
+        workspace_config: Dict[str, Any] = {}
         if normalized_workspace_scale is not None:
-            config["workspace_config"] = {
-                "position_scale": normalized_workspace_scale,
-            }
+            workspace_config["position_scale"] = normalized_workspace_scale
+
+        workspace_tutorial_metadata = robot.get_metadata("workspace_tutorial_config", {})
+        if isinstance(workspace_tutorial_metadata, dict):
+            tutorial_preset_id = _coerce_text(
+                workspace_tutorial_metadata.get("preset_id"),
+                "",
+            )
+            if tutorial_preset_id:
+                workspace_config["tutorial"] = {
+                    "enabled": _coerce_bool(workspace_tutorial_metadata.get("enabled"), True),
+                    "preset_id": tutorial_preset_id,
+                }
+
+        if workspace_config:
+            config["workspace_config"] = workspace_config
 
         return config
 

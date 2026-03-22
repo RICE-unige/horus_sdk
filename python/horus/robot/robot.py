@@ -51,6 +51,7 @@ class Robot:
     _DEFAULT_LOGICAL_NAME = "robot"
     _ROS_BINDING_METADATA_KEY = "ros_binding_config"
     _LOCAL_BODY_MODEL_METADATA_KEY = "local_body_model_config"
+    _WORKSPACE_TUTORIAL_METADATA_KEY = "workspace_tutorial_config"
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -285,6 +286,24 @@ class Robot:
     def has_sensors(self) -> bool:
         """Check if robot has any sensors"""
         return len(self.sensors) > 0
+
+    def configure_workspace_tutorial(
+        self,
+        preset_id: str,
+        enabled: bool = True,
+    ) -> None:
+        """Configure an opt-in workspace tutorial preset for MR onboarding."""
+        normalized_preset_id = str(preset_id or "").strip()
+        if not normalized_preset_id:
+            raise ValueError("preset_id must be a non-empty string")
+
+        self.add_metadata(
+            self._WORKSPACE_TUTORIAL_METADATA_KEY,
+            {
+                "enabled": bool(enabled),
+                "preset_id": normalized_preset_id,
+            },
+        )
 
     def create_dataviz(self, dataviz_name: Optional[str] = None) -> "DataViz":
         """
