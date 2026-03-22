@@ -1525,10 +1525,18 @@ def build_robot_and_dataviz(
     odom_frame = prefix_frame_id(probe.odom.frame_id, probe.robot_name) or robot_tf_frame
 
     dataviz = DataViz(name=f"{probe.robot_name}_hospital_live_viz")
-    dataviz.add_sensor_visualization(camera, robot_name=probe.robot_name)
+    dataviz.add_sensor_visualization(
+        camera,
+        robot_name=probe.robot_name,
+        enabled=True,
+    )
     if scan_sensor is not None:
         scan_sensor.color = DataViz._deterministic_robot_laser_hex_color(probe.robot_name)
-        dataviz.add_sensor_visualization(scan_sensor, robot_name=probe.robot_name)
+        dataviz.add_sensor_visualization(
+            scan_sensor,
+            robot_name=probe.robot_name,
+            enabled=True,
+        )
 
     dataviz.add_robot_transform(
         robot_name=probe.robot_name,
