@@ -1495,12 +1495,15 @@ def build_robot_and_dataviz(
     camera.add_metadata("webrtc_bitrate_kbps", 2000)
     camera.add_metadata("webrtc_framerate", 20)
     camera.add_metadata("webrtc_stun_server_url", "stun:stun.l.google.com:19302")
-    camera.add_metadata("image_scale", 1.037)
-    camera.add_metadata("focal_length_scale", 0.55)
     camera.add_metadata("view_position_offset", [0.0, 0.0, 0.0])
-    camera.add_metadata("view_rotation_offset", [0.0, 0.0, 0.0])
-    camera.add_metadata("show_frustum", True)
-    camera.add_metadata("frustum_color", "#E6E6E0A0")
+    camera.configure_projected_view(
+        position_offset=(0.04, 0.28, 0.0),
+        rotation_offset=(0.0, 0.0, 0.0),
+        image_scale=1.037,
+        focal_length_scale=0.55,
+        show_frustum=True,
+        frustum_color="#E6E6E0A0",
+    )
     camera.add_metadata("overhead_size", 10.0)
     camera.add_metadata("overhead_position_offset", [0.0, 2.0, 0.0])
     camera.add_metadata("overhead_face_camera", True)
