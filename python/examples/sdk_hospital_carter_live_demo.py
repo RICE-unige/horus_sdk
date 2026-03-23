@@ -33,7 +33,7 @@ import time
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
@@ -57,6 +57,9 @@ DEFAULT_TF_STATIC_TOPIC = "/tf_static"
 DEFAULT_SHARED_MAP_TOPIC = "/shared_map"
 DEFAULT_SHARED_MAP_FRAME = "map"
 DEFAULT_RVIZ_ROOT_FRAME = "global_odom"
+DEFAULT_APRILTAG_DETECTIONS_TOPIC = "/april_tag/detections_by_robot"
+DEFAULT_APRILTAG_SEMANTIC_OFFSET_M = 1.0
+DEFAULT_APRILTAG_SEMANTIC_BOX_SIZE = (0.6, 0.6, 1.7)
 GLOBAL_ROOT_FRAMES = {"map", "world", DEFAULT_RVIZ_ROOT_FRAME}
 NOVA_CARTER_REPO_URL = "https://github.com/NVIDIA-ISAAC-ROS/nova_carter.git"
 NOVA_CARTER_MEDIA_BASE_URL = "https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/nova_carter/main"
@@ -634,6 +637,310 @@ def prefix_frame_id(frame_id: str, robot_name: str) -> str:
     if normalized_frame.startswith(f"{normalized_robot}/"):
         return normalized_frame
     return f"{normalized_robot}/{normalized_frame}"
+
+
+@dataclass(frozen=True)
+class _RobotPose2D:
+    frame_id: str
+    x: float
+    y: float
+    yaw: float
+
+
+def _yaw_from_quaternion_xyzw(x: float, y: float, z: float, w: float) -> float:
+    siny_cosp = 2.0 * ((w * z) + (x * y))
+    cosy_cosp = 1.0 - (2.0 * ((y * y) + (z * z)))
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+def _semantic_box_center_from_robot_pose(
+    robot_pose: _RobotPose2D,
+    offset_m: float,
+) -> Tuple[float, float, float]:
+    distance = float(offset_m)
+    center_x = float(robot_pose.x) + (math.cos(robot_pose.yaw) * distance)
+    center_y = float(robot_pose.y) + (math.sin(robot_pose.yaw) * distance)
+    return (center_x, center_y, 0.0)
+
+
+def _apriltag_person_semantic_id(tag_id: int) -> str:
+    return f"apriltag_person_{int(tag_id)}"
+
+
+class AprilTagSemanticOverlayBridge:
+    """Promote AprilTag detections into HORUS semantic boxes."""
+
+    def __init__(
+        self,
+        probes: Sequence[RobotProbeResult],
+        robots: Sequence[Robot],
+        datavizs: Sequence[DataViz],
+        workspace_scale: float,
+        detections_topic: str = DEFAULT_APRILTAG_DETECTIONS_TOPIC,
+        placement_offset_m: float = DEFAULT_APRILTAG_SEMANTIC_OFFSET_M,
+    ) -> None:
+        import rclpy
+        from nav_msgs.msg import Odometry
+        from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+        from std_msgs.msg import String
+
+        try:
+            from carter_multi_nav_msgs.msg import RobotTagDetectionsArray
+        except ImportError as exc:
+            raise RuntimeError(
+                "AprilTag semantic labeling requires 'carter_multi_nav_msgs'. "
+                "Source the carter_multi_nav workspace before running this demo."
+            ) from exc
+
+        if not robots or not datavizs or len(robots) != len(datavizs):
+            raise RuntimeError(
+                "AprilTag semantic labeling requires matching live robots and DataViz instances."
+            )
+
+        self._string_type = String
+        self._workspace_scale = float(workspace_scale)
+        self._robots = list(robots)
+        self._datavizs = list(datavizs)
+        self._dataviz_anchor = self._datavizs[0]
+        self._placement_offset_m = max(0.0, float(placement_offset_m))
+        self._target_robot_names: Set[str] = {probe.robot_name for probe in probes}
+        self._registration_ready = False
+        self._pending_publish = False
+        self._seen_tag_ids: Set[int] = set()
+        self._acked_robot_names: Set[str] = set()
+        self._latest_robot_pose: Dict[str, _RobotPose2D] = {}
+        self._lock = threading.Lock()
+
+        node_name = f"horus_apriltag_semantic_overlay_{uuid.uuid4().hex[:8]}"
+        self.node = rclpy.create_node(node_name)
+
+        sensor_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        status_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=20,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
+        self._subscriptions = [
+            self.node.create_subscription(
+                RobotTagDetectionsArray,
+                str(detections_topic or "").strip() or DEFAULT_APRILTAG_DETECTIONS_TOPIC,
+                self._handle_detections,
+                status_qos,
+            ),
+            self.node.create_subscription(
+                String,
+                "/horus/registration_ack",
+                self._handle_registration_ack,
+                status_qos,
+            ),
+        ]
+        for probe in probes:
+            self._subscriptions.append(
+                self.node.create_subscription(
+                    Odometry,
+                    probe.odom.topic,
+                    self._make_odom_callback(probe.robot_name),
+                    sensor_qos,
+                )
+            )
+
+    def destroy(self) -> None:
+        for subscription in self._subscriptions:
+            try:
+                self.node.destroy_subscription(subscription)
+            except Exception:
+                pass
+        try:
+            self.node.destroy_node()
+        except Exception:
+            pass
+
+    def _make_odom_callback(self, robot_name: str):
+        def _callback(msg) -> None:
+            frame_id = prefix_frame_id(str(msg.header.frame_id or "").strip(), robot_name)
+            if not frame_id:
+                frame_id = DEFAULT_SHARED_MAP_FRAME
+            position = msg.pose.pose.position
+            orientation = msg.pose.pose.orientation
+            pose = _RobotPose2D(
+                frame_id=frame_id,
+                x=float(position.x),
+                y=float(position.y),
+                yaw=_yaw_from_quaternion_xyzw(
+                    float(orientation.x),
+                    float(orientation.y),
+                    float(orientation.z),
+                    float(orientation.w),
+                ),
+            )
+            with self._lock:
+                self._latest_robot_pose[robot_name] = pose
+
+        return _callback
+
+    def _handle_registration_ack(self, msg) -> None:
+        try:
+            ack = json.loads(str(msg.data or ""))
+        except Exception:
+            return
+
+        robot_name = str(ack.get("robot_name", "") or "").strip()
+        if robot_name not in self._target_robot_names or not bool(ack.get("success")):
+            return
+
+        should_publish = False
+        with self._lock:
+            self._acked_robot_names.add(robot_name)
+            if not self._registration_ready and self._acked_robot_names >= self._target_robot_names:
+                self._registration_ready = True
+                should_publish = self._pending_publish
+
+        if should_publish:
+            self._publish_registration_update("initial AprilTag semantic overlays")
+
+    def _handle_detections(self, msg) -> None:
+        added_tags: List[Tuple[int, str, str, Tuple[float, float, float]]] = []
+        should_publish = False
+
+        with self._lock:
+            detections = list(getattr(msg, "detections", []) or [])
+            for detection in detections:
+                robot_name = str(getattr(detection, "robot_name", "") or "").strip()
+                if robot_name not in self._target_robot_names:
+                    continue
+
+                robot_pose = self._latest_robot_pose.get(robot_name)
+                if robot_pose is None:
+                    continue
+
+                for raw_tag_id in list(getattr(detection, "tag_ids", []) or []):
+                    tag_id = int(raw_tag_id)
+                    if tag_id in self._seen_tag_ids:
+                        continue
+
+                    center = _semantic_box_center_from_robot_pose(
+                        robot_pose,
+                        self._placement_offset_m,
+                    )
+                    self._dataviz_anchor.add_semantic_box(
+                        semantic_id=_apriltag_person_semantic_id(tag_id),
+                        label=f"person: {tag_id}",
+                        center=center,
+                        size=DEFAULT_APRILTAG_SEMANTIC_BOX_SIZE,
+                        frame_id=robot_pose.frame_id or DEFAULT_SHARED_MAP_FRAME,
+                        rotation_offset_euler=(0.0, 0.0, math.degrees(robot_pose.yaw)),
+                    )
+                    self._seen_tag_ids.add(tag_id)
+                    added_tags.append((tag_id, robot_name, robot_pose.frame_id, center))
+
+            if added_tags:
+                if self._registration_ready:
+                    should_publish = True
+                else:
+                    self._pending_publish = True
+
+        for tag_id, robot_name, frame_id, center in added_tags:
+            self.node.get_logger().info(
+                "Queued semantic box for AprilTag %d from %s at frame=%s center=(%.2f, %.2f, %.2f)"
+                % (tag_id, robot_name, frame_id, center[0], center[1], center[2])
+            )
+
+        if should_publish:
+            tag_list = ", ".join(str(tag_id) for tag_id, _, _, _ in added_tags)
+            self._publish_registration_update(f"new AprilTag detections: {tag_list}")
+
+    def _publish_registration_update(self, reason: str) -> None:
+        from horus.bridge.robot_registry import get_robot_registry_client
+
+        client = get_robot_registry_client()
+        publisher = getattr(client, "publisher", None)
+        if publisher is None:
+            with self._lock:
+                self._pending_publish = True
+            self.node.get_logger().warn(
+                "Skipping AprilTag semantic registration update; HORUS registration publisher is not ready yet."
+            )
+            return
+
+        try:
+            with self._lock:
+                global_visualizations = client._build_global_visualizations_payload(self._datavizs)
+                payloads = []
+                for robot, dataviz in zip(self._robots, self._datavizs):
+                    config = client._build_robot_config_dict(
+                        robot,
+                        dataviz,
+                        global_visualizations=global_visualizations,
+                        workspace_scale=self._workspace_scale,
+                    )
+                    payloads.append(json.dumps(config))
+
+            for payload in payloads:
+                reg_msg = self._string_type()
+                reg_msg.data = payload
+                publisher.publish(reg_msg)
+
+            with self._lock:
+                self._pending_publish = False
+
+            self.node.get_logger().info(
+                "Published updated HORUS registrations for AprilTag semantic overlays (%s)."
+                % reason
+            )
+        except Exception as exc:
+            with self._lock:
+                self._pending_publish = True
+            self.node.get_logger().warn(
+                "Failed to publish AprilTag semantic registration update: %s" % exc
+            )
+
+
+class AprilTagSemanticOverlayRunner:
+    """Run the AprilTag semantic overlay bridge on a background executor thread."""
+
+    def __init__(self, bridge: AprilTagSemanticOverlayBridge) -> None:
+        from rclpy.executors import SingleThreadedExecutor
+
+        self.bridge = bridge
+        self.executor = SingleThreadedExecutor()
+        self.executor.add_node(self.bridge.node)
+        self._stop_requested = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop_requested.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _spin(self) -> None:
+        import rclpy
+
+        while not self._stop_requested.is_set() and rclpy.ok():
+            self.executor.spin_once(timeout_sec=0.1)
+
+    def stop(self) -> None:
+        self._stop_requested.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        try:
+            self.executor.remove_node(self.bridge.node)
+        except Exception:
+            pass
+        self.bridge.destroy()
+        try:
+            self.executor.shutdown(timeout_sec=1.0)
+        except Exception:
+            pass
 
 
 def resolve_camera_frame_id(
@@ -1659,6 +1966,32 @@ def build_parser() -> argparse.ArgumentParser:
             "CLI overrides HORUS_CARTER_VISUAL_MESH_TRIANGLE_BUDGET."
         ),
     )
+    parser.add_argument(
+        "--apriltag-semantic-labeling",
+        action="store_true",
+        default=False,
+        help=(
+            "Subscribe to /april_tag/detections_by_robot and promote first-seen tag IDs "
+            "into HORUS semantic boxes placed 1 m ahead of the detecting robot."
+        ),
+    )
+    parser.add_argument(
+        "--apriltag-detections-topic",
+        default=DEFAULT_APRILTAG_DETECTIONS_TOPIC,
+        help=(
+            "Per-robot AprilTag detections topic used for semantic labeling "
+            f"(default: {DEFAULT_APRILTAG_DETECTIONS_TOPIC})."
+        ),
+    )
+    parser.add_argument(
+        "--apriltag-semantic-offset-m",
+        type=float,
+        default=DEFAULT_APRILTAG_SEMANTIC_OFFSET_M,
+        help=(
+            "Forward placement offset in meters from the detecting robot pose "
+            f"(default: {DEFAULT_APRILTAG_SEMANTIC_OFFSET_M})."
+        ),
+    )
     return parser
 
 
@@ -1712,6 +2045,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     task_bridge_runner: Optional[TaskBridgeRunner] = None
+    semantic_overlay_runner: Optional[AprilTagSemanticOverlayRunner] = None
     rclpy_initialized = False
 
     try:
@@ -1792,6 +2126,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 frame_id=DEFAULT_SHARED_MAP_FRAME,
             )
 
+        if bool(args.apriltag_semantic_labeling):
+            cli.print_step("Starting AprilTag semantic overlay bridge...")
+            semantic_overlay = AprilTagSemanticOverlayBridge(
+                probes=nav_graph.probes,
+                robots=robots,
+                datavizs=datavizs,
+                workspace_scale=float(args.workspace_scale),
+                detections_topic=args.apriltag_detections_topic,
+                placement_offset_m=float(args.apriltag_semantic_offset_m),
+            )
+            semantic_overlay_runner = AprilTagSemanticOverlayRunner(semantic_overlay)
+            semantic_overlay_runner.start()
+            cli.print_success("AprilTag semantic overlay bridge is active.")
+
         cli.print_step(f"Registering {len(robots)} robot(s) with HORUS...")
         cli.print_info("Bridge ready state will be followed by immediate registration seeding.")
         success, result = register_robots(
@@ -1815,6 +2163,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         cli.print_error(str(exc))
         return 1
     finally:
+        if semantic_overlay_runner is not None:
+            cli.print_info("Stopping AprilTag semantic overlay bridge...")
+            semantic_overlay_runner.stop()
+
         if task_bridge_runner is not None:
             cli.print_info("Stopping Carter Nav task bridges...")
             task_bridge_runner.stop()
