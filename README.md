@@ -198,6 +198,10 @@ python3 python/examples/sdk_hospital_carter_live_demo.py \
   --shared-map-topic /shared_map \
   --body-mesh-mode runtime_high_mesh
 ```
+```bash
+cd ~/horus_sdk
+python3 python/examples/sdk_hospital_carter_live_demo.py   --robot-names carter1,carter2,carter3   --workspace-scale 0.04   --body-mesh-mode preview_mesh
+```
 
 Current Carter demo defaults:
 - camera and LaserScan DataViz channels are registered as enabled by default,
