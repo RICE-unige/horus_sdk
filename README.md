@@ -40,7 +40,7 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | Path | Description |
 |---|---|
 | `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
-| `python/examples/` | Operational demos (`sdk_registration_demo.py`, `sdk_typical_ops_demo.py`, `sdk_multi_operator_host_demo.py`, fake publishers, e2e checks) |
+| `python/examples/` | Operational demos (`sdk_registration_demo.py`, `sdk_typical_ops_demo.py`, `sdk_multi_operator_host_demo.py`, `sdk_robot_description_tutorial_demo.py`, fake publishers, e2e checks) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
 | `cpp/` | C++ SDK parity track (paused) |
 | `rust/` | Rust SDK parity track (paused) |
@@ -199,6 +199,11 @@ python3 python/examples/sdk_hospital_carter_live_demo.py \
   --body-mesh-mode runtime_high_mesh
 ```
 
+Current Carter demo defaults:
+- camera and LaserScan DataViz channels are registered as enabled by default,
+- the projected camera plane is lifted forward/upward with `camera.configure_projected_view(...)` so the overlay stays above the shared map plane,
+- nav path registrations are authored against the Carter `global_odom` basis used by the live demo.
+
 Quick verification:
 
 ```bash
@@ -249,6 +254,7 @@ Navigation DataViz quick notes:
 - `sdk_typical_ops_demo.py` registers nav path + motion safety DataViz metadata (velocity/odometry trail/collision risk) by default.
 - `GoalMarkerData` and `WayPointQueue` visibility toggles are runtime-controlled in MR during active go-to/waypoint tasks.
 - Robot-description DataViz channels are exposed separately in MR (`CollisionMeshData`, `JointAxesData`) and use manifest support flags.
+- `DataViz.add_sensor_visualization(..., enabled=True)` can opt a sensor into default-on MR visibility; the Carter live demo uses this for camera and LaserScan.
 
 Robot description demo quick start (collision + joints + visual meshes):
 
@@ -279,6 +285,34 @@ python3 python/examples/tools/fetch_robot_description_assets.py --force
 python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode off
 python3 python/examples/sdk_robot_description_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode off
 ```
+
+Workspace tutorial demo (gated onboarding panel in MR):
+
+```bash
+cd ~/horus_sdk
+python3 python/examples/tools/fetch_robot_description_assets.py --force
+python3 python/examples/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode off
+python3 python/examples/sdk_robot_description_tutorial_demo.py --robot-profile real_models --workspace-scale 0.1 --collision-opaque --map-3d-mode off
+```
+
+Tutorial notes:
+- The tutorial demo leaves `sdk_robot_description_demo.py` unchanged and opt-in.
+- It enables the MR onboarding panel through `Robot.configure_workspace_tutorial("robot_description_onboarding_v1")`.
+- The current tutorial targets single-user ground-robot onboarding in `Single` or `Private Workspace` flows.
+- The panel gates progression across: robot manager open, minimap teleop, immersive teleop, go-to point, draw waypoint, draw nav path, label pose, go-to labeled pose, and multi-robot go-to point.
+
+Projected camera placement tuning:
+
+```python
+camera.configure_projected_view(
+    position_offset=(0.04, 0.28, 0.0),
+    rotation_offset=(0.0, 0.0, 0.0),
+    image_scale=1.037,
+    focal_length_scale=0.55,
+)
+```
+
+Use this API when a projected camera plane needs to sit above a 2D/3D map or shift sideways relative to the robot without moving the parent camera widget.
 
 Enable 3D map in mesh mode (recommended for Quest 3):
 
