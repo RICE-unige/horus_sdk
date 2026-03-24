@@ -722,7 +722,7 @@ class AprilTagSemanticOverlayBridge:
                 RobotTagDetectionsArray,
                 str(detections_topic or "").strip() or DEFAULT_APRILTAG_DETECTIONS_TOPIC,
                 self._handle_detections,
-                status_qos,
+                sensor_qos,
             ),
             self.node.create_subscription(
                 String,
