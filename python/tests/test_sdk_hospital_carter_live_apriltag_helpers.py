@@ -1,7 +1,6 @@
 """Tests for the AprilTag semantic-overlay helpers in the live Carter demo."""
 
 import importlib.util
-import math
 from pathlib import Path
 
 
@@ -14,16 +13,24 @@ def _load_module(module_path: Path, module_name: str):
     return module
 
 
-def test_apriltag_semantic_box_center_projects_one_meter_forward():
+def test_apriltag_semantic_box_center_uses_fixed_world_position():
     demo = _load_module(
         Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
         "sdk_hospital_carter_live_demo_apriltag_helpers",
     )
 
-    pose = demo._RobotPose2D(frame_id="map", x=2.0, y=-1.5, yaw=math.pi / 2.0)
-    center = demo._semantic_box_center_from_robot_pose(pose, 1.0)
+    center = demo._semantic_box_center_for_tag(1)
 
-    assert center == (2.0, -0.5, 0.0)
+    assert center == (-47.780966508350595, 9.253047326267392, 0.5390588048650494)
+
+
+def test_apriltag_semantic_box_center_returns_none_for_unknown_tag():
+    demo = _load_module(
+        Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
+        "sdk_hospital_carter_live_demo_apriltag_helpers_unknown",
+    )
+
+    assert demo._semantic_box_center_for_tag(999) is None
 
 
 def test_apriltag_person_semantic_id_is_stable():
