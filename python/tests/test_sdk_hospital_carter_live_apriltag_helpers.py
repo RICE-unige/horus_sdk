@@ -24,6 +24,17 @@ def test_apriltag_semantic_box_center_uses_fixed_world_position():
     assert center == (-47.780966508350595, 9.253047326267392, 0.5390588048650494)
 
 
+def test_apriltag_semantic_box_center_uses_office_scene_profile():
+    demo = _load_module(
+        Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
+        "sdk_hospital_carter_live_demo_apriltag_helpers_office",
+    )
+
+    center = demo._semantic_box_center_for_tag(1, "office")
+
+    assert center == (4.910504642109061, 30.97664047071059, 0.4973964158136842)
+
+
 def test_apriltag_semantic_box_center_returns_none_for_unknown_tag():
     demo = _load_module(
         Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",

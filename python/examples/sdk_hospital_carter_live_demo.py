@@ -59,18 +59,36 @@ DEFAULT_SHARED_MAP_FRAME = "map"
 DEFAULT_RVIZ_ROOT_FRAME = "global_odom"
 DEFAULT_APRILTAG_DETECTIONS_TOPIC = "/april_tag/detections_by_robot"
 DEFAULT_APRILTAG_SEMANTIC_BOX_SIZE = (0.6, 0.6, 1.7)
-DEFAULT_APRILTAG_WORLD_POSITIONS: Dict[int, Tuple[float, float, float]] = {
-    1: (-47.780966508350595, 9.253047326267392, 0.5390588048650494),
-    2: (-47.825433425657415, 31.31671386718752, 0.5325260213106301),
-    3: (12.045346704726485, 26.44529965786674, 0.5412456866482279),
-    4: (26.016314965415788, 20.264474470321122, 0.5320971696497737),
-    5: (12.68741541247874, 3.5158409870380307, 0.5457641816876574),
-    6: (22.188201333573637, 2.261410239786365, 0.5213475846469872),
-    7: (25.0451904296875, -1.961320386525618, 0.5220328481793512),
-    8: (-14.32625071502537, 14.311163792197549, 0.6505159942022498),
-    9: (-13.512517256229335, 7.811550875800454, 0.5511879084272279),
-    10: (-2.632030628617786, -0.6653609672384561, 0.7186511932485986),
+DEFAULT_APRILTAG_SCENE_PROFILE = "hospital"
+DEFAULT_APRILTAG_WORLD_POSITIONS_BY_SCENE: Dict[str, Dict[int, Tuple[float, float, float]]] = {
+    "hospital": {
+        1: (-47.780966508350595, 9.253047326267392, 0.5390588048650494),
+        2: (-47.825433425657415, 31.31671386718752, 0.5325260213106301),
+        3: (12.045346704726485, 26.44529965786674, 0.5412456866482279),
+        4: (26.016314965415788, 20.264474470321122, 0.5320971696497737),
+        5: (12.68741541247874, 3.5158409870380307, 0.5457641816876574),
+        6: (22.188201333573637, 2.261410239786365, 0.5213475846469872),
+        7: (25.0451904296875, -1.961320386525618, 0.5220328481793512),
+        8: (-14.32625071502537, 14.311163792197549, 0.6505159942022498),
+        9: (-13.512517256229335, 7.811550875800454, 0.5511879084272279),
+        10: (-2.632030628617786, -0.6653609672384561, 0.7186511932485986),
+    },
+    "office": {
+        1: (4.910504642109061, 30.97664047071059, 0.4973964158136842),
+        2: (0.5827527406821116, 34.748954086202545, 0.32859851446801663),
+        3: (1.5865299526820311, 46.770076227205365, 0.3151346876367264),
+        4: (0.8464887157491048, 49.28514813433961, 0.5228103315535189),
+        5: (-21.831578705298394, 55.754486975546506, 0.41116598687485983),
+        6: (0.795903598816899, 13.269574971827057, 0.5836132810783681),
+        7: (-20.556490073819877, -11.162325696927983, 0.32975355322420963),
+        8: (-7.1000001057982445, -25.5, 0.4000000059604645),
+        9: (-20.500000000000004, 31.5, 1.0),
+        10: (-12.1118798828125, 49.510115966796874, 0.3),
+    },
 }
+DEFAULT_APRILTAG_WORLD_POSITIONS = DEFAULT_APRILTAG_WORLD_POSITIONS_BY_SCENE[
+    DEFAULT_APRILTAG_SCENE_PROFILE
+]
 GLOBAL_ROOT_FRAMES = {"map", "world", DEFAULT_RVIZ_ROOT_FRAME}
 NOVA_CARTER_REPO_URL = "https://github.com/NVIDIA-ISAAC-ROS/nova_carter.git"
 NOVA_CARTER_MEDIA_BASE_URL = "https://media.githubusercontent.com/media/NVIDIA-ISAAC-ROS/nova_carter/main"
@@ -650,8 +668,21 @@ def prefix_frame_id(frame_id: str, robot_name: str) -> str:
     return f"{normalized_robot}/{normalized_frame}"
 
 
-def _semantic_box_center_for_tag(tag_id: int) -> Optional[Tuple[float, float, float]]:
-    center = DEFAULT_APRILTAG_WORLD_POSITIONS.get(int(tag_id))
+def _normalize_apriltag_scene_profile(scene_profile: str) -> str:
+    normalized = str(scene_profile or "").strip().lower()
+    if normalized in DEFAULT_APRILTAG_WORLD_POSITIONS_BY_SCENE:
+        return normalized
+    return DEFAULT_APRILTAG_SCENE_PROFILE
+
+
+def _semantic_box_center_for_tag(
+    tag_id: int,
+    scene_profile: str = DEFAULT_APRILTAG_SCENE_PROFILE,
+) -> Optional[Tuple[float, float, float]]:
+    world_positions = DEFAULT_APRILTAG_WORLD_POSITIONS_BY_SCENE[
+        _normalize_apriltag_scene_profile(scene_profile)
+    ]
+    center = world_positions.get(int(tag_id))
     if center is None:
         return None
     return (float(center[0]), float(center[1]), float(center[2]))
@@ -671,6 +702,7 @@ class AprilTagSemanticOverlayBridge:
         datavizs: Sequence[DataViz],
         workspace_scale: float,
         detections_topic: str = DEFAULT_APRILTAG_DETECTIONS_TOPIC,
+        scene_profile: str = DEFAULT_APRILTAG_SCENE_PROFILE,
     ) -> None:
         import rclpy
         from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -694,6 +726,7 @@ class AprilTagSemanticOverlayBridge:
         self._robots = list(robots)
         self._datavizs = list(datavizs)
         self._dataviz_anchor = self._datavizs[0]
+        self._scene_profile = _normalize_apriltag_scene_profile(scene_profile)
         self._target_robot_names: Set[str] = {probe.robot_name for probe in probes}
         self._registration_ready = False
         self._pending_publish = False
@@ -779,7 +812,7 @@ class AprilTagSemanticOverlayBridge:
                     if tag_id in self._seen_tag_ids:
                         continue
 
-                    center = _semantic_box_center_for_tag(tag_id)
+                    center = _semantic_box_center_for_tag(tag_id, self._scene_profile)
                     if center is None:
                         continue
                     self._dataviz_anchor.add_semantic_box(
@@ -1936,6 +1969,15 @@ def build_parser() -> argparse.ArgumentParser:
             f"(default: {DEFAULT_APRILTAG_DETECTIONS_TOPIC})."
         ),
     )
+    parser.add_argument(
+        "--apriltag-scene-profile",
+        choices=sorted(DEFAULT_APRILTAG_WORLD_POSITIONS_BY_SCENE.keys()),
+        default=DEFAULT_APRILTAG_SCENE_PROFILE,
+        help=(
+            "Select the fixed AprilTag world-position map used for semantic labeling "
+            f"(default: {DEFAULT_APRILTAG_SCENE_PROFILE})."
+        ),
+    )
     return parser
 
 
@@ -2078,6 +2120,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 datavizs=datavizs,
                 workspace_scale=float(args.workspace_scale),
                 detections_topic=args.apriltag_detections_topic,
+                scene_profile=args.apriltag_scene_profile,
             )
             semantic_overlay_runner = AprilTagSemanticOverlayRunner(semantic_overlay)
             semantic_overlay_runner.start()
