@@ -93,6 +93,11 @@ def build_parser():
         help="Global workspace position scale forwarded in registration payload (default: 0.1).",
     )
     parser.add_argument(
+        "--enable-compass",
+        action="store_true",
+        help="Enable the Compass CoPilot workspace capability for Horus.",
+    )
+    parser.add_argument(
         "--go-to-min-altitude",
         type=float,
         default=0.0,
@@ -395,6 +400,7 @@ def main():
         keep_alive=args.keep_alive,
         show_dashboard=True,
         workspace_scale=args.workspace_scale,
+        compass_enabled=True if args.enable_compass else None,
     )
 
     if not success:

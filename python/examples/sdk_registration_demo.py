@@ -248,6 +248,11 @@ def build_parser():
         help="Optional global workspace position scale applied across MR entities.",
     )
     parser.add_argument(
+        "--enable-compass",
+        action="store_true",
+        help="Enable the Compass CoPilot workspace capability for Horus.",
+    )
+    parser.add_argument(
         "--occupancy-show-unknown-space",
         dest="occupancy_show_unknown_space",
         action="store_true",
@@ -639,6 +644,7 @@ def main():
             keep_alive=args.keep_alive,
             show_dashboard=True,
             workspace_scale=args.workspace_scale,
+            compass_enabled=True if args.enable_compass else None,
         )
         if not success:
             if isinstance(result, dict) and result.get("error") == "Cancelled":
