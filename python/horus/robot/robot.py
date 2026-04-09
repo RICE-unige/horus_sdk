@@ -529,6 +529,7 @@ class Robot:
         keep_alive: bool = True,
         show_dashboard: bool = True,
         workspace_scale: Optional[float] = None,
+        compass_enabled: Optional[bool] = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Register this robot with the HORUS backend system
@@ -538,6 +539,7 @@ class Robot:
             keep_alive: If True, keep the connection dashboard running
             show_dashboard: If False, skip the dashboard UI during registration
             workspace_scale: Optional global workspace position scale.
+            compass_enabled: Optional workspace-scoped Compass availability toggle.
 
         Returns:
             Tuple of (success, registration_data)
@@ -555,6 +557,8 @@ class Robot:
             keep_alive=keep_alive,
             show_dashboard=show_dashboard,
             workspace_scale=workspace_scale,
+            compass_enabled=compass_enabled,
+            wait_for_app_before_register=True,
         )
 
         if success:
@@ -657,6 +661,7 @@ def register_robots(
     show_dashboard: bool = True,
     timeout_sec: float = 10.0,
     workspace_scale: Optional[float] = None,
+    compass_enabled: Optional[bool] = None,
     wait_for_app_before_register: bool = True,
     datavizs=None,
 ):
@@ -670,6 +675,7 @@ def register_robots(
         keep_alive=keep_alive,
         show_dashboard=show_dashboard,
         workspace_scale=workspace_scale,
+        compass_enabled=compass_enabled,
         wait_for_app_before_register=wait_for_app_before_register,
     )
 
@@ -695,6 +701,7 @@ def _invoke_register_robot(
     keep_alive: bool,
     show_dashboard: bool,
     workspace_scale: Optional[float],
+    compass_enabled: Optional[bool],
     wait_for_app_before_register: bool,
 ):
     method = registry.register_robot
@@ -711,6 +718,8 @@ def _invoke_register_robot(
         kwargs["show_dashboard"] = show_dashboard
     if workspace_scale is not None and "workspace_scale" in parameters:
         kwargs["workspace_scale"] = workspace_scale
+    if compass_enabled is not None and "compass_enabled" in parameters:
+        kwargs["compass_enabled"] = compass_enabled
     if "wait_for_app_before_register" in parameters:
         kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 
@@ -725,6 +734,7 @@ def _invoke_register_robots(
     keep_alive: bool,
     show_dashboard: bool,
     workspace_scale: Optional[float],
+    compass_enabled: Optional[bool],
     wait_for_app_before_register: bool,
 ):
     method = registry.register_robots
@@ -745,6 +755,8 @@ def _invoke_register_robots(
         kwargs["show_dashboard"] = show_dashboard
     if workspace_scale is not None and "workspace_scale" in parameters:
         kwargs["workspace_scale"] = workspace_scale
+    if compass_enabled is not None and "compass_enabled" in parameters:
+        kwargs["compass_enabled"] = compass_enabled
     if "wait_for_app_before_register" in parameters:
         kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 

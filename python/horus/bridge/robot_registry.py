@@ -2038,6 +2038,7 @@ class RobotRegistryClient:
         keep_alive: bool = False,
         show_dashboard: bool = True,
         workspace_scale: Optional[float] = None,
+        compass_enabled: Optional[bool] = None,
         wait_for_app_before_register: bool = True,
     ) -> Tuple[bool, Dict]:
         """
@@ -2050,6 +2051,7 @@ class RobotRegistryClient:
             keep_alive: If True, blocks and maintains the dashboard after registration, 
                        handling monitoring and re-registration automatically.
             show_dashboard: If False, perform a quiet registration without the UI dashboard.
+            compass_enabled: Optional workspace-scoped Compass availability toggle.
             wait_for_app_before_register: When False, seed registration before the app connects.
         """
         from horus.utils import cli
@@ -2073,6 +2075,7 @@ class RobotRegistryClient:
                 dataviz,
                 global_visualizations=global_visualizations,
                 workspace_scale=workspace_scale,
+                compass_enabled=compass_enabled,
             )
             cli.print_info(f"Registration payload ready for '{robot.name}'.")
             config_json = json.dumps(config)
@@ -2310,6 +2313,7 @@ class RobotRegistryClient:
                                     robot,
                                     dataviz,
                                     workspace_scale=workspace_scale,
+                                    compass_enabled=compass_enabled,
                                 )
                                 msg = String()
                                 msg.data = json.dumps(config)
@@ -2358,6 +2362,7 @@ class RobotRegistryClient:
         keep_alive: bool = True,
         show_dashboard: bool = True,
         workspace_scale: Optional[float] = None,
+        compass_enabled: Optional[bool] = None,
         wait_for_app_before_register: bool = True,
     ) -> Tuple[bool, Dict]:
         """Register multiple robots with a single session."""
@@ -2409,6 +2414,7 @@ class RobotRegistryClient:
                     dataviz,
                     global_visualizations=global_visualizations,
                     workspace_scale=workspace_scale,
+                    compass_enabled=compass_enabled,
                 )
                 msg = String()
                 msg.data = json.dumps(config)
@@ -2900,6 +2906,7 @@ class RobotRegistryClient:
         dataviz,
         global_visualizations: Optional[list] = None,
         workspace_scale: Optional[float] = None,
+        compass_enabled: Optional[bool] = None,
     ) -> Dict:
         """Build simple JSON dictionary for robot config"""
         dimensions = None
@@ -3568,6 +3575,11 @@ class RobotRegistryClient:
         workspace_config: Dict[str, Any] = {}
         if normalized_workspace_scale is not None:
             workspace_config["position_scale"] = normalized_workspace_scale
+
+        if compass_enabled is not None:
+            workspace_config["compass"] = {
+                "enabled": _coerce_bool(compass_enabled, False),
+            }
 
         workspace_tutorial_metadata = robot.get_metadata("workspace_tutorial_config", {})
         if isinstance(workspace_tutorial_metadata, dict):
