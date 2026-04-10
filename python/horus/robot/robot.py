@@ -397,25 +397,26 @@ class Robot:
         resolved_collision_topic = collision_risk_topic or f"/{self.name}/collision_risk"
 
         if include_velocity:
-            dataviz.add_robot_velocity_data(
+            dataviz.add_robot_transform(
                 robot_name=self.name,
                 topic=resolved_odom_topic,
                 frame_id="map",
             )
 
         if include_trail:
-            dataviz.add_robot_odometry_trail(
+            dataviz.add_robot_trajectory(
                 robot_name=self.name,
                 topic=resolved_odom_topic,
                 frame_id="map",
             )
 
         if include_collision:
-            dataviz.add_robot_collision_risk(
-                robot_name=self.name,
-                topic=resolved_collision_topic,
-                frame_id=self.resolve_tf_frame(),
-            )
+            if hasattr(dataviz, "add_robot_collision_risk"):
+                dataviz.add_robot_collision_risk(
+                    robot_name=self.name,
+                    topic=resolved_collision_topic,
+                    frame_id=self.resolve_tf_frame(),
+                )
 
     def configure_robot_description(
         self,
