@@ -561,10 +561,10 @@ python3 python/examples/fake_tf_drone_ops_suite.py \
   --max-altitude 25.0 \
   --takeoff-altitude 1.2
 
-# Terminal B: SDK registration metadata with aerial profile + matching altitude bounds
+# Terminal B: SDK registration metadata with drone profile + matching altitude bounds
 python3 python/examples/sdk_typical_ops_demo.py \
   --robot-names drone_1,drone_2,drone_3 \
-  --teleop-profile aerial \
+  --teleop-profile drone \
   --go-to-min-altitude 0.0 \
   --go-to-max-altitude 25.0 \
   --workspace-scale 0.1
@@ -574,6 +574,26 @@ Expected MR behavior for this scenario:
 - Drone `TakeOffButton` / `LandButton` commands are active.
 - Drone go-to, waypoint, and draw-path use 3D authoring with altitude gating.
 - Multi-robot go-to-point V1 can dispatch to all active aerial robots from one authored anchor.
+
+### Legged task button flow test (stand up / sit down)
+
+```bash
+# Terminal A: legged fake runtime (listens on /<robot>/stand_up and /<robot>/sit_down)
+python3 python/examples/fake_tf_legged_ops_suite.py \
+  --robot-names legged_1,legged_2,legged_3 \
+  --min-height 0.0 \
+  --max-height 0.6 \
+  --stand_up-height 0.35 \
+  --sit_down-height 0.05
+
+# Terminal B: SDK registration metadata with robot_type=legged
+python3 python/examples/sdk_legged_ops_demo.py
+```
+
+Expected MR behavior for this scenario:
+- `TakeOffButton` is relabeled to `Stand Up` and publishes `/<robot>/stand_up`.
+- `LandButton` is relabeled to `Sit Down` and publishes `/<robot>/sit_down`.
+- Wheeled robots still show those two buttons disabled.
 
 ### Stereo camera immersive test (dual-stream minimap + teleop)
 
