@@ -19,6 +19,7 @@ class RobotType(Enum):
     WHEELED = "wheeled"
     LEGGED = "legged"
     AERIAL = "aerial"
+    DRONE = "drone"
 
 
 @dataclass
@@ -37,7 +38,7 @@ class Robot:
 
     Args:
         name: Robot identifier/namespace (unique)
-        robot_type: Classification of robot (wheeled, legged, aerial)
+        robot_type: Classification of robot (wheeled, legged, aerial, drone)
         metadata: Optional additional robot information
         sensors: List of sensors attached to this robot
     """

@@ -89,6 +89,15 @@ def test_teleop_control_overrides():
     assert teleop["discrete"]["threshold"] == 0.55
 
 
+def test_drone_robot_type_uses_drone_profile():
+    robot = Robot(name="drone_alpha", robot_type=RobotType.DRONE)
+    config = _build_config(robot)
+
+    assert config["robot_type"] == "drone"
+    assert config["control"]["teleop"]["robot_profile"] == "drone"
+    assert config["control"]["drive_topic"] == "/drone_alpha/cmd_vel"
+
+
 def test_teleop_control_invalid_values_clamped_to_safe_defaults():
     robot = Robot(name="weird_bot", robot_type=RobotType.WHEELED)
     robot.add_metadata(

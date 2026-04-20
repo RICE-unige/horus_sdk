@@ -24,6 +24,12 @@ def test_robot_type_enum():
     assert hasattr(RobotType, "WHEELED")
     assert hasattr(RobotType, "LEGGED")
     assert hasattr(RobotType, "AERIAL")
+    assert hasattr(RobotType, "DRONE")
+
+    assert RobotType.WHEELED.value == "wheeled"
+    assert RobotType.LEGGED.value == "legged"
+    assert RobotType.AERIAL.value == "aerial"
+    assert RobotType.DRONE.value == "drone"
 
 
 def test_sensor_type_enum():
@@ -61,6 +67,16 @@ def test_basic_robot_creation():
     assert robot.get_sensor_count() == 0
     assert not robot.has_sensors()
     assert not robot.is_registered_with_horus()
+
+
+def test_drone_robot_type_serializes_as_drone():
+    """Test explicit drone robot type serialization."""
+    from horus.robot import Robot, RobotType
+
+    robot = Robot(name="drone_alpha", robot_type=RobotType.DRONE)
+
+    assert robot.robot_type == RobotType.DRONE
+    assert robot.get_type_str() == "drone"
 
 
 def test_robot_metadata():

@@ -3290,7 +3290,7 @@ class RobotRegistryClient:
             if not isinstance(teleop_metadata, dict):
                 teleop_metadata = {}
 
-            allowed_profiles = {"wheeled", "legged", "aerial", "custom"}
+            allowed_profiles = {"wheeled", "legged", "aerial", "drone", "custom"}
             default_profile = str(getattr(robot, "get_type_str", lambda: "wheeled")()).strip().lower()
             if default_profile not in allowed_profiles:
                 default_profile = "wheeled"

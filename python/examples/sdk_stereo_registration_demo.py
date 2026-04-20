@@ -99,6 +99,12 @@ def build_parser():
     )
     parser.add_argument("--workspace-scale", type=float, default=0.1, help="Workspace position scale.")
     parser.add_argument(
+        "--teleop-profile",
+        choices=["wheeled", "legged", "aerial", "drone", "custom"],
+        default="wheeled",
+        help="Robot type / teleop profile metadata (default: wheeled).",
+    )
+    parser.add_argument(
         "--keep-alive",
         dest="keep_alive",
         action="store_true",
@@ -120,6 +126,8 @@ def resolve_robot_type(teleop_profile: str) -> RobotType:
         return RobotType.LEGGED
     if profile == "aerial":
         return RobotType.AERIAL
+    if profile == "drone":
+        return RobotType.DRONE
     return RobotType.WHEELED
 
 

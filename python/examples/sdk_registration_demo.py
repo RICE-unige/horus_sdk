@@ -325,7 +325,7 @@ def build_parser():
     )
     parser.add_argument(
         "--teleop-profile",
-        choices=["wheeled", "legged", "aerial", "custom"],
+        choices=["wheeled", "legged", "aerial", "drone", "custom"],
         default="wheeled",
         help="Teleop robot profile included in registration payload.",
     )
@@ -355,6 +355,8 @@ def resolve_robot_type(teleop_profile: str) -> RobotType:
         return RobotType.LEGGED
     if profile == "aerial":
         return RobotType.AERIAL
+    if profile == "drone":
+        return RobotType.DRONE
     return RobotType.WHEELED
 
 
@@ -371,7 +373,7 @@ def resolve_robot_names(args):
 
 
 def resolve_dimensions(args, idx: int, robot_type: RobotType):
-    if robot_type == RobotType.AERIAL:
+    if robot_type in (RobotType.AERIAL, RobotType.DRONE):
         length = DEFAULT_AERIAL_LENGTH if abs(float(args.length) - DEFAULT_LENGTH) < 1e-6 else max(0.01, float(args.length))
         width = DEFAULT_AERIAL_WIDTH if abs(float(args.width) - DEFAULT_WIDTH) < 1e-6 else max(0.01, float(args.width))
         height = DEFAULT_AERIAL_HEIGHT if abs(float(args.height) - DEFAULT_HEIGHT) < 1e-6 else max(0.01, float(args.height))

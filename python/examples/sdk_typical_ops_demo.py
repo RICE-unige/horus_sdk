@@ -141,7 +141,7 @@ def build_parser():
     )
     parser.add_argument(
         "--teleop-profile",
-        choices=["wheeled", "legged", "aerial", "custom"],
+        choices=["wheeled", "legged", "aerial", "drone", "custom"],
         default="wheeled",
         help="Teleop profile metadata (default: wheeled).",
     )
@@ -216,6 +216,8 @@ def resolve_robot_type(teleop_profile: str) -> RobotType:
         return RobotType.LEGGED
     if profile == "aerial":
         return RobotType.AERIAL
+    if profile == "drone":
+        return RobotType.DRONE
     return RobotType.WHEELED
 
 
