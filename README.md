@@ -118,12 +118,12 @@ pip install -e ".[dev]"
 
 ### 1) Start bridge (`horus_ros2`)
 
-Follow the setup/install instructions in the [`horus_ros2` README](https://github.com/RICE-unige/horus_ros2), then run:
+Follow the setup/install instructions in the [`horus_ros2` README](https://github.com/RICE-unige/horus_ros2), then run from the ROS 2 workspace root:
 
 ```bash
-cd ~/horus/ros2
-source /opt/ros/humble/setup.bash  # or jazzy
-colcon build --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
+cd ~/horus_ws
+source /opt/ros/humble/setup.bash  # use jazzy if that is your active ROS distro
+colcon build --symlink-install --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
 source install/setup.bash
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
@@ -131,14 +131,20 @@ ros2 launch horus_unity_bridge unity_bridge.launch.py
 ### 2) Start unified fake ops runtime (TF + camera + teleop + tasks)
 
 ```bash
-cd ~/horus/sdk
-python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images
+cd ~/horus_sdk
+source /opt/ros/humble/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python
+python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5
 ```
 
 ### 3) Run typical SDK registration demo
 
 ```bash
-cd ~/horus/sdk
+cd ~/horus_sdk
+source /opt/ros/humble/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python
 python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
 ```
 
@@ -241,15 +247,25 @@ python3 python/examples/e2e_registration_check.py
 ### Multi-robot camera stress test
 
 ```bash
-python3 python/examples/fake_tf_publisher.py --robot-count 10
-python3 python/examples/sdk_registration_demo.py --robot-count 10
+cd ~/horus_sdk
+source /opt/ros/humble/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python
+
+python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --static-camera --publish-compressed-images
+python3 python/examples/sdk_registration_demo.py --robot-count 10 --with-camera --workspace-scale 0.1
 ```
 
 ### Occupancy-map integration test
 
 ```bash
-python3 python/examples/fake_tf_publisher.py --robot-count 6 --publish-occupancy-grid --occupancy-rate 1.0
-python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-occupancy-grid --workspace-scale 0.1
+cd ~/horus_sdk
+source /opt/ros/humble/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python
+
+python3 python/examples/fake_tf_ops_suite.py --robot-count 6 --publish-occupancy-grid --occupancy-rate 1.0 --static-camera --publish-compressed-images
+python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-camera --with-occupancy-grid --workspace-scale 0.1
 ```
 
 ### Teleop command-flow fake TF tests

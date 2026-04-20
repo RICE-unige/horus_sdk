@@ -22,8 +22,16 @@ sidebar_position: 3
 ## Example run
 
 ```bash
-python3 python/examples/fake_tf_publisher.py --robot-count 4 --with-camera
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera --keep-alive
+cd ~/horus_sdk
+source /opt/ros/humble/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python
+
+# terminal 1: data publishers
+python3 python/examples/fake_tf_ops_suite.py --robot-count 4 --static-camera --publish-compressed-images
+
+# terminal 2: registration/dashboard
+python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera --keep-alive --workspace-scale 0.1
 ```
 
 ## Validation checklist
