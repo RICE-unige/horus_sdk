@@ -2,6 +2,7 @@
 
 from horus.utils.map_3d_workflow import (
     Map3DMode,
+    Map3DProfile,
     MeshTransport,
     MeshUpdatePolicy,
     build_map_3d_process_specs,
@@ -9,6 +10,7 @@ from horus.utils.map_3d_workflow import (
     coerce_mesh_transport_to_marker,
     resolve_converter_update_mode,
     resolve_map_3d_mode,
+    resolve_map_3d_profile,
 )
 
 
@@ -46,6 +48,24 @@ def test_resolve_map_3d_mode_accepts_octomap_mode():
     mode, warnings = resolve_map_3d_mode("octomap", with_3d_map=False, with_3d_mesh=False)
     assert mode == Map3DMode.OCTOMAP
     assert warnings == []
+
+
+def test_resolve_map_3d_profile_defaults_to_basic():
+    profile, warnings = resolve_map_3d_profile(None, detailed=False)
+    assert profile == Map3DProfile.BASIC
+    assert warnings == []
+
+
+def test_resolve_map_3d_profile_supports_detailed_alias():
+    profile, warnings = resolve_map_3d_profile(None, detailed=True)
+    assert profile == Map3DProfile.REALISTIC
+    assert any("--map-3d-detailed" in warning for warning in warnings)
+
+
+def test_resolve_map_3d_profile_explicit_value_overrides_detailed_alias():
+    profile, warnings = resolve_map_3d_profile("compact_house", detailed=True)
+    assert profile == Map3DProfile.COMPACT_HOUSE
+    assert any("Ignoring deprecated" in warning for warning in warnings)
 
 
 def test_resolve_converter_update_mode_snapshot_uses_requested_interval():
@@ -138,7 +158,26 @@ def test_build_map_3d_process_specs_detailed_mode_uses_realistic_publisher():
     )
 
     assert len(specs) == 1
-    assert "fake_3d_map_publisher_realistic.py" in specs[0].command[1]
+    assert "fake_3d_map_publisher.py" in specs[0].command[1]
+    assert "--profile" in specs[0].command
+    assert "realistic" in specs[0].command
+
+
+def test_build_map_3d_process_specs_supports_explicit_compact_house_profile():
+    specs = build_map_3d_process_specs(
+        mode=Map3DMode.POINTCLOUD,
+        python_executable="python3",
+        script_dir="/tmp/examples",
+        map_3d_topic="/map_3d",
+        map_3d_frame="map",
+        map_3d_mesh_topic="/map_3d_mesh",
+        map_3d_profile="compact_house",
+    )
+
+    assert len(specs) == 1
+    assert "fake_3d_map_publisher.py" in specs[0].command[1]
+    profile_index = specs[0].command.index("--profile") + 1
+    assert specs[0].command[profile_index] == "compact_house"
 
 
 def test_build_map_3d_process_specs_for_mesh_periodic_maps_to_on_change():

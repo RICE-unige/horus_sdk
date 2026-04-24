@@ -22,6 +22,14 @@ class Map3DMode(str, Enum):
     OCTOMAP = "octomap"
 
 
+class Map3DProfile(str, Enum):
+    """Synthetic PointCloud2 map content profiles."""
+
+    BASIC = "basic"
+    COMPACT_HOUSE = "compact_house"
+    REALISTIC = "realistic"
+
+
 class MeshUpdatePolicy(str, Enum):
     """Mesh converter update policies exposed by SDK demo CLIs."""
 
@@ -78,8 +86,18 @@ def add_map_3d_mode_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=False,
         help=(
-            "Use the detailed pointcloud publisher profile "
-            "(fake_3d_map_publisher_realistic.py)."
+            "[Deprecated] Use --map-3d-profile realistic. "
+            "Kept as a compatibility alias for the realistic profile."
+        ),
+    )
+    parser.add_argument(
+        "--map-3d-profile",
+        choices=[profile.value for profile in Map3DProfile],
+        default=None,
+        help=(
+            "Synthetic PointCloud2 content profile for pointcloud/mesh modes: "
+            "basic|compact_house|realistic. Defaults to realistic when "
+            "--map-3d-detailed is set, otherwise basic."
         ),
     )
     parser.add_argument(
@@ -255,6 +273,32 @@ def resolve_map_3d_mode(
     return Map3DMode.OFF, warnings
 
 
+def resolve_map_3d_profile(
+    profile_raw: Optional[str],
+    detailed: bool = False,
+) -> Tuple[Map3DProfile, List[str]]:
+    """Resolve the synthetic PointCloud2 content profile."""
+
+    warnings: List[str] = []
+    if profile_raw:
+        profile = Map3DProfile(str(profile_raw).strip().lower())
+        if detailed and profile != Map3DProfile.REALISTIC:
+            warnings.append(
+                "Ignoring deprecated --map-3d-detailed because "
+                f"--map-3d-profile={profile.value} was set explicitly."
+            )
+        return profile, warnings
+
+    if detailed:
+        warnings.append(
+            "Deprecated --map-3d-detailed detected. "
+            "Use --map-3d-profile realistic."
+        )
+        return Map3DProfile.REALISTIC, warnings
+
+    return Map3DProfile.BASIC, warnings
+
+
 def resolve_mesh_update_policy(policy_raw: Optional[str]) -> MeshUpdatePolicy:
     """Resolve and normalize mesh update policy string."""
 
@@ -303,20 +347,20 @@ def build_fake_3d_map_publisher_command(
     topic: str,
     frame_id: str,
     detailed: bool = False,
+    profile: Optional[str] = None,
 ) -> List[str]:
-    script_name = (
-        "fake_3d_map_publisher_realistic.py"
-        if detailed
-        else "fake_3d_map_publisher.py"
-    )
-    return [
+    resolved_profile, _ = resolve_map_3d_profile(profile, detailed=detailed)
+    command = [
         python_executable,
-        os.path.join(script_dir, script_name),
+        os.path.join(script_dir, "fake_3d_map_publisher.py"),
+        "--profile",
+        resolved_profile.value,
         "--topic",
         str(topic),
         "--frame",
         str(frame_id),
     ]
+    return command
 
 
 def build_fake_octomap_publisher_command(
@@ -408,6 +452,7 @@ def build_map_3d_process_specs(
     map_3d_mesh_transport: str = MeshTransport.MARKER.value,
     map_3d_mesh_chunk_max_triangles: int = 3000,
     map_3d_detailed: bool = False,
+    map_3d_profile: Optional[str] = None,
     mesh_voxel_size: float = 0.10,
     mesh_max_voxels: int = 60000,
     mesh_max_triangles: int = 60000,
@@ -453,6 +498,7 @@ def build_map_3d_process_specs(
                 topic=map_3d_topic,
                 frame_id=map_3d_frame,
                 detailed=map_3d_detailed,
+                profile=map_3d_profile,
             ),
             cwd=script_dir,
         )

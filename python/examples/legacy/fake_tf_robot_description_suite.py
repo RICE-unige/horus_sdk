@@ -6,7 +6,7 @@ import os
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
+PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
@@ -19,6 +19,7 @@ from horus.utils.map_3d_workflow import (
     build_map_3d_process_specs,
     coerce_mesh_transport_to_marker,
     resolve_map_3d_mode,
+    resolve_map_3d_profile,
     start_managed_processes,
     stop_managed_processes,
 )
@@ -102,7 +103,10 @@ def _flag_was_provided(flag: str) -> bool:
 
 
 def _apply_high_detail_mesh_defaults(args: argparse.Namespace, mode: Map3DMode) -> None:
-    if mode != Map3DMode.MESH or not bool(getattr(args, "map_3d_detailed", False)):
+    if mode != Map3DMode.MESH or not (
+        bool(getattr(args, "map_3d_detailed", False))
+        or str(getattr(args, "map_3d_profile", "") or "").strip().lower() == "realistic"
+    ):
         return
 
     if not _flag_was_provided("--map-3d-mesh-max-voxels"):
@@ -125,7 +129,10 @@ def _apply_high_detail_mesh_defaults(args: argparse.Namespace, mode: Map3DMode) 
 
 
 def _apply_high_detail_octomap_defaults(args: argparse.Namespace, mode: Map3DMode) -> None:
-    if mode != Map3DMode.OCTOMAP or not bool(getattr(args, "map_3d_detailed", False)):
+    if mode != Map3DMode.OCTOMAP or not (
+        bool(getattr(args, "map_3d_detailed", False))
+        or str(getattr(args, "map_3d_profile", "") or "").strip().lower() == "realistic"
+    ):
         return
 
     if not _flag_was_provided("--map-3d-octomap-max-voxels"):
@@ -194,30 +201,33 @@ def main():
         with_3d_map=bool(args.with_3d_map),
         with_3d_mesh=bool(args.with_3d_mesh),
     )
+    map_profile, profile_warnings = resolve_map_3d_profile(
+        args.map_3d_profile,
+        detailed=bool(getattr(args, "map_3d_detailed", False)),
+    )
+    args.map_3d_profile = map_profile.value
     mesh_transport = _apply_mesh_transport_defaults(args, mode)
 
-    for warning in warnings:
+    for warning in [*warnings, *profile_warnings]:
         cli.print_warning(f"[3D-MAP] {warning}")
 
     if mode == Map3DMode.OFF:
         cli.print_info("[3D-MAP] Mode=off. No fake map publisher/converter will be auto-started.")
     elif mode == Map3DMode.POINTCLOUD:
-        map_profile = "detailed" if bool(getattr(args, "map_3d_detailed", False)) else "default"
         cli.print_info(
-            f"[3D-MAP] Mode=pointcloud ({map_profile}). Auto-starting fake pointcloud publisher on {args.map_3d_topic}."
+            f"[3D-MAP] Mode=pointcloud (profile={map_profile.value}). "
+            f"Auto-starting fake pointcloud publisher on {args.map_3d_topic}."
         )
     elif mode == Map3DMode.OCTOMAP:
-        map_profile = "detailed" if bool(getattr(args, "map_3d_detailed", False)) else "default"
         cli.print_info(
             "[3D-MAP] Mode=octomap "
-            f"({map_profile}). Auto-starting fake octomap publisher "
+            f"(profile={map_profile.value}). Auto-starting fake octomap publisher "
             f"(octomap={args.map_3d_octomap_topic}, mesh={args.map_3d_octomap_mesh_topic})."
         )
     else:
-        map_profile = "detailed" if bool(getattr(args, "map_3d_detailed", False)) else "default"
         cli.print_info(
             "[3D-MAP] Mode=mesh "
-            f"({map_profile}). Auto-starting fake pointcloud publisher ({args.map_3d_topic}) "
+            f"(profile={map_profile.value}). Auto-starting fake pointcloud publisher ({args.map_3d_topic}) "
             f"and converter transport={mesh_transport.value} "
             f"(marker={args.map_3d_mesh_topic}) "
             f"policy={args.map_3d_mesh_update_policy}."
@@ -244,6 +254,7 @@ def main():
                 map_3d_mesh_transport=args.map_3d_mesh_transport,
                 map_3d_mesh_chunk_max_triangles=args.map_3d_mesh_chunk_max_triangles,
                 map_3d_detailed=bool(getattr(args, "map_3d_detailed", False)),
+                map_3d_profile=map_profile.value,
                 mesh_voxel_size=args.map_3d_mesh_voxel_size,
                 mesh_max_voxels=args.map_3d_mesh_max_voxels,
                 mesh_max_triangles=args.map_3d_mesh_max_triangles,

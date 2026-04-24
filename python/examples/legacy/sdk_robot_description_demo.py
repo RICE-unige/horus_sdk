@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
+PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
@@ -39,7 +39,7 @@ def _first_existing_path(candidates: List[str]) -> str:
 
 
 def _local_asset_path(filename: str) -> str:
-    return str(Path(SCRIPT_DIR) / ".local_assets" / "robot_descriptions" / filename)
+    return str(Path(SCRIPT_DIR).resolve().parent / ".local_assets" / "robot_descriptions" / filename)
 
 
 def _resolve_demo_urdf(explicit: str, local_candidates: Sequence[str], fallback_candidates: Sequence[str]) -> str:
@@ -344,7 +344,10 @@ def _apply_mesh_transport_defaults(args, mode: Map3DMode) -> MeshTransport:
 
 
 def _apply_high_detail_mesh_registration_defaults(args, mode: Map3DMode) -> None:
-    if mode != Map3DMode.MESH or not bool(getattr(args, "map_3d_detailed", False)):
+    if mode != Map3DMode.MESH or not (
+        bool(getattr(args, "map_3d_detailed", False))
+        or str(getattr(args, "map_3d_profile", "") or "").strip().lower() == "realistic"
+    ):
         return
 
     if _flag_was_provided("--map-3d-mesh-max-triangles"):
@@ -362,7 +365,10 @@ def _apply_high_detail_mesh_registration_defaults(args, mode: Map3DMode) -> None
 
 
 def _apply_high_detail_octomap_registration_defaults(args, mode: Map3DMode) -> None:
-    if mode != Map3DMode.OCTOMAP or not bool(getattr(args, "map_3d_detailed", False)):
+    if mode != Map3DMode.OCTOMAP or not (
+        bool(getattr(args, "map_3d_detailed", False))
+        or str(getattr(args, "map_3d_profile", "") or "").strip().lower() == "realistic"
+    ):
         return
 
     if _flag_was_provided("--map-3d-octomap-max-triangles"):
