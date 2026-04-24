@@ -5,17 +5,17 @@ This demo sends only the robot transform (TF) using the robot name as the TF pre
 and includes robot dimensions for sizing the interactor surface.
 
 Usage:
-  python3 sdk_registration_demo.py
-  python3 sdk_registration_demo.py --robot-count 4
-  python3 sdk_registration_demo.py --robot-count 4 --with-camera
-  python3 sdk_registration_demo.py --with-occupancy-grid
-  python3 sdk_registration_demo.py --with-3d-map --map-3d-topic /map_3d
-  python3 sdk_registration_demo.py --with-3d-mesh --map-3d-mesh-topic /map_3d_mesh
-  python3 sdk_registration_demo.py --with-fake-tf --with-3d-map
-  python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
-  python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
-  python3 sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
-  python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
+  python3 python/examples/legacy/sdk_registration_demo.py
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-count 4
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-count 4 --with-camera
+  python3 python/examples/legacy/sdk_registration_demo.py --with-occupancy-grid
+  python3 python/examples/legacy/sdk_registration_demo.py --with-3d-map --map-3d-topic /map_3d
+  python3 python/examples/legacy/sdk_registration_demo.py --with-3d-mesh --map-3d-mesh-topic /map_3d_mesh
+  python3 python/examples/legacy/sdk_registration_demo.py --with-fake-tf --with-3d-map
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
+  python3 python/examples/legacy/sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
+  python3 python/examples/legacy/sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
 """
 
 import sys
@@ -34,7 +34,7 @@ DEFAULT_AERIAL_HEIGHT = 0.20
 
 # Ensure we can import 'horus' package regardless of where script is run from
 script_dir = os.path.dirname(os.path.abspath(__file__))
-package_root = os.path.join(script_dir, "..")
+package_root = os.path.join(script_dir, "..", "..")
 if package_root not in sys.path:
     sys.path.insert(0, package_root)
 
@@ -304,13 +304,13 @@ def build_parser():
         dest="with_fake_tf",
         action="store_true",
         default=False,
-        help="Auto-start python/examples/fake_tf_publisher.py with matching robot names.",
+        help="Auto-start python/examples/legacy/fake_tf_publisher.py with matching robot names.",
     )
     parser.add_argument(
         "--fake-tf-rate",
         type=float,
         default=30.0,
-        help="Publish rate used by auto-started fake_tf_publisher.py (Hz).",
+        help="Publish rate used by auto-started python/examples/legacy/fake_tf_publisher.py (Hz).",
     )
     parser.add_argument(
         "--fake-tf-warmup-seconds",
@@ -321,7 +321,7 @@ def build_parser():
     parser.add_argument(
         "--fake-tf-base-frame",
         default="base_link",
-        help="Base frame used by auto-started fake_tf_publisher.py (default: base_link).",
+        help="Base frame used by auto-started python/examples/legacy/fake_tf_publisher.py (default: base_link).",
     )
     parser.add_argument(
         "--teleop-profile",
@@ -660,4 +660,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -57,7 +57,7 @@ def test_resolver_mesh_proxy_without_scale_does_not_square_fallback_size():
 
 def test_robot_profile_mapping_matches_expected_names_and_base_frames():
     demo = _load_module(
-        Path(__file__).resolve().parents[1] / "examples" / "sdk_robot_description_demo.py",
+        Path(__file__).resolve().parents[1] / "examples" / "legacy" / "sdk_robot_description_demo.py",
         "sdk_robot_description_demo_for_profile_tests",
     )
 

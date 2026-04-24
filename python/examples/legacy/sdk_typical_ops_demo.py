@@ -8,7 +8,7 @@ from typing import List, Tuple
 
 # Ensure we can import 'horus' package regardless of where script is run from.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
+PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 

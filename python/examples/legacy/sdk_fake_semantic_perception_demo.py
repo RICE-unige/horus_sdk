@@ -9,7 +9,7 @@ from typing import List, Tuple
 
 # Ensure we can import the local horus package regardless of CWD.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
+PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
@@ -32,6 +32,7 @@ class RobotProfile:
 
 LOCAL_DESCRIPTION_DIR = os.path.join(
     SCRIPT_DIR,
+    "..",
     ".local_assets",
     "robot_descriptions",
 )

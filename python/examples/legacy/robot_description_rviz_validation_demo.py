@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
+PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
@@ -61,7 +61,7 @@ def _first_existing_path(candidates: Sequence[str]) -> str:
 
 
 def _local_asset_path(filename: str) -> str:
-    return str(Path(SCRIPT_DIR) / ".local_assets" / "robot_descriptions" / filename)
+    return str(Path(SCRIPT_DIR).resolve().parent / ".local_assets" / "robot_descriptions" / filename)
 
 
 def _resolve_demo_urdf(explicit: str, local_candidates: Sequence[str], fallback_candidates: Sequence[str]) -> str:

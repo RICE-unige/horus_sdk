@@ -15,7 +15,7 @@ def _load_module(module_path: Path, module_name: str):
 
 def test_apriltag_semantic_box_center_uses_fixed_world_position():
     demo = _load_module(
-        Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
+        Path(__file__).resolve().parents[1] / "examples" / "legacy" / "sdk_hospital_carter_live_demo.py",
         "sdk_hospital_carter_live_demo_apriltag_helpers",
     )
 
@@ -26,7 +26,7 @@ def test_apriltag_semantic_box_center_uses_fixed_world_position():
 
 def test_apriltag_semantic_box_center_uses_office_scene_profile():
     demo = _load_module(
-        Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
+        Path(__file__).resolve().parents[1] / "examples" / "legacy" / "sdk_hospital_carter_live_demo.py",
         "sdk_hospital_carter_live_demo_apriltag_helpers_office",
     )
 
@@ -37,7 +37,7 @@ def test_apriltag_semantic_box_center_uses_office_scene_profile():
 
 def test_apriltag_semantic_box_center_returns_none_for_unknown_tag():
     demo = _load_module(
-        Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
+        Path(__file__).resolve().parents[1] / "examples" / "legacy" / "sdk_hospital_carter_live_demo.py",
         "sdk_hospital_carter_live_demo_apriltag_helpers_unknown",
     )
 
@@ -46,7 +46,7 @@ def test_apriltag_semantic_box_center_returns_none_for_unknown_tag():
 
 def test_apriltag_person_semantic_id_is_stable():
     demo = _load_module(
-        Path(__file__).resolve().parents[1] / "examples" / "sdk_hospital_carter_live_demo.py",
+        Path(__file__).resolve().parents[1] / "examples" / "legacy" / "sdk_hospital_carter_live_demo.py",
         "sdk_hospital_carter_live_demo_apriltag_id_helpers",
     )
 
