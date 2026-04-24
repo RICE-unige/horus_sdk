@@ -55,8 +55,6 @@ class LeggedOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
         goal_altitude_tolerance_m: float,
         waypoint_altitude_tolerance_m: float,
         max_vertical_speed_mps: float,
-        takeoff_altitude_m: float,
-        land_altitude_m: float,
         *args,
         **kwargs,
     ):
@@ -66,11 +64,11 @@ class LeggedOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
         self.goal_altitude_tolerance_m = max(0.02, float(goal_altitude_tolerance_m))
         self.waypoint_altitude_tolerance_m = max(0.02, float(waypoint_altitude_tolerance_m))
         self.max_vertical_speed_mps = max(0.05, float(max_vertical_speed_mps))
-        self.takeoff_altitude_m = max(
+        self.standing_height_m = max(
             self.min_altitude_m + self.goal_altitude_tolerance_m,
-            self._clamp_altitude(float(takeoff_altitude_m)),
+            self._clamp_altitude(float(self.height)),
         )
-        self.land_altitude_m = self._clamp_altitude(float(land_altitude_m))
+        self.sitting_height_m = self._clamp_altitude(self.min_altitude_m)
         self.collision_vertical_band_m = max(
             0.25,
             min(
@@ -117,7 +115,7 @@ class LeggedOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
         )
         self.get_logger().info(
             f"Legged command topics: /<robot>/stand_up and /<robot>/sit_down "
-            f"(stand_up target {self.takeoff_altitude_m:.2f}m, sit_down target {self.land_altitude_m:.2f}m)."
+            "(std_msgs/Empty action triggers)."
         )
         self.get_logger().info(
             f"Legged collision gating: robot-robot checks only within {self.collision_vertical_band_m:.2f}m height band."
@@ -236,10 +234,8 @@ class LeggedOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
         def _callback(_msg: Empty):
             self._cancel_goal(robot_name, publish_status=True)
             self._cancel_waypoint_path(robot_name, reason="path_cancelled")
-            self._set_flight_command(robot_name, "standing_up", self.takeoff_altitude_m)
-            self.get_logger().info(
-                f"StandUp command received for {robot_name} -> target height {self.takeoff_altitude_m:.2f}m."
-            )
+            self._set_flight_command(robot_name, "standing_up", self.standing_height_m)
+            self.get_logger().info(f"StandUp action received for {robot_name}.")
 
         return _callback
 
@@ -247,10 +243,8 @@ class LeggedOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
         def _callback(_msg: Empty):
             self._cancel_goal(robot_name, publish_status=True)
             self._cancel_waypoint_path(robot_name, reason="path_cancelled")
-            self._set_flight_command(robot_name, "sitting_down", self.land_altitude_m)
-            self.get_logger().info(
-                f"SitDown command received for {robot_name} -> target height {self.land_altitude_m:.2f}m."
-            )
+            self._set_flight_command(robot_name, "sitting_down", self.sitting_height_m)
+            self.get_logger().info(f"SitDown action received for {robot_name}.")
 
         return _callback
 
@@ -644,7 +638,7 @@ class LeggedOpsSuiteFakeTFPublisher(OpsSuiteFakeTFPublisher):
 
         target_altitude = self._flight_target_altitude.get(
             robot_name,
-            self.takeoff_altitude_m if mode == "standing_up" else self.land_altitude_m,
+            self.standing_height_m if mode == "standing_up" else self.sitting_height_m,
         )
         target_altitude = self._clamp_altitude(target_altitude)
         current_altitude = self._robot_altitudes.get(robot_name, self.height)
@@ -914,18 +908,6 @@ def build_legged_ops_parser():
         default=1.2,
         help="Maximum vertical speed in m/s used for teleop and task execution.",
     )
-    parser.add_argument(
-        "--stand_up-height",
-        type=float,
-        default=1.2,
-        help="Target height in map meters when /<robot>/stand_up is received.",
-    )
-    parser.add_argument(
-        "--sit_down-height",
-        type=float,
-        default=0.0,
-        help="Target height in map meters when /<robot>/sit_down is received.",
-    )
     return parser
 
 
@@ -954,8 +936,6 @@ def run_from_args(args):
         goal_altitude_tolerance_m=args.goal_height_tolerance,
         waypoint_altitude_tolerance_m=args.waypoint_height_tolerance,
         max_vertical_speed_mps=args.max_vertical_speed,
-        takeoff_altitude_m=args.stand_up_height,
-        land_altitude_m=args.sit_down_height,
         robot_names=robot_names,
         map_frame=args.map_frame,
         base_frame=args.base_frame,
@@ -1021,5 +1001,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
