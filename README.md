@@ -40,7 +40,8 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | Path | Description |
 |---|---|
 | `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
-| `python/examples/legacy/` | Current operational demo catalog preserved as legacy reference while the next curated example set is prepared |
+| `python/examples/` | Curated, no-CLI SDK registration examples for normal user workflows |
+| `python/examples/legacy/` | Full legacy fake-runtime and SDK demo catalog preserved for validation and advanced variants |
 | `python/examples/tools/` | Support utilities for legacy demos (for example asset fetchers) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
 | `cpp/` | C++ SDK parity track (paused) |
@@ -61,6 +62,7 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 
 - Python **3.10+**
 - ROS 2 **Humble** or **Jazzy** environment available (`rclpy` + message packages)
+- ROS packages are installed through the ROS/apt environment, not as portable PyPI dependencies.
 - Running bridge from `horus_ros2` (`horus_unity_bridge`)
 
 > [!WARNING]
@@ -107,10 +109,6 @@ pip install -e ".[dev]"
 ## End-to-End Quick Start
 
 > [!NOTE]
-> Current operational demos now live under `python/examples/legacy/`.
-> The root `python/examples/` folder is being kept clean for the next curated example set.
-
-> [!NOTE]
 > Commands below use repository-clone paths (`~/horus_sdk`, `~/horus_ws`).
 > If you installed with `install.sh`, adapt paths to `~/horus/sdk` and `~/horus/ros2`.
 
@@ -120,50 +118,178 @@ Follow the setup/install instructions in the [`horus_ros2` README](https://githu
 
 ```bash
 cd ~/horus_ws
-source /opt/ros/humble/setup.bash  # or jazzy
+source /opt/ros/jazzy/setup.bash  # or humble when using a Humble-compatible bridge revision
 colcon build --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
 source install/setup.bash
 ros2 launch horus_unity_bridge unity_bridge.launch.py
 ```
 
-### 2) Start unified fake ops runtime (TF + camera + teleop + tasks)
+### 2) Use the curated SDK examples
+
+The root `python/examples/` scripts are intentionally small: no CLI flags, no option matrix, just realistic SDK registrations that match one useful HORUS MR workflow. When running from a source checkout, keep your ROS environment in `PYTHONPATH`:
 
 ```bash
 cd ~/horus_sdk
-python3 python/examples/legacy/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5 --publish-collision-risk --collision-threshold-m 1.2
+source /opt/ros/jazzy/setup.bash  # or humble
+export PYTHONPATH=python:$PYTHONPATH
 ```
 
-### 3) Run the typical SDK registration demo
+Each workflow uses one fake/runtime terminal and one SDK registration terminal unless noted otherwise.
+
+### Ground robot ops fleet
+
+Use this first. It covers the normal ground-robot workflow: Robot Manager, camera, minimap/immersive teleop, go-to point, waypoint, paths, odometry, and collision-risk overlays.
+
+```bash
+# Terminal A: fake robot data and task subscribers
+python3 python/examples/legacy/fake_tf_ops_suite.py
+
+# Terminal B: SDK registration
+python3 python/examples/ops_registration.py
+```
+
+### Flat single-robot ROS binding
+
+Use this when a robot publishes flat ROS topics such as `/cmd_vel`, `/goal_pose`, and `/camera/image_raw` instead of namespaced topics.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_single_flat.py
+
+# Terminal B
+python3 python/examples/flat_robot_registration.py
+```
+
+### Drone registration
+
+Use this for aerial robots. HORUS MR keeps the drone `Take Off` and `Land` controls enabled for this robot type.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_drone_ops_suite.py
+
+# Terminal B
+python3 python/examples/drone_registration.py
+```
+
+### Legged robot registration
+
+Use this for legged robots. HORUS MR presents the action controls as `Stand Up` and `Sit Down` instead of drone takeoff/land controls.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_legged_ops_suite.py
+
+# Terminal B
+python3 python/examples/legged_registration.py
+```
+
+### Live Carter registration
+
+Use this for the live NVIDIA Carter multi-robot setup. The curated example registers three Carter robots, the shared occupancy map, front compressed cameras, 2D lidar, teleop, Robot Manager task topics, odometry trails, and RViz-relayed global/local plans.
+
+Expected live topics include `/tf`, `/tf_static`, `/shared_map`, `/<robot>/cmd_vel`, `/<robot>/chassis/odom`, `/<robot>/front_2d_lidar/scan`, `/<robot>/front_stereo_camera/left/image_raw/compressed`, `/rviz/<robot>/plan`, and `/rviz/<robot>/local_plan` for `carter1`, `carter2`, and `carter3`.
 
 ```bash
 cd ~/horus_sdk
-python3 python/examples/legacy/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
+source /opt/ros/jazzy/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python:$PYTHONPATH
+
+python3 python/examples/carter_registration.py
 ```
 
-### 4) Validate the MR flow
+For advanced Carter validation with topic probing, Nav2 action bridging, and AprilTag semantic overlays, use the legacy live Carter demo documented in [python/examples/legacy/README.md](python/examples/legacy/README.md).
 
-- connect the MR client,
-- draw and accept the workspace,
-- confirm robots appear in the workspace,
-- open a Robot Manager,
-- verify dashboard topic rows move from registration-only into active runtime state.
+### Live Unitree Go1 registration
 
-### Additional workflows
+Use this for the real Unitree Go1 ROS graph. The registration includes TF, the front compressed camera, LaserScan, collision alert DataViz, Robot Manager, legged teleop on `/unitree_go1/cmd_vel`, and the real Go1 URDF visual mesh from `/home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description`.
 
-The full command catalog for the preserved demo suite now lives in [python/examples/legacy/README.md](python/examples/legacy/README.md).
+The HORUS MR legged action buttons publish `/unitree_go1/stand_up` and `/unitree_go1/sit_down`. The support relay below maps those to the Unitree SDK high-mode service `/unitree_go1/legged_sdk/set_high_mode` with `mode=10` for stand and `mode=20` for sit. The same relay also converts `/unitree_go1/scan` into `/unitree_go1/collision_risk` so the HORUS collision alert layer can render live obstacle risk.
 
-Use that catalog for:
-- multi-operator host and join validation,
-- flat single-robot ROS-binding validation,
-- Carter live navigation integration,
-- robot-description and workspace-tutorial demos,
-- stereo camera and immersive transport validation,
-- drone and legged action-flow validation,
-- synthetic 3D map, mesh, and octomap publishers.
+```bash
+cd ~/horus_sdk
+source /opt/ros/jazzy/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python:$PYTHONPATH
 
-Support utilities remain outside the legacy folder:
-- `python/examples/tools/fetch_robot_description_assets.py`
-- `python/examples/.local_assets/robot_descriptions/`
+# Required robot-description source for visual mesh registration:
+# /home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description/urdf/go1.urdf
+
+# Terminal A: relay HORUS legged buttons to Unitree SetHighMode service
+python3 python/examples/tools/unitree_go1_high_mode_relay.py
+
+# Terminal B: SDK registration
+python3 python/examples/unitree_go1_registration.py
+```
+
+### Robot-description registration
+
+Use this when you want HORUS MR to load URDF-backed robot bodies instead of simple bounding boxes.
+
+```bash
+# One-time asset fetch
+python3 python/examples/tools/fetch_robot_description_assets.py
+
+# Terminal A
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
+
+# Terminal B
+python3 python/examples/robot_description_registration.py
+```
+
+### Stereo camera registration
+
+Use this for the dual camera policy used by teleop: mono minimap stream plus side-by-side stereo teleop stream.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_stereo_camera_multi.py
+
+# Terminal B
+python3 python/examples/stereo_registration.py
+```
+
+### Global map layers
+
+Use this to register occupancy grid, point cloud, mesh, and octomap-style global visualization layers together.
+
+```bash
+# Terminal A: TF, cameras, and occupancy grid
+python3 python/examples/legacy/fake_tf_publisher.py --robot-count 2 --static-camera --publish-compressed-images --publish-occupancy-grid
+
+# Terminal B: point-cloud map
+python3 python/examples/legacy/fake_3d_map_publisher.py --profile compact_house --topic /map_3d --frame map --publish-mode on_change
+
+# Terminal C: mesh layer generated from the point cloud
+python3 python/examples/legacy/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --update-policy snapshot
+
+# Terminal D: octomap mesh layer
+python3 python/examples/legacy/fake_octomap_publisher.py --octomap-topic /map_3d_octomap --mesh-topic /map_3d_octomap_mesh --frame map
+
+# Terminal E: SDK registration
+python3 python/examples/global_maps_registration.py
+```
+
+### Semantic perception registration
+
+Use this to register global semantic boxes, such as detected people or equipment, as default-visible DataViz layers.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_ops_suite.py --robot-count 4
+
+# Terminal B
+python3 python/examples/semantic_perception_registration.py
+```
+
+### Multi-operator note
+
+The curated registration examples all use `keep_alive=True`, so they remain suitable for host/join and private multi-operator validation. Start any example above before or during the shared HORUS MR session; joiners can receive the SDK registration replay from the active host-side SDK process.
+
+### Legacy catalog
+
+The full legacy command catalog remains in [python/examples/legacy/README.md](python/examples/legacy/README.md). Use it for stress tests, advanced flag variants, Carter/live integrations, tutorial-specific flows, and lower-level validation.
 
 ## Camera Registration Model
 
