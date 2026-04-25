@@ -7,6 +7,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Optional, Sequence, Union
 
+from .config import (
+    CameraImmersiveViewConfig,
+    CameraMinimapViewConfig,
+    CameraProjectedViewConfig,
+    CameraWebRtcTransportConfig,
+)
+
 
 class SensorType(Enum):
     """Sensor type classifications"""
@@ -61,8 +68,16 @@ class BaseSensor(ABC):
         self.enabled = False
 
     def add_metadata(self, key: str, value: Any) -> None:
-        """Add metadata to sensor"""
+        """Set a low-level metadata value on the sensor.
+
+        This remains available for custom HORUS MR payload fields. Prefer the
+        sensor-specific configure_* methods for first-class SDK features.
+        """
         self.metadata[key] = value
+
+    def set_metadata(self, key: str, value: Any) -> None:
+        """Alias for add_metadata with wording that matches replacement behavior."""
+        self.add_metadata(key, value)
 
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value by key"""
@@ -242,41 +257,76 @@ class Camera(BaseSensor):
         frustum_color: Optional[str] = None,
     ) -> None:
         """Configure projected-view placement and sizing metadata for HORUS."""
-        self.add_metadata("display_mode", "projected")
+        self.metadata.update(
+            CameraProjectedViewConfig.from_values(
+                position_offset=position_offset,
+                rotation_offset=rotation_offset,
+                scale_multiplier=scale_multiplier,
+                image_scale=image_scale,
+                focal_length_scale=focal_length_scale,
+                projection_target_frame=projection_target_frame,
+                show_frustum=show_frustum,
+                frustum_color=frustum_color,
+            ).to_payload()
+        )
 
-        if position_offset is not None:
-            self.add_metadata(
-                "projected_position_offset",
-                self._coerce_vec3(position_offset, "position_offset"),
-            )
+    def configure_minimap_view(
+        self,
+        *,
+        size: Optional[float] = None,
+        position_offset: Optional[Sequence[float]] = None,
+        face_camera: Optional[bool] = None,
+        rotation_offset: Optional[Sequence[float]] = None,
+    ) -> None:
+        """Configure camera sizing and placement in the HORUS minimap view."""
+        self.metadata.update(
+            CameraMinimapViewConfig.from_values(
+                size=size,
+                position_offset=position_offset,
+                face_camera=face_camera,
+                rotation_offset=rotation_offset,
+            ).to_payload()
+        )
 
-        if rotation_offset is not None:
-            self.add_metadata(
-                "view_rotation_offset",
-                self._coerce_vec3(rotation_offset, "rotation_offset"),
-            )
+    def configure_immersive_view(
+        self,
+        *,
+        ros_flip_x: Optional[bool] = None,
+        ros_flip_y: Optional[bool] = None,
+    ) -> None:
+        """Configure immersive teleop image orientation for ROS image streams."""
+        self.metadata.update(
+            CameraImmersiveViewConfig.from_values(
+                ros_flip_x=ros_flip_x,
+                ros_flip_y=ros_flip_y,
+            ).to_payload()
+        )
 
-        if scale_multiplier is not None:
-            self.add_metadata(
-                "projected_scale_multiplier",
-                self._coerce_vec3(scale_multiplier, "scale_multiplier"),
-            )
-
-        if image_scale is not None:
-            self.add_metadata("image_scale", float(image_scale))
-
-        if focal_length_scale is not None:
-            self.add_metadata("focal_length_scale", float(focal_length_scale))
-
-        if projection_target_frame is not None:
-            self.add_metadata("projection_target_frame", str(projection_target_frame))
-
-        if show_frustum is not None:
-            self.add_metadata("show_frustum", bool(show_frustum))
-
-        if frustum_color is not None:
-            self.add_metadata("frustum_color", str(frustum_color))
-
+    def configure_webrtc_transport(
+        self,
+        *,
+        client_signal_topic: str = "/horus/webrtc/client_signal",
+        server_signal_topic: str = "/horus/webrtc/server_signal",
+        bitrate_kbps: Optional[int] = None,
+        framerate: Optional[int] = None,
+        stun_server_url: Optional[str] = None,
+        turn_server_url: Optional[str] = None,
+        turn_username: Optional[str] = None,
+        turn_credential: Optional[str] = None,
+    ) -> None:
+        """Configure HORUS WebRTC camera transport signaling and bitrate hints."""
+        self.metadata.update(
+            CameraWebRtcTransportConfig.from_values(
+                client_signal_topic=client_signal_topic,
+                server_signal_topic=server_signal_topic,
+                bitrate_kbps=bitrate_kbps,
+                framerate=framerate,
+                stun_server_url=stun_server_url,
+                turn_server_url=turn_server_url,
+                turn_username=turn_username,
+                turn_credential=turn_credential,
+            ).to_payload()
+        )
 
 @dataclass
 class LaserScan(BaseSensor):
