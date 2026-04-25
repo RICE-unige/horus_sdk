@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Register real-model robots with URDF-backed body visualization in HORUS MR.
+"""Register the octomap map showcase for HORUS MR.
 
 Fetch the sample URDFs once:
     python3 python/examples/tools/fetch_robot_description_assets.py
 
 Pair this with:
-    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
+    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode octomap --map-3d-profile realistic
 
 From a source checkout:
-    PYTHONPATH=python:$PYTHONPATH python3 python/examples/robot_description_registration.py
+    PYTHONPATH=python:$PYTHONPATH python3 python/examples/octomap_registration.py
 """
 
 from pathlib import Path
@@ -107,7 +107,16 @@ for name, robot_type, dimensions, base_frame, urdf_file in ROBOT_MODELS:
     robots.append(robot)
     datavizs.append(dataviz)
 
-# No global map layer is registered in this base robot-description example.
+world_layers = datavizs[0]
+world_layers.add_3d_octomap(
+    "/map_3d_octomap_mesh",
+    frame_id="map",
+    render_options={
+        "render_mode": "surface_mesh",
+        "native_topic": "/map_3d_octomap",
+        "max_triangles": 120000,
+    },
+)
 
 success, result = register_robots(
     robots,

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Register real-model robots with URDF-backed body visualization in HORUS MR.
+"""Register the PointCloud2 map showcase for HORUS MR.
 
 Fetch the sample URDFs once:
     python3 python/examples/tools/fetch_robot_description_assets.py
 
 Pair this with:
-    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
+    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode pointcloud --map-3d-profile realistic
 
 From a source checkout:
-    PYTHONPATH=python:$PYTHONPATH python3 python/examples/robot_description_registration.py
+    PYTHONPATH=python:$PYTHONPATH python3 python/examples/pointcloud_map_registration.py
 """
 
 from pathlib import Path
@@ -107,7 +107,28 @@ for name, robot_type, dimensions, base_frame, urdf_file in ROBOT_MODELS:
     robots.append(robot)
     datavizs.append(dataviz)
 
-# No global map layer is registered in this base robot-description example.
+world_layers = datavizs[0]
+world_layers.add_3d_map(
+    "/map_3d",
+    frame_id="map",
+    render_options={
+        "point_size": 0.055,
+        "max_points_per_frame": 0,
+        "base_sample_stride": 1,
+        "render_all_points": True,
+        "auto_point_size_by_workspace_scale": False,
+        "min_point_size": 0.035,
+        "max_point_size": 0.08,
+        "enable_view_frustum_culling": False,
+        "enable_subpixel_culling": False,
+        "min_screen_radius_px": 0.0,
+        "visible_points_budget": 180000,
+        "max_visible_points_budget": 220000,
+        "map_static_mode": True,
+        "render_mode": "opaque_fast",
+        "color": "#6ED7FF",
+    },
+)
 
 success, result = register_robots(
     robots,

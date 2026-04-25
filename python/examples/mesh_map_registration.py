@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Register real-model robots with URDF-backed body visualization in HORUS MR.
+"""Register the dense mesh map showcase for HORUS MR.
 
 Fetch the sample URDFs once:
     python3 python/examples/tools/fetch_robot_description_assets.py
 
 Pair this with:
-    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
+    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-profile realistic --map-3d-mesh-voxel-size 0.07 --map-3d-mesh-max-voxels 220000 --map-3d-mesh-max-triangles 220000 --map-3d-mesh-update-policy snapshot
 
 From a source checkout:
-    PYTHONPATH=python:$PYTHONPATH python3 python/examples/robot_description_registration.py
+    PYTHONPATH=python:$PYTHONPATH python3 python/examples/mesh_map_registration.py
 """
 
 from pathlib import Path
@@ -107,7 +107,12 @@ for name, robot_type, dimensions, base_frame, urdf_file in ROBOT_MODELS:
     robots.append(robot)
     datavizs.append(dataviz)
 
-# No global map layer is registered in this base robot-description example.
+world_layers = datavizs[0]
+world_layers.add_3d_mesh(
+    "/map_3d_mesh",
+    frame_id="map",
+    render_options={"max_triangles": 220000, "use_vertex_colors": True},
+)
 
 success, result = register_robots(
     robots,

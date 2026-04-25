@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Register real-model robots with URDF-backed body visualization in HORUS MR.
+"""Register the occupancy-grid map showcase for HORUS MR.
 
 Fetch the sample URDFs once:
     python3 python/examples/tools/fetch_robot_description_assets.py
 
 Pair this with:
-    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
+    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --publish-occupancy-grid
 
 From a source checkout:
-    PYTHONPATH=python:$PYTHONPATH python3 python/examples/robot_description_registration.py
+    PYTHONPATH=python:$PYTHONPATH python3 python/examples/occupancy_map_registration.py
 """
 
 from pathlib import Path
@@ -107,7 +107,12 @@ for name, robot_type, dimensions, base_frame, urdf_file in ROBOT_MODELS:
     robots.append(robot)
     datavizs.append(dataviz)
 
-# No global map layer is registered in this base robot-description example.
+world_layers = datavizs[0]
+world_layers.add_occupancy_grid(
+    "/map",
+    frame_id="map",
+    render_options={"color_free": "#222222", "color_occupied": "#F4F4F4", "alpha": 0.85},
+)
 
 success, result = register_robots(
     robots,
