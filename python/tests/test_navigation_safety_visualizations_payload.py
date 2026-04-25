@@ -45,8 +45,8 @@ def test_navigation_safety_default_payload_shapes():
     collision_entry = by_type["collision_risk"][0]
     assert collision_entry["topic"] == "/atlas/collision_risk"
     assert collision_entry["frame"] == "atlas/base_link"
-    assert collision_entry["collision"]["threshold_m"] == 1.2
-    assert collision_entry["collision"]["radius_m"] == 1.2
+    assert collision_entry["collision"]["threshold_m"] == 0.45
+    assert collision_entry["collision"]["radius_m"] == 0.45
     assert collision_entry["collision"]["source"] == "laser_scan"
     assert collision_entry["collision"]["alpha_min"] == 0.0
     assert collision_entry["collision"]["alpha_max"] == 0.55

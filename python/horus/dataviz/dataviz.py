@@ -371,8 +371,8 @@ class DataViz:
 
         if "color" not in render_options:
             render_options["color"] = "#FF6A00"
-        render_options.setdefault("threshold_m", 1.2)
-        render_options.setdefault("radius_m", 1.2)
+        render_options.setdefault("threshold_m", 0.45)
+        render_options.setdefault("radius_m", 0.45)
         render_options.setdefault("source", "laser_scan")
         render_options.setdefault("alpha_min", 0.0)
         render_options.setdefault("alpha_max", 0.55)

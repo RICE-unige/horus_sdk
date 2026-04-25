@@ -109,6 +109,15 @@ def _apply_high_detail_mesh_defaults(args: argparse.Namespace, mode: Map3DMode) 
     ):
         return
 
+    if not _flag_was_provided("--map-3d-mesh-voxel-size"):
+        current_voxel_size = float(getattr(args, "map_3d_mesh_voxel_size", 0.0) or 0.0)
+        if current_voxel_size <= 0.0 or abs(current_voxel_size - 0.10) < 1e-9:
+            args.map_3d_mesh_voxel_size = 0.07
+            cli.print_info(
+                "[3D-MAP] Detailed mesh mode auto-set --map-3d-mesh-voxel-size=0.07 "
+                "(override with --map-3d-mesh-voxel-size)."
+            )
+
     if not _flag_was_provided("--map-3d-mesh-max-voxels"):
         current_voxels = int(getattr(args, "map_3d_mesh_max_voxels", 0))
         if current_voxels < DETAILED_MESH_MAX_VOXELS_DEFAULT:
@@ -234,8 +243,6 @@ def main():
         )
 
     args.scale = 1.0
-    # Robot-description suite should not publish occupancy grid data.
-    args.publish_occupancy_grid = False
     _apply_map_runtime_defaults(args, mode)
     _apply_high_detail_mesh_defaults(args, mode)
     _apply_high_detail_octomap_defaults(args, mode)

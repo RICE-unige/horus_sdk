@@ -57,6 +57,15 @@ class FlatSingleRobotPublisher(Node):
         self.goal_yaw_tolerance_rad = math.radians(max(1.0, float(args.goal_yaw_tolerance_deg)))
         self.max_linear_speed = max(0.1, float(args.max_linear_speed))
         self.max_angular_speed = max(0.1, float(args.max_angular_speed))
+        self.collision_threshold_m = max(0.1, float(args.collision_threshold))
+        self.collision_clear_distance_m = max(
+            self.collision_threshold_m + 0.1,
+            float(args.collision_clear_distance),
+        )
+        self.task_path_publish_rate_hz = max(0.2, float(args.task_path_publish_rate))
+        self._task_path_publish_period_s = 1.0 / self.task_path_publish_rate_hz
+        self._last_task_path_publish_time = 0.0
+        self._camera_frame_index = 0
         self.status_frame_id = args.status_frame
 
         self.x = 0.0
@@ -76,7 +85,7 @@ class FlatSingleRobotPublisher(Node):
         )
         tf_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         status_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
-        image_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        image_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
         path_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -106,7 +115,7 @@ class FlatSingleRobotPublisher(Node):
             "Flat single-robot ops example ready: "
             "teleop=/cmd_vel, goal=/goal_pose, cancel=/goal_cancel, "
             "waypoints=/waypoint_path, odom=/odom, paths=/global_path|/local_path, "
-            "collision=/collision_risk, camera=/camera/image_raw"
+            "collision=/collision_risk, camera=/camera/image_raw (rgb8, reliable QoS)"
         )
 
     def _publish_static_frames(self):
@@ -285,19 +294,35 @@ class FlatSingleRobotPublisher(Node):
         local_points = global_points[: min(2, len(global_points))]
         self.global_path_pub.publish(build_path(global_points))
         self.local_path_pub.publish(build_path(local_points))
+        self._last_task_path_publish_time = time.time()
 
     def _publish_camera_image(self):
         msg = Image()
         now = self.get_clock().now().to_msg()
-        width = 96
-        height = 54
+        width = 160
+        height = 90
+        frame_index = self._camera_frame_index
+        self._camera_frame_index += 1
         data = bytearray(width * height * 3)
+        marker_x = int(((frame_index % 90) / 89.0) * (width - 1))
+        marker_y = int((0.5 + 0.32 * math.sin(frame_index * 0.18)) * (height - 1))
+        scan_x = int(((frame_index * 3) % width))
         for y in range(height):
             for x in range(width):
                 idx = (y * width + x) * 3
-                data[idx] = int((x / max(1, width - 1)) * 255)
-                data[idx + 1] = int((y / max(1, height - 1)) * 255)
-                data[idx + 2] = 160
+                data[idx] = int((x / max(1, width - 1)) * 190) + 30
+                data[idx + 1] = int((y / max(1, height - 1)) * 170) + 35
+                data[idx + 2] = 150
+                if abs(x - scan_x) <= 1:
+                    data[idx] = min(255, data[idx] + 45)
+                    data[idx + 1] = min(255, data[idx + 1] + 45)
+                    data[idx + 2] = min(255, data[idx + 2] + 80)
+                dx = x - marker_x
+                dy = y - marker_y
+                if dx * dx + dy * dy <= 24 or abs(dx) <= 1 and abs(dy) <= 7 or abs(dy) <= 1 and abs(dx) <= 7:
+                    data[idx] = 255
+                    data[idx + 1] = 230
+                    data[idx + 2] = 60
         msg.header.stamp = now
         msg.header.frame_id = self.camera_frame
         msg.height = height
@@ -339,17 +364,18 @@ class FlatSingleRobotPublisher(Node):
         msg.twist.twist.angular.z = angular_speed
         self.odom_pub.publish(msg)
 
-    def _publish_collision_risk(self, linear_speed: float):
-        speed_ratio = abs(linear_speed) / max(0.001, self.max_linear_speed)
-        risk = round(clamp(0.15 + (0.65 * speed_ratio), 0.0, 1.0), 4)
+    def _publish_collision_risk(self, _linear_speed: float):
+        # This flat demo has no obstacle simulator. Publish an explicit clear state
+        # instead of deriving fake danger from robot speed.
         payload = {
             "robot": "robot",
             "frame": self.base_frame,
             "stamp_ms": int(time.time() * 1000.0),
             "source": "fake_single_flat",
-            "threshold_m": 1.0,
-            "min_distance_m": round(max(0.2, 2.0 - speed_ratio), 4),
-            "risk": risk,
+            "threshold_m": round(self.collision_threshold_m, 4),
+            "min_distance_m": round(self.collision_clear_distance_m, 4),
+            "risk": 0.0,
+            "state": "clear",
             "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
         }
         msg = String()
@@ -386,6 +412,11 @@ class FlatSingleRobotPublisher(Node):
                 self._publish_goal_status("goal_reached", goal)
                 self._publish_paths()
 
+        if self.active_goal is not None or self.active_waypoints:
+            now_sec = time.time()
+            if (now_sec - self._last_task_path_publish_time) >= self._task_path_publish_period_s:
+                self._publish_paths()
+
         stamp_msg = self.get_clock().now().to_msg()
         self._publish_tf(stamp_msg)
         self._publish_odometry(stamp_msg, linear_speed, angular_speed)
@@ -402,12 +433,25 @@ def build_parser():
     parser.add_argument("--status-frame", default="map")
     parser.add_argument("--rate", type=float, default=30.0)
     parser.add_argument("--image-rate", type=float, default=6.0)
+    parser.add_argument("--task-path-publish-rate", type=float, default=5.0)
     parser.add_argument("--scale", type=float, default=1.0)
     parser.add_argument("--teleop-timeout", type=float, default=0.35)
     parser.add_argument("--goal-tolerance", type=float, default=0.20)
     parser.add_argument("--goal-yaw-tolerance-deg", type=float, default=12.0)
     parser.add_argument("--max-linear-speed", type=float, default=0.8)
     parser.add_argument("--max-angular-speed", type=float, default=1.2)
+    parser.add_argument(
+        "--collision-threshold",
+        type=float,
+        default=1.0,
+        help="Distance threshold reported in the clear collision-risk baseline.",
+    )
+    parser.add_argument(
+        "--collision-clear-distance",
+        type=float,
+        default=5.0,
+        help="Minimum clear distance reported when no fake obstacle model is active.",
+    )
     return parser
 
 

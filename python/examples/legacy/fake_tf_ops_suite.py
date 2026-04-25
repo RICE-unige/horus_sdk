@@ -937,6 +937,9 @@ class OpsSuiteFakeTFPublisher(TeleopDrivenFakeTFPublisher):
         clearance_map = max(0.0, distance_map - (2.0 * self._collision_body_radius_m))
 
         threshold = max(self.collision_threshold_m, 1e-6)
+        if clearance_map >= threshold:
+            return 0.0, clearance_map, best_direction
+
         normalized = max(0.0, min(1.0, (threshold - clearance_map) / threshold))
         # Slight easing for clearer visual progression in MR.
         risk = normalized ** 0.85
@@ -1088,8 +1091,8 @@ def build_ops_suite_parser():
     parser.add_argument(
         "--collision-threshold-m",
         type=float,
-        default=1.2,
-        help="Collision risk threshold (meters) used by fake risk output.",
+        default=0.45,
+        help="Near-obstacle clearance threshold in meters for fake risk output.",
     )
     parser.add_argument(
         "--collision-risk-rate",
