@@ -40,10 +40,25 @@ for name in ("atlas", "nova", "orion"):
         resolution=(160, 90),
         fps=6,
         encoding="jpeg",
+        streaming_type="ros",
+        minimap_streaming_type="ros",
+        teleop_streaming_type="ros",
         minimap_image_type="compressed",
         teleop_image_type="compressed",
     )
-    camera.configure_projected_view(image_scale=0.072, focal_length_scale=0.108)
+    camera.add_metadata("image_type", "compressed")
+    camera.configure_projected_view(
+        image_scale=1.0,
+        focal_length_scale=0.55,
+        show_frustum=True,
+        frustum_color="#E6E6E0A0",
+    )
+    camera.configure_minimap_view(
+        size=10.0,
+        position_offset=(0.0, 2.0, 0.0),
+        face_camera=True,
+        rotation_offset=(90.0, 0.0, 0.0),
+    )
     robot.add_sensor(camera)
 
     dataviz = robot.create_dataviz()
