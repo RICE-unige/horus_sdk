@@ -4,16 +4,16 @@ HORUS SDK DataViz Module
 Data visualization and rendering management for mixed reality applications.
 """
 
-from .dataviz import (
+from .models import (
     DataSource,
     DataSourceType,
-    DataViz,
     EnvironmentDataSource,
     RobotDataSource,
     SensorDataSource,
     VisualizationConfig,
     VisualizationType,
 )
+from .dataviz import DataViz
 from .collision_risk_analyzer import (
     CollisionRiskAnalyzer,
     analyze_laser_scan,
