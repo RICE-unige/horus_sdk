@@ -63,7 +63,7 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 - Python **3.10+**
 - ROS 2 **Humble** or **Jazzy** environment available (`rclpy` + message packages)
 - ROS packages are installed through the ROS/apt environment, not as portable PyPI dependencies.
-- Running bridge from `horus_ros2` (`horus_unity_bridge`)
+- Installed/buildable `horus_ros2` bridge runtime (`horus_unity_bridge`); SDK registration auto-starts it when needed
 
 > [!WARNING]
 > `horus_ros2/main` currently includes `GenericClient`-based bridge code that is not available in ROS 2 Humble headers.
@@ -112,29 +112,26 @@ pip install -e ".[dev]"
 > Commands below use repository-clone paths (`~/horus_sdk`, `~/horus_ws`).
 > If you installed with `install.sh`, adapt paths to `~/horus/sdk` and `~/horus/ros2`.
 
-### 1) Start bridge (`horus_ros2`)
+### 1) Prepare the SDK shell
 
-Follow the setup/install instructions in the [`horus_ros2` README](https://github.com/RICE-unige/horus_ros2), then run:
+The SDK registration client manages the HORUS bridge for the normal curated examples. When registration starts, it checks port `10000`; if the bridge is not already running, it auto-starts `horus_unity_bridge` from the current ROS shell first and then falls back to the installer `horus-start` helper when available.
+
+Manual bridge launch is therefore not part of the normal quick start. Keep manual `ros2 launch horus_unity_bridge unity_bridge.launch.py` usage for legacy validation, custom bridge debugging, or cases where `HORUS_SDK_BRIDGE_AUTOSTART_MODE=off`.
+
+When running from a source checkout, keep your ROS environment and SDK path active:
 
 ```bash
-cd ~/horus_ws
+cd ~/horus_sdk
 source /opt/ros/jazzy/setup.bash  # or humble when using a Humble-compatible bridge revision
-colcon build --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
-source install/setup.bash
-ros2 launch horus_unity_bridge unity_bridge.launch.py
+source ~/horus_ws/install/setup.bash  # makes horus_unity_bridge discoverable for auto-start
+export PYTHONPATH=python:$PYTHONPATH
 ```
 
 ### 2) Use the curated SDK examples
 
-The root `python/examples/` scripts are intentionally small: no CLI flags, no option matrix, just realistic SDK registrations that match one useful HORUS MR workflow. When running from a source checkout, keep your ROS environment in `PYTHONPATH`:
+The root `python/examples/` scripts are intentionally small: no CLI flags, no option matrix, just realistic SDK registrations that match one useful HORUS MR workflow.
 
-```bash
-cd ~/horus_sdk
-source /opt/ros/jazzy/setup.bash  # or humble
-export PYTHONPATH=python:$PYTHONPATH
-```
-
-Each workflow uses one fake/runtime terminal and one SDK registration terminal unless noted otherwise.
+Each workflow uses one fake/runtime terminal and one SDK registration terminal unless noted otherwise. The SDK registration terminal is also responsible for bridge auto-start.
 
 ### Ground robot ops fleet
 
@@ -150,7 +147,7 @@ python3 python/examples/ops_registration.py
 
 ### Flat single-robot ROS binding
 
-Use this when a robot publishes flat ROS topics such as `/cmd_vel`, `/goal_pose`, and `/camera/image_raw` instead of namespaced topics.
+Use this when a robot publishes flat ROS topics such as `/cmd_vel`, `/goal_pose`, `/global_path`, `/local_path`, and `/camera/image_raw` instead of namespaced topics. The fake runtime publishes a front raw camera stream and continuously refreshes nav paths while goals or waypoints are active.
 
 ```bash
 # Terminal A
@@ -250,25 +247,55 @@ python3 python/examples/legacy/fake_stereo_camera_multi.py
 python3 python/examples/stereo_registration.py
 ```
 
-### Global map layers
+### Occupancy Grid Map
 
-Use this to register occupancy grid, point cloud, mesh, and octomap-style global visualization layers together.
+Use this to showcase a 2D occupancy-grid map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
 
 ```bash
-# Terminal A: TF, cameras, and occupancy grid
-python3 python/examples/legacy/fake_tf_publisher.py --robot-count 2 --static-camera --publish-compressed-images --publish-occupancy-grid
+# One-time asset fetch
+python3 python/examples/tools/fetch_robot_description_assets.py
 
-# Terminal B: point-cloud map
-python3 python/examples/legacy/fake_3d_map_publisher.py --profile compact_house --topic /map_3d --frame map --publish-mode on_change
+# Terminal A: real-model robots plus occupancy grid
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --publish-occupancy-grid
 
-# Terminal C: mesh layer generated from the point cloud
-python3 python/examples/legacy/pointcloud_to_voxel_mesh_marker.py --cloud-topic /map_3d --mesh-topic /map_3d_mesh --update-policy snapshot
+# Terminal B: SDK registration
+python3 python/examples/occupancy_map_registration.py
+```
 
-# Terminal D: octomap mesh layer
-python3 python/examples/legacy/fake_octomap_publisher.py --octomap-topic /map_3d_octomap --mesh-topic /map_3d_octomap_mesh --frame map
+### PointCloud Map
 
-# Terminal E: SDK registration
-python3 python/examples/global_maps_registration.py
+Use this to showcase a global PointCloud2 map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
+
+```bash
+# Terminal A: real-model robots plus PointCloud2 map
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode pointcloud --map-3d-profile realistic
+
+# Terminal B: SDK registration
+python3 python/examples/pointcloud_map_registration.py
+```
+
+### Dense Mesh Map
+
+Use this to showcase the highest-detail synthetic mesh map currently exposed by the examples. This workflow is paired with the real-model robot-description fake runtime, but the focus is the dense mesh map layer. It is intentionally dense and should be used for visual quality/performance validation, not as the first Quest stress test.
+
+```bash
+# Terminal A: real-model robots plus ultra-dense mesh map
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-profile realistic --map-3d-mesh-voxel-size 0.07 --map-3d-mesh-max-voxels 220000 --map-3d-mesh-max-triangles 220000 --map-3d-mesh-update-policy snapshot
+
+# Terminal B: SDK registration
+python3 python/examples/mesh_map_registration.py
+```
+
+### Octomap Map
+
+Use this to showcase the octomap-style global map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
+
+```bash
+# Terminal A: real-model robots plus octomap mesh layer
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode octomap --map-3d-profile realistic
+
+# Terminal B: SDK registration
+python3 python/examples/octomap_registration.py
 ```
 
 ### Semantic perception registration
