@@ -1,6 +1,8 @@
 """Tests for baked visual mesh payloads in robot descriptions."""
 
+import base64
 import os
+import struct
 import tempfile
 from pathlib import Path
 
@@ -13,6 +15,11 @@ from horus.robot import Robot, RobotType
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content.strip() + "\n", encoding="utf-8")
+
+
+def _decode_float32(base64_text: str) -> list[float]:
+    raw = base64.b64decode(base64_text)
+    return list(struct.unpack("<" + ("f" * (len(raw) // 4)), raw))
 
 
 def test_visual_mesh_payload_is_baked_from_package_obj():
@@ -83,6 +90,91 @@ f 1//1 2//1 3//1
         assert mesh_asset["colors_b64"]
         assert visual_link["mesh_id"] == mesh_asset["mesh_id"]
         assert visual_link["frame_id"] == "base_link"
+
+
+def test_visual_mesh_payload_is_baked_from_package_dae():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        package_root = Path(tmp_dir) / "tiny_bot_description"
+        _write_text(
+            package_root / "package.xml",
+            "<package><name>tiny_bot_description</name></package>",
+        )
+        _write_text(
+            package_root / "meshes" / "panel.dae",
+            """
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <library_geometries>
+    <geometry id="panel-mesh" name="panel">
+      <mesh>
+        <source id="panel-positions">
+          <float_array id="panel-positions-array" count="9">0 0 0 1 0 0 0 1 0</float_array>
+          <technique_common>
+            <accessor source="#panel-positions-array" count="3" stride="3">
+              <param name="X" type="float"/>
+              <param name="Y" type="float"/>
+              <param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <vertices id="panel-vertices">
+          <input semantic="POSITION" source="#panel-positions"/>
+        </vertices>
+        <triangles count="1">
+          <input semantic="VERTEX" source="#panel-vertices" offset="0"/>
+          <p>0 1 2</p>
+        </triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="Scene">
+      <node id="panel-node">
+        <matrix sid="transform">0 -1 0 0 1 0 0 0 0 0 1 0 0 0 0 1</matrix>
+        <instance_geometry url="#panel-mesh"/>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+</COLLADA>
+            """,
+        )
+        urdf_path = package_root / "urdf" / "tiny_bot.urdf"
+        _write_text(
+            urdf_path,
+            """
+<robot name="tiny_bot">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="package://tiny_bot_description/meshes/panel.dae"/>
+      </geometry>
+    </visual>
+  </link>
+</robot>
+            """,
+        )
+
+        robot = Robot(name="tiny_bot", robot_type=RobotType.WHEELED)
+        robot.configure_robot_description(
+            urdf_path=str(urdf_path),
+            base_frame="base_link",
+            include_visual_meshes=True,
+            visual_mesh_triangle_budget=2000,
+        )
+        artifact = RobotDescriptionResolver().resolve_for_robot(robot)
+
+        assert artifact is not None
+        assert artifact.manifest.supports_visual_meshes is True
+        assert artifact.manifest.mesh_asset_count == 1
+        mesh_asset = artifact.payload_dict["mesh_assets"][0]
+        assert mesh_asset["vertex_count"] == 3
+        assert mesh_asset["triangle_count"] == 1
+        positions = _decode_float32(mesh_asset["positions_b64"])
+        xs = positions[0::3]
+        ys = positions[1::3]
+        assert min(xs) == pytest.approx(-1.0)
+        assert max(xs) == pytest.approx(0.0)
+        assert min(ys) == pytest.approx(0.0)
+        assert max(ys) == pytest.approx(1.0)
 
 
 def test_visual_mesh_payload_preserves_obj_mtl_diffuse_color_hint():

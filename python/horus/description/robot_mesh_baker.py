@@ -11,6 +11,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -285,15 +286,21 @@ class RobotMeshBaker:
         cache_key = f"{source_path.suffix.lower()}:{source_hash}"
         cached = self._source_cache.get(cache_key)
         if cached is None:
-            normalized_path = self._normalize_to_obj_if_needed(source_path)
-            if normalized_path is None or not normalized_path.is_file():
-                return None
+            if source_path.suffix.lower() == ".dae":
+                cached = self._parse_dae_mesh(source_path)
+            else:
+                normalized_path = self._normalize_to_obj_if_needed(source_path)
+                if normalized_path is None or not normalized_path.is_file():
+                    return None
 
-            vertices, faces, color_rgb = self._parse_obj_mesh(normalized_path)
-            if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
-                return None
+                vertices, faces, color_rgb = self._parse_obj_mesh(normalized_path)
+                if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
+                    return None
 
-            cached = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=color_rgb)
+                cached = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=color_rgb)
+
+            if cached is None or len(cached.vertices) == 0 or len(cached.faces) == 0:
+                return None
             self._source_cache[cache_key] = cached
 
         if target_faces is None or len(cached.faces) <= int(target_faces):
@@ -304,19 +311,17 @@ class RobotMeshBaker:
         if decimated is not None:
             return decimated
 
-        normalized_path = self._normalize_to_obj_if_needed(source_path)
-        if normalized_path is None or not normalized_path.is_file():
-            return cached
+        normalized_path = None if source_path.suffix.lower() == ".dae" else self._normalize_to_obj_if_needed(source_path)
+        if normalized_path is not None and normalized_path.is_file():
+            decimated_path = self._decimate_obj_with_blender(normalized_path, int(target_faces))
+            if decimated_path is not None and decimated_path.is_file():
+                vertices, faces, _ = self._parse_obj_mesh(decimated_path)
+                if vertices is not None and faces is not None and len(vertices) > 0 and len(faces) > 0:
+                    decimated = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=cached.color_rgb)
+                    self._decimated_cache[decimated_key] = decimated
+                    return decimated
 
-        decimated_path = self._decimate_obj_with_blender(normalized_path, int(target_faces))
-        if decimated_path is None or not decimated_path.is_file():
-            return cached
-
-        vertices, faces, _ = self._parse_obj_mesh(decimated_path)
-        if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
-            return cached
-
-        decimated = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=cached.color_rgb)
+        decimated = self._decimate_source_mesh(cached, int(target_faces))
         self._decimated_cache[decimated_key] = decimated
         return decimated
 
@@ -571,6 +576,294 @@ class RobotMeshBaker:
             for face in faces:
                 handle.write(f"f {face[0]} {face[1]} {face[2]}\n")
         return output_path
+
+    def _parse_dae_mesh(self, source_path: Path) -> Optional[SourceMeshData]:
+        try:
+            root = ET.parse(source_path).getroot()
+        except Exception:
+            return None
+
+        namespace = ""
+        if root.tag.startswith("{") and "}" in root.tag:
+            namespace = root.tag[1:].split("}", 1)[0]
+
+        def tag(name: str) -> str:
+            return f"{{{namespace}}}{name}" if namespace else name
+
+        def parse_matrix(matrix_text: Optional[str]) -> np.ndarray:
+            values = np.fromstring(matrix_text or "", sep=" ", dtype=np.float32)
+            if values.size != 16:
+                return np.eye(4, dtype=np.float32)
+            # COLLADA stores the Blender-exported node matrix in row-major textual order.
+            return values.reshape((4, 4)).astype(np.float32, copy=False)
+
+        def local_node_matrix(node_el: ET.Element) -> np.ndarray:
+            matrix = np.eye(4, dtype=np.float32)
+            for child in list(node_el):
+                if child.tag == tag("matrix"):
+                    matrix = matrix @ parse_matrix(child.text)
+                elif child.tag == tag("translate"):
+                    values = np.fromstring(child.text or "", sep=" ", dtype=np.float32)
+                    if values.size >= 3:
+                        translate = np.eye(4, dtype=np.float32)
+                        translate[:3, 3] = values[:3]
+                        matrix = matrix @ translate
+                elif child.tag == tag("scale"):
+                    values = np.fromstring(child.text or "", sep=" ", dtype=np.float32)
+                    if values.size >= 3:
+                        scale = np.eye(4, dtype=np.float32)
+                        scale[0, 0] = values[0]
+                        scale[1, 1] = values[1]
+                        scale[2, 2] = values[2]
+                        matrix = matrix @ scale
+                elif child.tag == tag("rotate"):
+                    values = np.fromstring(child.text or "", sep=" ", dtype=np.float32)
+                    if values.size >= 4:
+                        axis = values[:3]
+                        norm = np.linalg.norm(axis)
+                        if norm > 1e-12:
+                            axis = axis / norm
+                            angle = math.radians(float(values[3]))
+                            c = math.cos(angle)
+                            s = math.sin(angle)
+                            t = 1.0 - c
+                            x, y, z = float(axis[0]), float(axis[1]), float(axis[2])
+                            rotation = np.array(
+                                [
+                                    [t * x * x + c, t * x * y - s * z, t * x * z + s * y, 0.0],
+                                    [t * x * y + s * z, t * y * y + c, t * y * z - s * x, 0.0],
+                                    [t * x * z - s * y, t * y * z + s * x, t * z * z + c, 0.0],
+                                    [0.0, 0.0, 0.0, 1.0],
+                                ],
+                                dtype=np.float32,
+                            )
+                            matrix = matrix @ rotation
+            return matrix
+
+        geometry_meshes: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+
+        for geometry_el in root.findall(f".//{tag('geometry')}"):
+            geometry_id = str(geometry_el.attrib.get("id", "")).strip()
+            mesh_el = geometry_el.find(tag("mesh"))
+            if mesh_el is None or not geometry_id:
+                continue
+
+            source_arrays: Dict[str, np.ndarray] = {}
+            for source_el in mesh_el.findall(tag("source")):
+                source_id = str(source_el.attrib.get("id", "")).strip()
+                float_array_el = source_el.find(tag("float_array"))
+                if not source_id or float_array_el is None:
+                    continue
+                raw_values = np.fromstring(float_array_el.text or "", sep=" ", dtype=np.float32)
+                if raw_values.size < 3:
+                    continue
+                accessor_el = source_el.find(f".//{tag('accessor')}")
+                stride = 3
+                if accessor_el is not None:
+                    try:
+                        stride = max(1, int(accessor_el.attrib.get("stride", "3")))
+                    except (TypeError, ValueError):
+                        stride = 3
+                usable_count = (raw_values.size // stride) * stride
+                if usable_count < 3:
+                    continue
+                values = raw_values[:usable_count].reshape((-1, stride))[:, :3]
+                source_arrays[source_id] = values.astype(np.float32, copy=False)
+
+            vertices_to_source: Dict[str, str] = {}
+            for vertices_el in mesh_el.findall(tag("vertices")):
+                vertices_id = str(vertices_el.attrib.get("id", "")).strip()
+                if not vertices_id:
+                    continue
+                for input_el in vertices_el.findall(tag("input")):
+                    if str(input_el.attrib.get("semantic", "")).upper() != "POSITION":
+                        continue
+                    source_ref = str(input_el.attrib.get("source", "")).strip().lstrip("#")
+                    if source_ref:
+                        vertices_to_source[vertices_id] = source_ref
+
+            geometry_vertices: Optional[np.ndarray] = None
+            geometry_faces: List[Tuple[int, int, int]] = []
+
+            for primitive_name in ("triangles", "polylist"):
+                for primitive_el in mesh_el.findall(tag(primitive_name)):
+                    inputs = primitive_el.findall(tag("input"))
+                    if not inputs:
+                        continue
+
+                    stride = 1
+                    vertex_offset_in_primitive = 0
+                    position_source_id = ""
+                    for input_el in inputs:
+                        try:
+                            input_offset = int(input_el.attrib.get("offset", "0"))
+                        except (TypeError, ValueError):
+                            input_offset = 0
+                        stride = max(stride, input_offset + 1)
+                        semantic = str(input_el.attrib.get("semantic", "")).upper()
+                        if semantic not in {"VERTEX", "POSITION"}:
+                            continue
+                        vertex_offset_in_primitive = input_offset
+                        source_ref = str(input_el.attrib.get("source", "")).strip().lstrip("#")
+                        position_source_id = vertices_to_source.get(source_ref, source_ref)
+
+                    if not position_source_id or position_source_id not in source_arrays:
+                        continue
+
+                    positions = source_arrays[position_source_id]
+                    if geometry_vertices is None:
+                        geometry_vertices = positions
+                    elif geometry_vertices is not positions:
+                        # Rare multi-position-source geometry. Keep it simple by appending this source.
+                        local_base = len(geometry_vertices)
+                        geometry_vertices = np.vstack((geometry_vertices, positions))
+                    else:
+                        local_base = 0
+                    if geometry_vertices is positions:
+                        local_base = 0
+
+                    p_el = primitive_el.find(tag("p"))
+                    if p_el is None or not (p_el.text or "").strip():
+                        continue
+                    raw_indices = np.fromstring(p_el.text or "", sep=" ", dtype=np.int64)
+                    if raw_indices.size < stride * 3:
+                        continue
+                    tuples = raw_indices[: (raw_indices.size // stride) * stride].reshape((-1, stride))
+                    vertex_indices = tuples[:, vertex_offset_in_primitive].astype(np.int64, copy=False) + int(local_base)
+
+                    if primitive_name == "triangles":
+                        usable = (vertex_indices.size // 3) * 3
+                        for tri in vertex_indices[:usable].reshape((-1, 3)):
+                            geometry_faces.append((int(tri[0]), int(tri[1]), int(tri[2])))
+                    else:
+                        vcount_el = primitive_el.find(tag("vcount"))
+                        if vcount_el is None or not (vcount_el.text or "").strip():
+                            continue
+                        counts = np.fromstring(vcount_el.text or "", sep=" ", dtype=np.int64)
+                        cursor = 0
+                        for count in counts:
+                            count_value = int(count)
+                            if count_value < 3 or cursor + count_value > len(vertex_indices):
+                                cursor += max(0, count_value)
+                                continue
+                            polygon = [int(value) for value in vertex_indices[cursor: cursor + count_value]]
+                            geometry_faces.extend(_triangulate_face(polygon))
+                            cursor += count_value
+
+            if geometry_vertices is None or not geometry_faces:
+                continue
+
+            geometry_meshes[geometry_id] = (
+                geometry_vertices.astype(np.float32, copy=False),
+                np.asarray(geometry_faces, dtype=np.int32),
+            )
+
+        if not geometry_meshes:
+            return None
+
+        instances: List[Tuple[str, np.ndarray]] = []
+
+        def visit_node(node_el: ET.Element, parent_matrix: np.ndarray) -> None:
+            node_matrix = parent_matrix @ local_node_matrix(node_el)
+            for instance_el in node_el.findall(tag("instance_geometry")):
+                geometry_ref = str(instance_el.attrib.get("url", "")).strip().lstrip("#")
+                if geometry_ref:
+                    instances.append((geometry_ref, node_matrix.copy()))
+            for child_node_el in node_el.findall(tag("node")):
+                visit_node(child_node_el, node_matrix)
+
+        scene_root = root.find(f".//{tag('library_visual_scenes')}/{tag('visual_scene')}")
+        if scene_root is not None:
+            for node_el in scene_root.findall(tag("node")):
+                visit_node(node_el, np.eye(4, dtype=np.float32))
+
+        if not instances:
+            instances = [(geometry_id, np.eye(4, dtype=np.float32)) for geometry_id in geometry_meshes.keys()]
+
+        all_vertices: List[np.ndarray] = []
+        all_faces: List[np.ndarray] = []
+        vertex_offset = 0
+        for geometry_id, transform in instances:
+            source_mesh = geometry_meshes.get(geometry_id)
+            if source_mesh is None:
+                continue
+            source_vertices, source_faces = source_mesh
+            homogeneous = np.concatenate(
+                (
+                    source_vertices.astype(np.float32, copy=False),
+                    np.ones((len(source_vertices), 1), dtype=np.float32),
+                ),
+                axis=1,
+            )
+            transformed = (homogeneous @ transform.T)[:, :3].astype(np.float32, copy=False)
+            all_vertices.append(transformed)
+            all_faces.append(source_faces.astype(np.int32, copy=False) + vertex_offset)
+            vertex_offset += int(len(transformed))
+
+        if not all_vertices or not all_faces:
+            return None
+
+        vertices = np.vstack(all_vertices).astype(np.float32, copy=False)
+        faces = np.vstack(all_faces).astype(np.int32, copy=False)
+        return SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=None)
+
+    def _decimate_source_mesh(self, source_mesh: SourceMeshData, target_faces: int) -> SourceMeshData:
+        face_count = int(len(source_mesh.faces))
+        if target_faces <= 0 or face_count <= target_faces:
+            return source_mesh
+
+        vertices = source_mesh.vertices.astype(np.float32, copy=False)
+        faces = source_mesh.faces.astype(np.int32, copy=False)
+        bounds_min = vertices.min(axis=0)
+        bounds_max = vertices.max(axis=0)
+        extent = np.maximum(bounds_max - bounds_min, 1e-6)
+
+        max_extent = float(np.max(extent))
+        base_resolution = max(8, int(math.ceil(math.sqrt(float(max(1, target_faces))) * 1.5)))
+        grid = np.maximum(
+            2,
+            np.ceil((extent / max(max_extent, 1e-6)) * float(base_resolution)).astype(np.int64),
+        )
+
+        quantized = np.floor((vertices - bounds_min[None, :]) / (extent[None, :] / grid[None, :])).astype(np.int64)
+        quantized = np.minimum(np.maximum(quantized, 0), grid[None, :] - 1)
+        cell_keys = (
+            (quantized[:, 0] * (grid[1] * grid[2]))
+            + (quantized[:, 1] * grid[2])
+            + quantized[:, 2]
+        )
+        unique_keys, inverse = np.unique(cell_keys, return_inverse=True)
+        clustered_vertices = np.zeros((len(unique_keys), 3), dtype=np.float64)
+        np.add.at(clustered_vertices, inverse, vertices.astype(np.float64, copy=False))
+        counts = np.bincount(inverse, minlength=len(unique_keys)).astype(np.float64)
+        counts[counts <= 0.0] = 1.0
+        clustered_vertices = (clustered_vertices / counts[:, None]).astype(np.float32, copy=False)
+
+        remapped_faces = inverse[faces].astype(np.int32, copy=False)
+        non_degenerate = (
+            (remapped_faces[:, 0] != remapped_faces[:, 1])
+            & (remapped_faces[:, 1] != remapped_faces[:, 2])
+            & (remapped_faces[:, 0] != remapped_faces[:, 2])
+        )
+        remapped_faces = remapped_faces[non_degenerate]
+        if len(remapped_faces) == 0:
+            return source_mesh
+
+        if len(remapped_faces) > target_faces:
+            rng = np.random.default_rng(0)
+            keep = np.sort(rng.choice(len(remapped_faces), size=int(target_faces), replace=False))
+            remapped_faces = remapped_faces[keep]
+
+        unique_vertices, compact_inverse = np.unique(remapped_faces.reshape(-1), return_inverse=True)
+        vertices = clustered_vertices[unique_vertices].astype(np.float32, copy=False)
+        faces = compact_inverse.reshape((-1, 3)).astype(np.int32, copy=False)
+        normals = self._compute_vertex_normals(vertices, faces)
+        return SourceMeshData(
+            vertices=vertices,
+            faces=faces,
+            normals=normals,
+            color_rgb=source_mesh.color_rgb,
+        )
 
     def _parse_obj_mesh(
         self,
