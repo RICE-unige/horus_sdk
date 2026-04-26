@@ -5,44 +5,42 @@ sidebar_position: 2
 
 # Camera Transport Profiles
 
-## Policy model
+The SDK supports separate camera transport policy for projected view, minimap view, and teleop view. This is critical in HORUS because awareness and control do not have the same transport requirements.
 
-SDK camera payload supports:
+## Fields that matter
 
-- legacy `streaming_type`
-- `minimap_streaming_type`
-- `teleop_streaming_type`
-- `startup_mode`
+| Field | Purpose |
+| --- | --- |
+| `streaming_type` | compatibility fallback transport |
+| `minimap_streaming_type` | transport used by the minimap camera panel |
+| `teleop_streaming_type` | transport used by teleop view |
+| `startup_mode` | initial camera mode the app should prefer |
+| `minimap_image_type` | image encoding for the minimap path |
+| `teleop_image_type` | image encoding for the teleop path |
 
-Recommended baseline:
+## Recommended profiles in current examples
 
-- MiniMap = `ros`
-- Teleop = `webrtc`
-- Startup = `minimap`
+### Ground ops
 
-## Example CLI
+- example: `python/examples/ops_registration.py`
+- policy: ROS for minimap, ROS for teleop
+- use when: fake-runtime development, general validation, simple local setups
 
-```bash
-python3 python/examples/sdk_registration_demo.py \
-  --robot-count 4 \
-  --with-camera \
-  --camera-streaming-type ros \
-  --camera-minimap-streaming-type ros \
-  --camera-teleop-streaming-type webrtc \
-  --camera-startup-mode minimap
-```
+### Carter live workflow
 
-## WebRTC tuning options
+- example: `python/examples/carter_registration.py`
+- policy: ROS for minimap, WebRTC for teleop
+- use when: live fleets where teleop needs a lower-latency camera path
 
-```bash
-python3 python/examples/sdk_registration_demo.py \
-  --with-camera \
-  --camera-teleop-streaming-type webrtc \
-  --webrtc-bitrate-kbps 1200 \
-  --webrtc-framerate 15 \
-  --webrtc-stun-server-url stun:stun.l.google.com:19302
-```
+### Stereo workflow
 
-## Compatibility guidance
+- example: `python/examples/stereo_registration.py`
+- policy: mono minimap plus stereo teleop
+- use when: you want a headset teleop view that is richer than the low-cost awareness stream
 
-Keep `streaming_type` populated while newer profile fields are used. This preserves compatibility with older clients while enabling dual-profile behavior in current MR runtime.
+## Practical guidance
+
+- keep `streaming_type` populated for compatibility
+- set minimap and teleop transport explicitly in new examples
+- tune projected and minimap view geometry with the same care as the transport fields
+- document whether a given live workflow needs WebRTC support before someone treats it as ROS-only

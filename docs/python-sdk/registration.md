@@ -7,42 +7,53 @@ sidebar_position: 4
 
 ## When to use it
 
-Use registration APIs when pushing robot configuration payloads to HORUS and tracking ACK/heartbeat state transitions.
+Use registration when you are ready to publish robot metadata into HORUS, keep the session alive, and monitor whether the app acknowledged and activated the payload.
 
 ## Minimal example
 
 ```python
-from horus.robot import Robot, RobotType
+from horus.robot import Robot, RobotType, register_robots
 
-robot = Robot(name="sdk_bot", robot_type=RobotType.WHEELED)
-ok, result = robot.register_with_horus(keep_alive=False, show_dashboard=False)
-print(ok, result)
+robot = Robot(name="atlas", robot_type=RobotType.WHEELED)
+
+success, result = register_robots(
+    [robot],
+    keep_alive=False,
+)
+print(success, result)
 ```
 
 ## Realistic example
 
 ```python
-from horus.robot import Robot, RobotType, register_robots
+from horus.robot import Robot, RobotDimensions, RobotType, register_robots
 
-robots = []
-datavizs = []
-for i in range(4):
-    robot = Robot(name=f"team_bot_{i+1}", robot_type=RobotType.WHEELED)
-    dataviz = robot.create_dataviz()
-    dataviz.add_occupancy_grid(topic="/map", frame_id="map")
-    robots.append(robot)
-    datavizs.append(dataviz)
+robot = Robot(
+    name="atlas",
+    robot_type=RobotType.WHEELED,
+    dimensions=RobotDimensions(length=0.80, width=0.55, height=0.45),
+)
+robot.configure_robot_manager()
+robot.configure_teleop(
+    command_topic="/atlas/cmd_vel",
+    robot_profile="wheeled",
+)
+
+dataviz = robot.create_dataviz()
 
 success, result = register_robots(
-    robots,
-    datavizs=datavizs,
+    [robot],
+    datavizs=[dataviz],
+    workspace_scale=0.1,
+    compass_enabled=False,
     keep_alive=True,
-    workspace_scale=0.1
 )
 print(success, result)
 ```
 
+In the curated examples, `keep_alive=True` is the normal default because the process also supports multi-operator replay and dashboard presence semantics.
+
 ## Common failure and fix
 
-- **Failure:** no ACK or stale status after registration push.
-- **Fix:** verify backend launch, app connectivity, and workspace acceptance sequence before concluding SDK-side failure.
+- **Failure:** the call returns, but the app never acknowledges the robots.
+- **Fix:** check both runtime and environment assumptions. The SDK shell must have ROS and the `horus_ros2` workspace sourced, the bridge must be reachable or auto-startable, and the MR app must be connected far enough to emit `/horus/registration_ack`.

@@ -7,7 +7,7 @@ sidebar_position: 5
 
 ## When to use it
 
-Use topic monitoring to distinguish link health from data activity and avoid false positives during disconnected or pre-workspace phases.
+Use topic monitoring when you want the SDK to distinguish transport health from actual data flow. This is what keeps the HORUS dashboard from claiming a robot is healthy just because a topic exists.
 
 ## Minimal example
 
@@ -28,11 +28,19 @@ board = get_topic_status_board()
 board.on_app_connected(True)
 board.on_subscribe("/tf")
 board.on_publish_activity("/tf")
-board.on_subscribe("/robot_1/camera/image_compressed")
+board.on_subscribe("/atlas/camera/image_raw/compressed")
+board.on_publish_activity("/atlas/camera/image_raw/compressed")
+
 print(board.render_text())
 ```
 
+Use this path when validating:
+
+- app connection versus workspace activation
+- topic link state versus actual publish activity
+- multi-operator presence and replay visibility
+
 ## Common failure and fix
 
-- **Failure:** dashboard shows ACTIVE when publishers are absent.
-- **Fix:** ensure monitor normalization and state source reconciliation are enabled; validate disconnected states map to `Link=OFF, Data=IDLE`.
+- **Failure:** dashboard rows look active even when a publisher or app session is missing.
+- **Fix:** confirm that the monitored topics are the real runtime topics and that app connectivity, ACK state, and publish activity are all being fed into the same board instance.

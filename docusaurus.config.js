@@ -6,7 +6,7 @@ const darkCodeTheme = require("prism-react-renderer").themes.dracula;
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: "HORUS SDK",
-  tagline: "Holistic Operational Reality for Unified Systems",
+  tagline: "Robot registration and mixed-reality integration for ROS 2 fleets",
   favicon: "img/favicon.svg",
   url: "https://rice-unige.github.io",
   baseUrl: "/horus_sdk/",
@@ -42,15 +42,18 @@ const config = {
   themeConfig: /** @type {import('@docusaurus/preset-classic').ThemeConfig} */ ({
     image: "img/horus_logo_black.svg",
     navbar: {
-      title: "",
+      title: "HORUS SDK",
       logo: {
         alt: "Horus SDK Logo",
         src: "img/horus_logo_black.svg",
         srcDark: "img/horus_log_white.svg"
       },
       items: [
-        { to: "/docs/intro", label: "Docs", position: "left" },
+        { to: "/docs/intro", label: "Overview", position: "left" },
         { to: "/docs/getting-started/quickstart", label: "Quickstart", position: "left" },
+        { to: "/docs/examples/registration-flows", label: "Examples", position: "left" },
+        { to: "/docs/python-sdk/registration", label: "Python SDK", position: "left" },
+        { to: "/docs/integration/horus-ros2", label: "Integration", position: "left" },
         {
           href: "https://github.com/RICE-unige/horus_sdk",
           label: "GitHub",
@@ -59,28 +62,30 @@ const config = {
       ]
     },
     footer: {
-      style: "light",
+      style: "dark",
       links: [
         {
-          title: "Documentation",
+          title: "Getting started",
           items: [
-            { label: "Intro", to: "/docs/intro" },
+            { label: "Overview", to: "/docs/intro" },
             { label: "Installation", to: "/docs/getting-started/installation" },
-            { label: "Troubleshooting", to: "/docs/operations/troubleshooting" }
+            { label: "Quickstart", to: "/docs/getting-started/quickstart" }
           ]
         },
         {
-          title: "Integrations",
+          title: "Core guides",
           items: [
-            { label: "HORUS ROS2", to: "/docs/integration/horus-ros2" },
-            { label: "HORUS MR App", to: "/docs/integration/horus-mr-app" }
+            { label: "Robot model", to: "/docs/python-sdk/robot-model" },
+            { label: "Sensors", to: "/docs/python-sdk/sensors" },
+            { label: "DataViz", to: "/docs/python-sdk/dataviz" }
           ]
         },
         {
-          title: "Community",
+          title: "Workflows",
           items: [
-            { label: "Repository", href: "https://github.com/RICE-unige/horus_sdk" },
-            { label: "Issues", href: "https://github.com/RICE-unige/horus_sdk/issues" }
+            { label: "Curated examples", to: "/docs/examples/registration-flows" },
+            { label: "Map workflows", to: "/docs/examples/occupancy-grid-workflow" },
+            { label: "Live robot workflows", to: "/docs/examples/topic-monitoring-dashboard" }
           ]
         }
       ],
@@ -92,7 +97,7 @@ const config = {
       additionalLanguages: ["bash", "cpp", "rust", "json", "yaml"]
     },
     colorMode: {
-      defaultMode: "dark", // Switch to dark mode default for "modern" feel
+      defaultMode: "light",
       disableSwitch: false,
       respectPrefersColorScheme: true
     }

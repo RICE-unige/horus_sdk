@@ -1,41 +1,63 @@
 ---
-title: Topic Monitoring Dashboard
-sidebar_position: 3
+title: Live Robot Workflows
+sidebar_position: 4
 ---
 
-# Topic Monitoring Dashboard
+# Live Robot Workflows
 
-## Core vs data groups
+These are the curated examples that are meant to mirror real robot graphs instead of synthetic paired runtimes.
 
-- **Core topics:** registration, ack, heartbeat
-- **Data topics:** TF, camera, and sensor streams
+## Carter fleet
 
-## Link/Data semantics
+Use `python/examples/carter_registration.py` when your ROS graph provides:
 
-| Condition | Link | Data |
-|---|---|---|
-| App disconnected | OFF | IDLE |
-| App connected, no subscription | OFF | IDLE |
-| Subscription active, publisher present | ON | ACTIVE |
-| Subscription active, publisher missing/silent | ON | STALE |
+- `/tf`
+- `/tf_static`
+- `/shared_map`
+- `/<robot>/cmd_vel`
+- `/<robot>/chassis/odom`
+- `/<robot>/front_2d_lidar/scan`
+- `/<robot>/front_stereo_camera/left/image_raw/compressed`
+- `/rviz/<robot>/plan`
+- `/rviz/<robot>/local_plan`
 
-## Example run
+Launch:
 
 ```bash
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-
-# terminal 1: data publishers
-python3 python/examples/fake_tf_ops_suite.py --robot-count 4 --static-camera --publish-compressed-images
-
-# terminal 2: registration/dashboard
-python3 python/examples/sdk_registration_demo.py --robot-count 4 --with-camera --keep-alive --workspace-scale 0.1
+export PYTHONPATH=python:$PYTHONPATH
+python3 python/examples/carter_registration.py
 ```
 
-## Validation checklist
+## Unitree Go1
 
-1. Disconnect app: all data rows return to `IDLE`.
-2. Connect app pre-workspace: rows should not falsely report active data.
-3. Accept workspace + publishers active: data rows move to `ACTIVE`.
+Use `python/examples/unitree_go1_registration.py` when you have the real Go1 ROS graph plus the Go1 description package available locally.
+
+Run the relay in one terminal and the registration in another:
+
+```bash
+# terminal A
+python3 python/examples/tools/unitree_go1_high_mode_relay.py
+
+# terminal B
+python3 python/examples/unitree_go1_registration.py
+```
+
+This workflow covers:
+
+- URDF-backed body visualization
+- front compressed camera registration
+- LaserScan registration
+- collision alert DataViz
+- stand/sit relay behavior for HORUS MR controls
+
+## Observability expectations
+
+For both live workflows, validate:
+
+- registration ACK appears
+- the expected sensor topics are present
+- Robot Manager opens for the intended robot only
+- camera, task, and DataViz layers align to the real TF tree

@@ -7,8 +7,8 @@ sidebar_position: 1
 
 ## Branch and deployment
 
-- Canonical docs branch: `docs/site-v1`
-- Pages URL: `https://rice-unige.github.io/horus_sdk/`
+- canonical docs branch: `docs/site-v1`
+- published site: `https://rice-unige.github.io/horus_sdk/`
 
 ## Local checks
 
@@ -18,22 +18,23 @@ npm run docs:check
 npm run docs:build
 ```
 
-Serve local build:
+Run the site locally:
 
 ```bash
-npm run docs:serve
+npm run docs:start
 ```
 
 ## Content rules
 
-- Keep docs aligned with current `main`.
-- Prefer runnable commands over abstract descriptions.
-- Explicitly mark stub or partial modules.
-- Update examples when payload semantics change.
+- keep the root `python/examples/` scripts as the primary documentation path
+- mention `python/examples/legacy/` only when it is the paired runtime or validation source
+- prefer runnable commands and concrete ROS topic names over abstract descriptions
+- keep the Python SDK pages aligned with the actual public methods used in the curated examples
+- update the docs whenever registration payload semantics or example ownership changes
 
 ## Review checklist
 
-- broken links: none
-- docs quality script: pass
-- CI docs workflow: pass
-- Pages deploy workflow: pass
+- no broken links
+- `npm run docs:check` passes
+- `npm run docs:build` passes
+- example commands still reflect the current SDK branch

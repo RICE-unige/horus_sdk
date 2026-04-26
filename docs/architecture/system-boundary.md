@@ -5,28 +5,37 @@ sidebar_position: 1
 
 # System Boundary
 
-## Ownership model
+HORUS is split across three actively coupled repositories. Understanding that split is the fastest way to avoid putting the wrong responsibility into the SDK.
 
-| Layer | Repository | Responsibility |
-|---|---|---|
-| SDK contract + orchestration | `horus_sdk` | Robot/sensor models, registration payloads, observability semantics |
-| ROS2 backend runtime | `horus_ros2` | Topic/service routing, bridge transport runtime (ROS/WebRTC), launch topology |
-| MR app runtime | `horus` | Workspace flow, visualizers, operator interactions, runtime policy enforcement |
+## Repository ownership
 
-## Data boundary
+| Repository | Owns | Does not own |
+| --- | --- | --- |
+| `horus_sdk` | robot models, payload serialization, curated examples, keep-alive, dashboard semantics | bridge internals, Unity interaction logic |
+| `horus_ros2` | HORUS ROS 2 runtime, topic routing, bridge lifecycle, WebRTC support | robot-model authoring API, MR workspace UX |
+| `horus` | mixed-reality workspace flow, Robot Manager, task UI, runtime policy | ROS-side payload construction |
 
-`horus_sdk` emits registration payloads over `/horus/registration` and consumes:
+## Contract surfaces
 
-- registration acknowledgments (`/horus/registration_ack`),
-- heartbeat (`/horus/heartbeat`),
-- topic monitor observations.
+The SDK publishes registration payloads and runtime metadata that the other repositories consume:
 
-## Transport policy boundary
+- robot identity and dimensions
+- base-frame and sensor-frame metadata
+- teleop and task topics
+- robot-scoped visualizations
+- global visualizations such as maps and semantic layers
+- keep-alive and dashboard state
 
-SDK payload can express desired camera transport profiles (`minimap_streaming_type`, `teleop_streaming_type`), but final runtime policy may be constrained by MR state and bridge availability.
+## Why the split matters
 
-## Why this split matters
+- The SDK stays copyable into real robotics projects without depending on Unity internals.
+- `horus_ros2` can evolve transport behavior without changing how a developer registers a robot.
+- The MR app can tighten UX policy, multi-operator behavior, or task gating without changing the SDK object model.
 
-- Keeps SDK independent from Unity scene internals.
-- Enables Python/C++/Rust parity on shared payload contract fixtures.
-- Allows backend and MR repositories to evolve runtime behavior while preserving contract compatibility.
+## Practical rule
+
+If the change is about how to describe a robot, sensor, topic, or visualization, it belongs in `horus_sdk`.
+
+If the change is about how those things are transported across ROS and bridge runtime, it belongs in `horus_ros2`.
+
+If the change is about how an operator sees or interacts with those things in-headset, it belongs in `horus`.

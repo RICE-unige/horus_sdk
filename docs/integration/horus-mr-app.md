@@ -5,51 +5,53 @@ sidebar_position: 2
 
 # HORUS MR Integration
 
-## Role of the `horus` MR app
+The SDK does not render anything itself. It feeds HORUS MR with the metadata the app needs to create robots, camera panels, task flows, and DataViz layers in the workspace.
 
-The HORUS MR app consumes SDK registration payloads, enforces workspace-gated activation, and maps runtime robot state to mixed-reality interaction. The app owns workspace placement, Robot Manager panels, task authoring UI, teleoperation UI, shared/private workspace modes, and operator-facing control feedback.
+## What the app consumes from the SDK
 
-## End-to-end flow
+- robot identity, type, dimensions, and base-frame metadata
+- teleop and task topics for Robot Manager
+- camera definitions and per-view transport policy
+- robot-scoped DataViz such as paths and collision alerts
+- global visualizations such as occupancy grids, point clouds, meshes, octomaps, and semantic boxes
+
+## What the app decides at runtime
+
+- workspace placement and acceptance
+- panel placement and visibility
+- mixed-reality interaction rules
+- tutorial or multi-operator gating
+- authority and control presentation
+
+## Expected integration sequence
 
 ```bash
-# 1. HORUS ROS 2 bridge
-cd ~/horus_ws
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
-source install/setup.bash
-ros2 launch horus_unity_bridge unity_bridge.launch.py
-
-# 2. fake robot runtime
+# terminal A
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-python3 python/examples/fake_tf_ops_suite.py --robot-count 4 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5
+export PYTHONPATH=python:$PYTHONPATH
+python3 python/examples/legacy/fake_tf_ops_suite.py
 
-# 3. SDK registration
+# terminal B
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-python3 python/examples/sdk_typical_ops_demo.py --robot-count 4 --workspace-scale 0.1
+export PYTHONPATH=python:$PYTHONPATH
+python3 python/examples/ops_registration.py
 ```
 
-After these commands are running, launch the HORUS app on the headset, connect to the bridge host, and accept the workspace.
+In the headset:
 
-## Runtime semantics expected in MR
+1. launch HORUS
+2. connect to the bridge host
+3. accept the workspace
+4. open Robot Manager for a registered robot
 
-- Startup camera mode policy is MiniMap-first by default.
-- MiniMap camera transport normally uses ROS image topics.
-- Teleop camera transport can use WebRTC when the bridge is built with WebRTC support.
-- Occupancy maps and other global visualizations remain hidden until workspace acceptance.
-- Robot Manager interaction uses the robot's selected runtime panel and command authority state.
-- Multi-operator shared/private modes are chosen in the app, while command arbitration is enforced through runtime bridge state.
+## Behaviors to validate
 
-## Integration checklist
-
-- Registration ACK arrives per robot.
-- Robots appear only after workspace acceptance.
-- First frame appears for active camera streams.
-- Robot Manager opens for the selected robot only.
-- Dashboard and MR visual state agree after workspace acceptance.
-- Blocked controls provide unavailable/disabled feedback instead of silently sending commands.
+- robot spawn happens after workspace acceptance
+- Robot Manager opens only for the selected robot
+- minimap camera works before teleop and immersive/teleop panels follow the declared transport policy
+- global layers such as maps or semantic boxes appear without forcing full robot rebuilds
+- host/join sessions can reconstruct SDK registration state through replay topics

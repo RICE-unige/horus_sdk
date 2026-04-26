@@ -7,52 +7,40 @@ sidebar_position: 2
 
 ## End-to-end sequence
 
-1. SDK creates robot, sensor, task, teleop, and DataViz objects.
-2. SDK builds registration payloads containing robot-scoped configuration and global visualization fields.
-3. Payloads are published to `/horus/registration`.
-4. `horus_ros2` transports registration, command, camera, task, and DataViz topics between ROS 2 and the MR app.
-5. The MR app accepts a workspace, then activates runtime entities.
-6. SDK dashboard state reconciles link/data state from registration ACKs, monitor subscriptions, publisher activity, and app connectivity signals.
+1. Your Python code builds `Robot`, `Sensor`, and `DataViz` objects.
+2. `register_robots(...)` serializes them into SDK payloads.
+3. The SDK publishes registration to `/horus/registration`.
+4. `horus_ros2` receives the payload and forwards runtime topics between ROS 2 and the app.
+5. HORUS MR accepts a workspace and activates the registered runtime entities.
+6. ACK, keep-alive, and topic-monitoring signals feed the SDK dashboard state.
 
-## Canonical flow command set
+## Canonical runnable flow
 
 ```bash
-# terminal 1: HORUS ROS 2 bridge
-cd ~/horus_ws
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
-source install/setup.bash
-ros2 launch horus_unity_bridge unity_bridge.launch.py
-
-# terminal 2: fake robot runtime
+# terminal A: paired fake runtime
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-python3 python/examples/fake_tf_ops_suite.py --robot-count 6 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5
+export PYTHONPATH=python:$PYTHONPATH
+python3 python/examples/legacy/fake_tf_ops_suite.py
 
-# terminal 3: SDK registration
+# terminal B: curated registration example
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-python3 python/examples/sdk_typical_ops_demo.py --robot-count 6 --workspace-scale 0.1
+export PYTHONPATH=python:$PYTHONPATH
+python3 python/examples/ops_registration.py
 ```
+
+## Runtime decision points
+
+- **Bridge startup**: the SDK can auto-start `horus_unity_bridge` when the ROS shell is prepared correctly.
+- **Workspace acceptance**: robots and global layers do not become fully active in MR until the workspace is accepted.
+- **Transport policy**: camera transport preferences come from the SDK, but the final behavior still depends on runtime capability and app mode.
+- **Dashboard truth**: link and data state are derived from ACKs, app connectivity, subscriptions, and publisher activity together.
 
 ## Failure domains
 
-- **SDK model/serialization issue:** malformed fields, missing task metadata, or mismatched robot names in the registration payload.
-- **Runtime bridge issue:** transport setup, topic routing, WebRTC signaling, or control lease enforcement fails.
-- **MR lifecycle issue:** workspace is not accepted yet, the operator lacks control authority, or a panel/task is intentionally gated.
-
-## Operational truth source
-
-Dashboard status is derived from the combined signal path:
-
-- app connectivity state,
-- registration ACK state,
-- monitor subscription linkage,
-- publisher presence/activity,
-- task/teleop command activity.
-
-This avoids false-positive ?active? states during pre-workspace, disconnected, or blocked-control phases.
+- SDK issue: wrong names, frames, topics, or payload fields
+- bridge issue: runtime transport not running, WebRTC unavailable, or routing broken
+- MR issue: workspace not accepted, operator control unavailable, or UI intentionally gated

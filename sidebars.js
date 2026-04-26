@@ -13,11 +13,6 @@ const sidebars = {
     },
     {
       type: "category",
-      label: "Architecture",
-      items: ["architecture/system-boundary", "architecture/runtime-flow"]
-    },
-    {
-      type: "category",
       label: "Python SDK",
       items: [
         "python-sdk/robot-model",
@@ -29,13 +24,18 @@ const sidebars = {
     },
     {
       type: "category",
-      label: "Examples",
+      label: "Example Workflows",
       items: [
         "examples/registration-flows",
         "examples/camera-transport-profiles",
-        "examples/topic-monitoring-dashboard",
-        "examples/occupancy-grid-workflow"
+        "examples/occupancy-grid-workflow",
+        "examples/topic-monitoring-dashboard"
       ]
+    },
+    {
+      type: "category",
+      label: "Architecture",
+      items: ["architecture/system-boundary", "architecture/runtime-flow"]
     },
     {
       type: "category",

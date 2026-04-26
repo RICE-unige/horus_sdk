@@ -9,27 +9,24 @@ sidebar_position: 1
 
 Status: **Production baseline**
 
-- registration payload serialization
-- camera transport profiles
-- global visualization payloads
-- workspace scale forwarding
-- dashboard/topic monitoring
+- curated registration examples for wheeled, drone, legged, stereo, robot-description, map, semantic, Carter, and Unitree workflows
+- registration payload serialization with keep-alive and ACK handling
+- camera transport profiles for ROS and WebRTC-backed flows
+- robot-scoped and global DataViz support
+- topic monitoring and dashboard state
 
 ## C++ track
 
 Status: **Parity in progress**
 
-- payload builders and registration flows advancing toward Python parity
-- examples and benchmark scaffolds exist
-- parity validation is CI-backed but still evolving
+- parity work is intentionally secondary to the Python integration track
+- contract fixtures remain shared, but day-to-day onboarding should use Python examples
 
 ## Rust track
 
 Status: **Parity in progress**
 
-- typed payload pathways and fixtures implemented
-- monitoring helpers and examples expanded
-- parity tests continue to track Python contract
+- payload and fixture work continues, but the Python SDK remains the reference implementation
 
 ## Current known stub/non-primary areas
 

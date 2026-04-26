@@ -5,26 +5,27 @@ sidebar_position: 2
 
 # Known Limitations
 
-## Runtime and scale constraints
+## Runtime constraints
 
-- Multi-robot high-rate camera streaming can saturate bridge/headset resources.
-- Full WebRTC bridge support is currently Jazzy-first in installer workflows.
+- high-rate multi-robot camera streaming can still saturate bridge or headset budgets
+- the most complete WebRTC validation path remains Jazzy-oriented
+- workspace acceptance in MR is intentionally required before full activation
 
-## Contract-level constraints
+## Example-model constraints
 
-- Legacy + profile transport fields must often coexist for compatibility.
-- Some modules remain explicit stubs pending broader parity completion.
+- the curated registration scripts are the primary references, but several paired fake runtimes still live under `python/examples/legacy/`
+- some live workflows depend on assets or ROS graphs that are not bundled into the SDK repository itself
 
-## Operational caveats
+## API-surface constraints
 
-- Dashboard truth depends on app connectivity and workspace state, not publisher presence alone.
-- Occupancy map behavior is intentionally workspace-gated in MR runtime.
+- legacy transport fields still coexist with newer per-view camera transport fields for compatibility
+- Python is the reference SDK; C++ and Rust are not the primary onboarding path yet
 
 ## Recommendation
 
-Treat SDK changes as integration changes. Validate against:
+Treat documentation updates as integration updates. Validate any meaningful change against:
 
-1. backend runtime,
-2. fake data publisher,
-3. MR workspace lifecycle,
-4. dashboard transition semantics.
+1. the SDK serializer
+2. a paired fake or live ROS runtime
+3. `horus_ros2`
+4. the HORUS MR workspace lifecycle

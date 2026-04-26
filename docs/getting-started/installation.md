@@ -5,19 +5,23 @@ sidebar_position: 1
 
 # Installation
 
-## Supported targets
+## Supported environments
 
-- Ubuntu 24.04 (default ROS2: Jazzy)
-- Ubuntu 22.04 (default ROS2: Humble)
-- WSL2 Ubuntu (with mirrored networking recommended for Meta Quest connectivity)
+- Ubuntu 24.04 with ROS 2 Jazzy
+- Ubuntu 22.04 with ROS 2 Humble
+- WSL2 Ubuntu when Quest connectivity is handled correctly
 
-## One-command bootstrap
+## Choose an installation path
+
+### Installer workflow
+
+Use this when you want the standard HORUS layout and helper commands:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RICE-unige/horus_sdk/main/install.sh | bash
 ```
 
-Default install root:
+This creates:
 
 - `~/horus/sdk`
 - `~/horus/ros2`
@@ -25,31 +29,39 @@ Default install root:
 - `~/horus/logs`
 - `~/horus/state`
 
-## Non-interactive install
+### Source checkout workflow
+
+Use this when you are developing the SDK itself:
 
 ```bash
-bash install.sh --yes --channel stable --ros-distro jazzy --webrtc on
-```
-
-## Development install (repo-local)
-
-```bash
-python -m venv .venv
+cd ~/horus_sdk
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+npm ci
 ```
 
-## Verify installation
+## ROS 2 prerequisites
+
+- `rclpy` and the standard ROS 2 message packages must come from the ROS installation, not from PyPI.
+- `horus_ros2` should be available in `~/horus_ws/src/horus_ros2` or installed via the HORUS installer.
+- For bridge auto-start from a source checkout, `~/horus_ws/install/setup.bash` must exist and be sourceable.
+
+## Verify the installation
+
+Installer-based layout:
 
 ```bash
 horus-status
 ```
 
-Expected:
+Source checkout:
 
-- `horus_backend package: OK`
-- `horus_unity_bridge package: OK` on Jazzy/full bridge builds
+```bash
+cd ~/horus_sdk
+PYTHONPATH=python python3 -m pytest -q
+```
 
-:::warning
-On ROS2 Humble, the installer may complete in **backend-only mode** due to missing GenericClient headers required by current `horus_unity_bridge`.
-:::
+## Humble note
+
+ROS 2 Humble remains supported for the SDK, but full bridge validation is still safer on Jazzy when you need current WebRTC-capable `horus_unity_bridge` behavior.

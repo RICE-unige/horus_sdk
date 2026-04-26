@@ -1,40 +1,42 @@
 ---
-title: Intro
+title: Overview
 sidebar_position: 1
 ---
 
-# HORUS SDK Documentation
+# HORUS SDK
 
-This is the canonical documentation source for `horus_sdk`, aligned to the current implementation on `main`.
+`horus_sdk` is the registration and contract layer for HORUS. It lets you describe robots, sensors, teleop topics, task topics, robot-description assets, and DataViz layers, then publish that configuration into the HORUS ROS 2 runtime and mixed-reality application.
 
-## Scope
+## Who this documentation is for
 
-- **Primary track:** Python SDK (`python/horus`)
-- **Parity tracks:** C++ (`cpp/`) and Rust (`rust/`)
-- **Integration surfaces:** `horus_ros2` backend runtime and `horus` MR app runtime
+- robotics developers integrating ROS 2 robots into HORUS MR
+- research teams validating fleet supervision, teleop, and task flows
+- engineers who need a concrete example to register a new robot quickly
 
-:::important
-`horus_sdk` owns registration modeling, payload orchestration, and monitoring UX semantics.  
-Bridge runtime internals are in [`horus_ros2`](https://github.com/RICE-unige/horus_ros2), and MR runtime UX is in [`horus`](https://github.com/RICE-unige/horus).
-:::
+## What the SDK owns
 
-## Documentation map
+| Capability | What you define here |
+| --- | --- |
+| Robot identity | Name, type, dimensions, base frame, local-body or URDF metadata |
+| Control surfaces | Robot Manager availability, teleop topics, navigation-task topics |
+| Sensor registration | Camera, lidar, and per-view transport or rendering metadata |
+| DataViz contract | Robot-scoped overlays, global maps, semantic layers, safety signals |
+| Runtime observability | Registration ACK handling, keep-alive, topic and dashboard state |
 
-- [Installation](getting-started/installation.md)
-- [Quickstart](getting-started/quickstart.md)
-- [Installer Deep Dive](getting-started/installer.md)
-- [System Boundary](architecture/system-boundary.md)
-- [Runtime Flow](architecture/runtime-flow.md)
+## What the SDK does not own
 
-## Current-state highlights
+- `horus_ros2` owns the HORUS ROS 2 runtime, bridge lifecycle, and WebRTC-capable transport.
+- `horus` owns workspace placement, Robot Manager UI, task authoring UX, and mixed-reality runtime policy.
+- Backend perception or copilot services are outside the SDK contract layer.
 
-- One-command installer for SDK + ROS2 workspace provisioning.
-- Camera transport profiles support (`streaming_type` + `minimap/teleop/startup` fields).
-- Global visualization payload support (`global_visualizations`) including occupancy grid.
-- Workspace scale serialization support (`workspace_config.position_scale`).
-- Dashboard link/data semantics integrated with topic monitoring.
+## Recommended reading order
 
-## Research context
+1. [Installation](getting-started/installation.md)
+2. [Quickstart](getting-started/quickstart.md)
+3. [Curated examples](examples/registration-flows.md)
+4. [Python SDK guides](python-sdk/robot-model.md)
+5. [Integration](integration/horus-ros2.md)
 
-HORUS investigates scalable mixed-reality supervision and teleoperation for heterogeneous robot teams.  
-The SDK focuses on the **contract layer** that binds backend/runtime systems with operator-facing MR workflows.
+## Project stance
+
+The root `python/examples/` scripts are the primary onboarding material. They are small, direct, and meant to be copied into real robotics projects. The `python/examples/legacy/` folder is still useful for paired fake runtimes, stress tests, and deep validation, but it is no longer the main documentation path.

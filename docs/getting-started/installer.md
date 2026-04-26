@@ -3,9 +3,9 @@ title: Installer
 sidebar_position: 3
 ---
 
-# Installer Deep Dive
+# Installer
 
-This page documents the curated installer flow for reproducible SDK + ROS2 runtime setup.
+Use the installer when you want a reproducible HORUS SDK plus `horus_ros2` setup without manually shaping the workspace.
 
 ## Bootstrap
 
@@ -13,13 +13,13 @@ This page documents the curated installer flow for reproducible SDK + ROS2 runti
 curl -fsSL https://raw.githubusercontent.com/RICE-unige/horus_sdk/main/install.sh | bash
 ```
 
-## Flags
+## Common flags
 
 ```bash
 bash install.sh --help
 ```
 
-Main options:
+Flags you will use most often:
 
 - `--yes`
 - `--channel stable|main`
@@ -27,9 +27,8 @@ Main options:
 - `--ros-distro auto|jazzy|humble`
 - `--webrtc on|off`
 - `--shell-config auto|manual`
-- `--log-file <path>`
 
-## Runtime helpers installed
+## Installed helper commands
 
 - `horus-status`
 - `horus-start`
@@ -38,31 +37,27 @@ Main options:
 - `horus-python`
 - `horus-uninstall`
 
-## Humble behavior
+## How it fits the curated examples
 
-When ROS2 Humble is selected, installer may switch to **backend-only build mode** if the Unity bridge cannot be built with current headers.
+The examples documented on this site do not require you to launch the bridge manually in the common case. The registration client can auto-start `horus_unity_bridge` from the active ROS shell or from the installed HORUS helper environment.
 
-You will see:
+Use manual bridge launch when:
 
-- warning during build phase,
-- warning-aware completion summary,
-- runtime note explaining that Unity bridge was not built.
+- you are debugging bridge startup
+- you want to pin a custom launch file
+- you intentionally disabled SDK bridge auto-start
 
-For full backend + Unity bridge support, use ROS2 Jazzy.
+## WSL2 note
 
-## WSL2 networking note (Meta Quest)
-
-If Meta Quest cannot reach bridge ports from WSL:
+If the headset cannot reach WSL-hosted ports, use mirrored networking:
 
 ```ini
 [wsl2]
 networkingMode=mirrored
 ```
 
-Then run from Windows PowerShell:
+Then restart WSL:
 
 ```powershell
 wsl --shutdown
 ```
-
-Restart WSL and re-test connectivity.
