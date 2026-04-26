@@ -5,6 +5,12 @@ sidebar_position: 3
 
 # Map Workflows
 
+:::note[Reference, not tutorial]
+
+Use this page as a map-registration lookup. If you need the teaching path first, read [Tutorial 5: Robot description](../tutorials/robot-description.md) and [Tutorial 6: Global maps](../tutorials/global-maps.md) before choosing a showcase script.
+
+:::
+
 Map layers in HORUS are registered through SDK DataViz as global visualizations. The curated examples separate the registration script from the paired runtime that publishes the map data.
 
 ## Shared prerequisite

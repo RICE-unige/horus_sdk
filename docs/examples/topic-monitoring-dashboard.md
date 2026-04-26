@@ -5,6 +5,12 @@ sidebar_position: 4
 
 # Live Robot Workflows
 
+:::warning[Use this after the tutorial track]
+
+This page is for live-system references. If you are not already comfortable with the SDK shape, work through [Tutorial 7: Live robot checklist](../tutorials/live-robot-checklist.md) first.
+
+:::
+
 These are the curated examples that are meant to mirror real robot graphs instead of synthetic paired runtimes.
 
 ## Carter fleet

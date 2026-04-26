@@ -5,6 +5,12 @@ sidebar_position: 2
 
 # Camera Transport Profiles
 
+:::tip[Use this after the camera tutorial]
+
+This page is reference-oriented. If you are learning why the camera settings exist, start with [Tutorial 2: Cameras and views](../tutorials/cameras-and-views.md) and return here when you need to choose an exact transport profile.
+
+:::
+
 The SDK supports separate camera transport policy for projected view, minimap view, and teleop view. This is critical in HORUS because awareness and control do not have the same transport requirements.
 
 ## Fields that matter

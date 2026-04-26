@@ -5,6 +5,12 @@ sidebar_position: 1
 
 # Curated Examples
 
+:::note[Reference, not tutorial]
+
+This page is a catalog, not the main teaching path. If you are learning the SDK for the first time, start with the [tutorial summary](../tutorials/summary.md) and come back here when you need a known-good script to copy.
+
+:::
+
 The primary example catalog lives in `python/examples/`. These are the scripts new users should copy from when integrating a robot into HORUS.
 
 The paired fake runtimes may still live under `python/examples/legacy/`, but they are supporting tools, not the main SDK surface.
@@ -38,7 +44,7 @@ The paired fake runtimes may still live under `python/examples/legacy/`, but the
 | `carter_registration.py` | you are integrating a live Carter fleet | includes occupancy map, lidar, compressed cameras, plans, and teleop |
 | `unitree_go1_registration.py` | you are integrating a live Unitree Go1 | includes URDF mesh, compressed front camera, LaserScan, collision alert, and stand/sit relay |
 
-## Recommended first path
+## Recommended reading order
 
 Start here in order:
 
@@ -48,7 +54,7 @@ Start here in order:
 4. the map showcase registrations
 5. live Carter or Unitree only after the first three are stable
 
-## Legacy note
+## Where legacy still matters
 
 The legacy example folder is still valuable for:
 

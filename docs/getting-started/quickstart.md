@@ -1,4 +1,4 @@
----
+﻿---
 title: Quickstart
 sidebar_position: 2
 ---
@@ -6,6 +6,12 @@ sidebar_position: 2
 # Quickstart
 
 This is the shortest realistic path from a source checkout to a working HORUS MR session.
+
+:::info[What this page is for]
+
+If this is your first time with the SDK, finish this page once, then continue with the [tutorial track](../tutorials/summary.md). The quickstart proves that the stack works. The tutorials explain how the registration model is structured and how to build your own integration cleanly.
+
+:::
 
 The primary registration script is `python/examples/ops_registration.py`. Its paired fake runtime still lives under `python/examples/legacy/` because that folder contains the simulator and validation tooling.
 
@@ -38,6 +44,12 @@ python3 python/examples/ops_registration.py
 
 The SDK registration process keeps itself alive and will attempt to auto-start `horus_unity_bridge` if your current ROS shell can resolve it.
 
+:::tip[Use quickstart as a sanity baseline]
+
+Do not start by editing `ops_registration.py`. Run it once unchanged. That gives you a known-good baseline before you introduce your own robot names, topics, frames, or camera choices.
+
+:::
+
 ## 4. Open HORUS MR
 
 In the headset:
@@ -67,6 +79,7 @@ If registration succeeds, you should see ACK traffic and the expected per-robot 
 
 ## Next steps
 
+- [Tutorial summary](../tutorials/summary.md)
 - [Curated examples](../examples/registration-flows.md)
 - [Registration guide](../python-sdk/registration.md)
 - [HORUS ROS 2 integration](../integration/horus-ros2.md)

@@ -1,63 +1,55 @@
-import React from "react";
+﻿import React from "react";
 import Layout from "@theme/Layout";
 import Link from "@docusaurus/Link";
 
-const workflowCards = [
+const startLinks = [
   {
-    title: "Ground robot ops",
+    title: "Install",
+    href: "/docs/getting-started/installation",
+    description: "Prepare ROS 2, the Python environment, and the horus_ros2 workspace."
+  },
+  {
+    title: "Quickstart",
     href: "/docs/getting-started/quickstart",
-    description:
-      "Register a small wheeled fleet with Robot Manager, teleop, navigation tasks, paths, odometry, and collision overlays."
+    description: "Run one working end-to-end registration before you customize anything."
   },
   {
-    title: "Robot description and maps",
-    href: "/docs/examples/occupancy-grid-workflow",
-    description:
-      "Move from simple dimensions to URDF-backed bodies and global occupancy, pointcloud, mesh, and octomap layers."
-  },
-  {
-    title: "Live systems",
-    href: "/docs/examples/topic-monitoring-dashboard",
-    description:
-      "Use the Carter and Unitree Go1 examples as production-oriented registration references for real ROS graphs."
+    title: "Tutorial track",
+    href: "/docs/tutorials/summary",
+    description: "Learn how to build your own registration layer by layer."
   }
 ];
 
-const guideCards = [
+const paths = [
   {
-    title: "Robot model",
-    href: "/docs/python-sdk/robot-model",
-    description: "Define robot identity, base frames, control surfaces, and runtime-facing metadata."
+    title: "Learn the model",
+    description:
+      "Use the tutorial track to understand robot identity, cameras, operator controls, DataViz, robot description, and world layers.",
+    links: [
+      { title: "Tutorial summary", href: "/docs/tutorials/summary" },
+      { title: "First ground robot", href: "/docs/tutorials/first-ground-robot" },
+      { title: "Cameras and views", href: "/docs/tutorials/cameras-and-views" }
+    ]
   },
   {
-    title: "Sensors",
-    href: "/docs/python-sdk/sensors",
-    description: "Register cameras and lidar with the transport, frame, and view settings HORUS MR expects."
+    title: "Build from references",
+    description:
+      "Use the curated example catalog and Python API pages once you know which contract shape you need.",
+    links: [
+      { title: "Curated examples", href: "/docs/examples/registration-flows" },
+      { title: "Robot model API", href: "/docs/python-sdk/robot-model" },
+      { title: "Registration API", href: "/docs/python-sdk/registration" }
+    ]
   },
   {
-    title: "DataViz",
-    href: "/docs/python-sdk/dataviz",
-    description: "Declare paths, safety overlays, maps, and semantic layers without leaking Unity-specific runtime details."
-  },
-  {
-    title: "Registration",
-    href: "/docs/python-sdk/registration",
-    description: "Publish robot batches, keep them alive, and understand the ACK path between the SDK and the app."
-  }
-];
-
-const boundaryCards = [
-  {
-    title: "horus_sdk",
-    description: "Robot registration models, payload serialization, observability semantics, and developer-facing examples."
-  },
-  {
-    title: "horus_ros2",
-    description: "Custom HORUS ROS 2 runtime, topic routing, bridge lifecycle, and WebRTC-capable camera transport."
-  },
-  {
-    title: "horus",
-    description: "Mixed-reality workspace lifecycle, Robot Manager, task authoring UI, and operator-facing runtime policy."
+    title: "Integrate with the stack",
+    description:
+      "Use the integration pages when you need to reason about the SDK, horus_ros2, and the HORUS MR app together.",
+    links: [
+      { title: "System boundary", href: "/docs/architecture/system-boundary" },
+      { title: "HORUS ROS 2", href: "/docs/integration/horus-ros2" },
+      { title: "HORUS MR app", href: "/docs/integration/horus-mr-app" }
+    ]
   }
 ];
 
@@ -68,88 +60,63 @@ export default function Home() {
       description="Robot registration and mixed-reality integration for ROS 2 fleets."
     >
       <main className="siteHome">
-        <div className="container">
-          <section className="homeIntro">
-            <div className="homePanel homeLead">
-              <h1>HORUS SDK documentation for robotics developers</h1>
-              <p>
-                Use this site to register ROS 2 robots into HORUS MR, define camera and DataViz
-                behavior, and validate real or simulated workflows without reverse-engineering the
-                app runtime.
-              </p>
-              <div className="homeActions">
-                <Link className="button button--primary" to="/docs/getting-started/quickstart">
-                  Open quickstart
-                </Link>
-                <Link className="button button--secondary" to="/docs/examples/registration-flows">
-                  Browse curated examples
-                </Link>
-              </div>
-            </div>
-            <div className="homePanel">
-              <h2>What you build with it</h2>
-              <ul className="homeList">
-                <li>Robot registration for wheeled, drone, and legged platforms</li>
-                <li>Camera, lidar, teleop, and navigation-task metadata</li>
-                <li>Robot-scoped and global DataViz layers for MR operators</li>
-                <li>Operational validation against HORUS MR and `horus_ros2`</li>
-              </ul>
+        <div className="container homeContainer">
+          <section className="homeHero">
+            <p className="homeEyebrow">HORUS SDK</p>
+            <h1>Documentation for robotics developers integrating ROS 2 robots into HORUS MR</h1>
+            <p className="homeLeadText">
+              Define robot identity, cameras, teleop, tasks, robot descriptions, and DataViz
+              contracts without reverse-engineering the mixed-reality runtime.
+            </p>
+            <div className="homeActions">
+              <Link className="button button--primary" to="/docs/getting-started/quickstart">
+                Run quickstart
+              </Link>
+              <Link className="button button--secondary" to="/docs/tutorials/summary">
+                Open tutorials
+              </Link>
             </div>
           </section>
 
           <section className="homeSection">
-            <div className="sectionHeading">
-              <h2>Start with a workflow</h2>
-              <p>
-                The curated scripts in <code>python/examples/</code> are the primary references.
-                The legacy folder remains available for paired fake runtimes and deeper validation,
-                but the root examples are the ones meant to be copied into real projects.
-              </p>
-            </div>
-            <div className="homeGrid">
-              {workflowCards.map((card) => (
-                <Link key={card.title} className="homeCard" to={card.href}>
-                  <h3>{card.title}</h3>
-                  <p>{card.description}</p>
+            <h2>Start here</h2>
+            <div className="homeGrid homeGrid--three">
+              {startLinks.map((item) => (
+                <Link key={item.title} className="homeCard" to={item.href}>
+                  <h3>{item.title}</h3>
+                  <p>{item.description}</p>
                 </Link>
               ))}
             </div>
           </section>
 
           <section className="homeSection">
-            <div className="sectionHeading">
-              <h2>Core SDK guides</h2>
-              <p>
-                These pages cover the Python surface area that matters when you are integrating a
-                robot or adding a new runtime capability.
-              </p>
-            </div>
-            <div className="homeGrid">
-              {guideCards.map((card) => (
-                <Link key={card.title} className="homeCard" to={card.href}>
-                  <h3>{card.title}</h3>
-                  <p>{card.description}</p>
-                </Link>
-              ))}
-            </div>
-          </section>
-
-          <section className="homeSection">
-            <div className="sectionHeading">
-              <h2>Repository boundary</h2>
-              <p>
-                HORUS is split intentionally. The SDK does not own workspace UX or bridge internals,
-                and the docs reflect that separation directly.
-              </p>
-            </div>
-            <div className="homeGrid homeGrid--tight">
-              {boundaryCards.map((card) => (
-                <div key={card.title} className="homeCard">
-                  <h3>{card.title}</h3>
-                  <p>{card.description}</p>
+            <h2>Use the docs by intent</h2>
+            <div className="homeStack">
+              {paths.map((section) => (
+                <div key={section.title} className="homeStrip">
+                  <div>
+                    <h3>{section.title}</h3>
+                    <p>{section.description}</p>
+                  </div>
+                  <ul className="homeLinkList homeLinkList--inline">
+                    {section.links.map((link) => (
+                      <li key={link.title}>
+                        <Link to={link.href}>{link.title}</Link>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ))}
             </div>
+          </section>
+
+          <section className="homeSection homeSection--narrow">
+            <p className="homeBoundary">
+              <strong>Repository boundary:</strong> <code>horus_sdk</code> defines contracts and
+              examples. <code>horus_ros2</code> owns the runtime bridge and transport.
+              <code> horus</code> owns the mixed-reality workspace and Robot Manager UX.
+            </p>
           </section>
         </div>
       </main>

@@ -1,4 +1,4 @@
----
+﻿---
 title: Overview
 sidebar_position: 1
 ---
@@ -33,10 +33,12 @@ sidebar_position: 1
 
 1. [Installation](getting-started/installation.md)
 2. [Quickstart](getting-started/quickstart.md)
-3. [Curated examples](examples/registration-flows.md)
-4. [Python SDK guides](python-sdk/robot-model.md)
-5. [Integration](integration/horus-ros2.md)
+3. [Tutorial summary](tutorials/summary.md)
+4. [Curated examples](examples/registration-flows.md)
+5. [Python SDK reference](python-sdk/robot-model.md)
+6. [Integration](integration/horus-ros2.md)
 
 ## Project stance
 
-The root `python/examples/` scripts are the primary onboarding material. They are small, direct, and meant to be copied into real robotics projects. The `python/examples/legacy/` folder is still useful for paired fake runtimes, stress tests, and deep validation, but it is no longer the main documentation path.
+The root `python/examples/` scripts are the primary copyable onboarding material. The tutorial track is the primary teaching path. The `python/examples/legacy/` folder is still useful for paired fake runtimes, stress tests, and deep validation, but it is no longer the main documentation path.
+

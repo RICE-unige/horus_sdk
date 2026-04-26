@@ -1,7 +1,40 @@
-// @ts-check
+﻿// @ts-check
 
-const lightCodeTheme = require("prism-react-renderer").themes.github;
-const darkCodeTheme = require("prism-react-renderer").themes.dracula;
+const lightCodeTheme = {
+  plain: {
+    color: "#2f2924",
+    backgroundColor: "#f1eadf"
+  },
+  styles: [
+    { types: ["comment", "prolog", "doctype", "cdata"], style: { color: "#85796e", fontStyle: "italic" } },
+    { types: ["punctuation"], style: { color: "#6b6056" } },
+    { types: ["property", "tag", "constant", "symbol", "deleted"], style: { color: "#9b5643" } },
+    { types: ["boolean", "number"], style: { color: "#8f6931" } },
+    { types: ["selector", "attr-name", "string", "char", "builtin", "inserted"], style: { color: "#647b4f" } },
+    { types: ["operator", "entity", "url", "variable"], style: { color: "#6b6056" } },
+    { types: ["atrule", "attr-value", "function", "class-name"], style: { color: "#7d6846" } },
+    { types: ["keyword"], style: { color: "#8f6931", fontWeight: "600" } },
+    { types: ["regex", "important"], style: { color: "#b36c52" } }
+  ]
+};
+
+const darkCodeTheme = {
+  plain: {
+    color: "#ece6dc",
+    backgroundColor: "#171716"
+  },
+  styles: [
+    { types: ["comment", "prolog", "doctype", "cdata"], style: { color: "#8b8276", fontStyle: "italic" } },
+    { types: ["punctuation"], style: { color: "#c6bcae" } },
+    { types: ["property", "tag", "constant", "symbol", "deleted"], style: { color: "#d4866f" } },
+    { types: ["boolean", "number"], style: { color: "#d6b56d" } },
+    { types: ["selector", "attr-name", "string", "char", "builtin", "inserted"], style: { color: "#97b77f" } },
+    { types: ["operator", "entity", "url", "variable"], style: { color: "#c6bcae" } },
+    { types: ["atrule", "attr-value", "function", "class-name"], style: { color: "#c5ae79" } },
+    { types: ["keyword"], style: { color: "#d6b56d", fontWeight: "600" } },
+    { types: ["regex", "important"], style: { color: "#d99a6c" } }
+  ]
+};
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -50,7 +83,7 @@ const config = {
       },
       items: [
         { to: "/docs/intro", label: "Overview", position: "left" },
-        { to: "/docs/getting-started/quickstart", label: "Quickstart", position: "left" },
+        { to: "/docs/tutorials/summary", label: "Tutorials", position: "left" },
         { to: "/docs/examples/registration-flows", label: "Examples", position: "left" },
         { to: "/docs/python-sdk/registration", label: "Python SDK", position: "left" },
         { to: "/docs/integration/horus-ros2", label: "Integration", position: "left" },
@@ -65,7 +98,7 @@ const config = {
       style: "dark",
       links: [
         {
-          title: "Getting started",
+          title: "Start here",
           items: [
             { label: "Overview", to: "/docs/intro" },
             { label: "Installation", to: "/docs/getting-started/installation" },
@@ -73,19 +106,19 @@ const config = {
           ]
         },
         {
-          title: "Core guides",
+          title: "Tutorials",
           items: [
-            { label: "Robot model", to: "/docs/python-sdk/robot-model" },
-            { label: "Sensors", to: "/docs/python-sdk/sensors" },
-            { label: "DataViz", to: "/docs/python-sdk/dataviz" }
+            { label: "Tutorial summary", to: "/docs/tutorials/summary" },
+            { label: "First ground robot", to: "/docs/tutorials/first-ground-robot" },
+            { label: "Robot description", to: "/docs/tutorials/robot-description" }
           ]
         },
         {
-          title: "Workflows",
+          title: "Reference",
           items: [
             { label: "Curated examples", to: "/docs/examples/registration-flows" },
-            { label: "Map workflows", to: "/docs/examples/occupancy-grid-workflow" },
-            { label: "Live robot workflows", to: "/docs/examples/topic-monitoring-dashboard" }
+            { label: "Robot model", to: "/docs/python-sdk/robot-model" },
+            { label: "DataViz", to: "/docs/python-sdk/dataviz" }
           ]
         }
       ],
