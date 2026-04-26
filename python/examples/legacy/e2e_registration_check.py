@@ -14,7 +14,7 @@ import time
 
 # Ensure we can import the horus package when running from repo root
 script_dir = os.path.dirname(os.path.abspath(__file__))
-package_root = os.path.join(script_dir, "..")
+package_root = os.path.join(script_dir, "..", "..")
 if package_root not in sys.path:
     sys.path.insert(0, package_root)
 

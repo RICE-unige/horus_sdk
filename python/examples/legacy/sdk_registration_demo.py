@@ -5,23 +5,36 @@ This demo sends only the robot transform (TF) using the robot name as the TF pre
 and includes robot dimensions for sizing the interactor surface.
 
 Usage:
-  python3 sdk_registration_demo.py
-  python3 sdk_registration_demo.py --robot-count 4
-  python3 sdk_registration_demo.py --robot-count 4 --with-camera
-  python3 sdk_registration_demo.py --with-occupancy-grid
-  python3 sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
-  python3 sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
-  python3 sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
-  python3 sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
+  python3 python/examples/legacy/sdk_registration_demo.py
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-count 4
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-count 4 --with-camera
+  python3 python/examples/legacy/sdk_registration_demo.py --with-occupancy-grid
+  python3 python/examples/legacy/sdk_registration_demo.py --with-3d-map --map-3d-topic /map_3d
+  python3 python/examples/legacy/sdk_registration_demo.py --with-3d-mesh --map-3d-mesh-topic /map_3d_mesh
+  python3 python/examples/legacy/sdk_registration_demo.py --with-fake-tf --with-3d-map
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-count 4 --with-camera --camera-streaming-type webrtc
+  python3 python/examples/legacy/sdk_registration_demo.py --camera-minimap-streaming-type ros --camera-teleop-streaming-type webrtc
+  python3 python/examples/legacy/sdk_registration_demo.py --teleop-profile wheeled --teleop-response-mode analog
+  python3 python/examples/legacy/sdk_registration_demo.py --robot-names test_bot_1,test_bot_2
 """
 
 import sys
 import os
 import argparse
+import subprocess
+import time
+
+DEFAULT_LENGTH = 0.8
+DEFAULT_WIDTH = 0.6
+DEFAULT_HEIGHT = 0.4
+
+DEFAULT_AERIAL_LENGTH = 0.45
+DEFAULT_AERIAL_WIDTH = 0.45
+DEFAULT_AERIAL_HEIGHT = 0.20
 
 # Ensure we can import 'horus' package regardless of where script is run from
 script_dir = os.path.dirname(os.path.abspath(__file__))
-package_root = os.path.join(script_dir, "..")
+package_root = os.path.join(script_dir, "..", "..")
 if package_root not in sys.path:
     sys.path.insert(0, package_root)
 
@@ -82,9 +95,9 @@ def build_parser():
         action="store_false",
         help="Exit after registering robots.",
     )
-    parser.add_argument("--length", type=float, default=0.8, help="Robot length in meters")
-    parser.add_argument("--width", type=float, default=0.6, help="Robot width in meters")
-    parser.add_argument("--height", type=float, default=0.4, help="Robot height in meters")
+    parser.add_argument("--length", type=float, default=DEFAULT_LENGTH, help="Robot length in meters")
+    parser.add_argument("--width", type=float, default=DEFAULT_WIDTH, help="Robot width in meters")
+    parser.add_argument("--height", type=float, default=DEFAULT_HEIGHT, help="Robot height in meters")
     parser.add_argument(
         "--with-camera",
         dest="with_camera",
@@ -203,8 +216,8 @@ def build_parser():
         "--with-occupancy-grid",
         dest="with_occupancy_grid",
         action="store_true",
-        default=True,
-        help="Publish global occupancy-grid visualization config to MR (default: on).",
+        default=False,
+        help="Publish global occupancy-grid visualization config to MR (default: off).",
     )
     parser.add_argument(
         "--no-occupancy-grid",
@@ -235,6 +248,11 @@ def build_parser():
         help="Optional global workspace position scale applied across MR entities.",
     )
     parser.add_argument(
+        "--enable-compass",
+        action="store_true",
+        help="Enable the Compass CoPilot workspace capability for Horus.",
+    )
+    parser.add_argument(
         "--occupancy-show-unknown-space",
         dest="occupancy_show_unknown_space",
         action="store_true",
@@ -248,8 +266,66 @@ def build_parser():
         help="Hide unknown occupancy cells in MR.",
     )
     parser.add_argument(
+        "--with-3d-map",
+        dest="with_3d_map",
+        action="store_true",
+        default=False,
+        help="Publish global 3D map (PointCloud2) visualization config to MR (default: off).",
+    )
+    parser.add_argument(
+        "--map-3d-topic",
+        default="/map_3d",
+        help="3D map PointCloud2 topic (default: /map_3d).",
+    )
+    parser.add_argument(
+        "--map-3d-frame",
+        default="map",
+        help="3D map frame id (default: map).",
+    )
+    parser.add_argument(
+        "--with-3d-mesh",
+        dest="with_3d_mesh",
+        action="store_true",
+        default=False,
+        help="Publish global 3D mesh (visualization_msgs/Marker TRIANGLE_LIST) config to MR (default: off).",
+    )
+    parser.add_argument(
+        "--map-3d-mesh-topic",
+        default="/map_3d_mesh",
+        help="3D mesh marker topic (default: /map_3d_mesh).",
+    )
+    parser.add_argument(
+        "--map-3d-mesh-frame",
+        default="map",
+        help="3D mesh frame id (default: map).",
+    )
+    parser.add_argument(
+        "--with-fake-tf",
+        dest="with_fake_tf",
+        action="store_true",
+        default=False,
+        help="Auto-start python/examples/legacy/fake_tf_publisher.py with matching robot names.",
+    )
+    parser.add_argument(
+        "--fake-tf-rate",
+        type=float,
+        default=30.0,
+        help="Publish rate used by auto-started python/examples/legacy/fake_tf_publisher.py (Hz).",
+    )
+    parser.add_argument(
+        "--fake-tf-warmup-seconds",
+        type=float,
+        default=1.0,
+        help="Delay after spawning fake TF publisher before registration starts.",
+    )
+    parser.add_argument(
+        "--fake-tf-base-frame",
+        default="base_link",
+        help="Base frame used by auto-started python/examples/legacy/fake_tf_publisher.py (default: base_link).",
+    )
+    parser.add_argument(
         "--teleop-profile",
-        choices=["wheeled", "legged", "aerial", "custom"],
+        choices=["wheeled", "legged", "aerial", "drone", "custom"],
         default="wheeled",
         help="Teleop robot profile included in registration payload.",
     )
@@ -273,6 +349,17 @@ def build_parser():
     return parser
 
 
+def resolve_robot_type(teleop_profile: str) -> RobotType:
+    profile = str(teleop_profile or "wheeled").strip().lower()
+    if profile == "legged":
+        return RobotType.LEGGED
+    if profile == "aerial":
+        return RobotType.AERIAL
+    if profile == "drone":
+        return RobotType.DRONE
+    return RobotType.WHEELED
+
+
 def resolve_robot_names(args):
     if args.robot_names:
         names = [name.strip() for name in args.robot_names.split(",") if name.strip()]
@@ -283,6 +370,72 @@ def resolve_robot_names(args):
         return [args.robot_name]
 
     return [f"{args.robot_name}_{idx + 1}" for idx in range(args.robot_count)]
+
+
+def resolve_dimensions(args, idx: int, robot_type: RobotType):
+    if robot_type in (RobotType.AERIAL, RobotType.DRONE):
+        length = DEFAULT_AERIAL_LENGTH if abs(float(args.length) - DEFAULT_LENGTH) < 1e-6 else max(0.01, float(args.length))
+        width = DEFAULT_AERIAL_WIDTH if abs(float(args.width) - DEFAULT_WIDTH) < 1e-6 else max(0.01, float(args.width))
+        height = DEFAULT_AERIAL_HEIGHT if abs(float(args.height) - DEFAULT_HEIGHT) < 1e-6 else max(0.01, float(args.height))
+        return length, width, height
+
+    length = args.length + (0.1 * idx)
+    width = args.width + (0.05 * idx)
+    height = args.height + (0.03 * idx)
+    return length, width, height
+
+
+def start_fake_tf_process(args, robot_names):
+    fake_tf_script = os.path.join(script_dir, "fake_tf_publisher.py")
+    if args.with_3d_map:
+        tf_map_frame = args.map_3d_frame
+    elif args.with_3d_mesh:
+        tf_map_frame = args.map_3d_mesh_frame
+    else:
+        tf_map_frame = args.occupancy_frame
+
+    command = [
+        sys.executable,
+        fake_tf_script,
+        "--robot-names",
+        ",".join(robot_names),
+        "--map-frame",
+        tf_map_frame,
+        "--base-frame",
+        args.fake_tf_base_frame,
+        "--rate",
+        str(max(0.1, float(args.fake_tf_rate))),
+    ]
+
+    if args.with_camera:
+        command.extend(["--static-camera", "--publish-compressed-images"])
+    else:
+        command.extend(["--no-publish-compressed-images", "--no-publish-images"])
+
+    if args.with_occupancy_grid:
+        command.extend(["--publish-occupancy-grid", "--occupancy-topic", args.occupancy_topic])
+    else:
+        command.append("--no-publish-occupancy-grid")
+
+    cli.print_info(f"Starting fake TF publisher: {' '.join(command)}")
+    process = subprocess.Popen(command, cwd=script_dir)
+    warmup = max(0.0, float(args.fake_tf_warmup_seconds))
+    if warmup > 0.0:
+        time.sleep(warmup)
+    return process
+
+
+def stop_fake_tf_process(process):
+    if process is None or process.poll() is not None:
+        return
+
+    process.terminate()
+    try:
+        process.wait(timeout=5.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5.0)
+
 
 def main():
     args = build_parser().parse_args()
@@ -309,14 +462,13 @@ def main():
     cli.print_step("Defining Robot Configuration...")
     robots = []
     datavizs = []
+    robot_type = resolve_robot_type(args.teleop_profile)
     for idx, name in enumerate(robot_names):
-        length = args.length + (0.1 * idx)
-        width = args.width + (0.05 * idx)
-        height = args.height + (0.03 * idx)
+        length, width, height = resolve_dimensions(args, idx, robot_type)
         robot = Robot(
             # Name should match the TF prefix (e.g. test_bot_1/base_link)
             name=name,
-            robot_type=RobotType.WHEELED,
+            robot_type=robot_type,
             dimensions=RobotDimensions(
                 length=length,
                 width=width,
@@ -406,6 +558,18 @@ def main():
             robot.add_sensor(camera)
 
         dataviz = robot.create_dataviz()
+        robot.add_path_planning_to_dataviz(
+            dataviz,
+            global_path_topic=f"/{name}/global_path",
+            local_path_topic=f"/{name}/local_path",
+        )
+        robot.add_navigation_safety_to_dataviz(
+            dataviz,
+            odom_topic=f"/{name}/odom",
+            include_velocity=True,
+            include_trail=True,
+            include_collision=False,
+        )
         if args.with_occupancy_grid:
             occupancy_render_options = {
                 "show_unknown_space": bool(args.occupancy_show_unknown_space),
@@ -418,23 +582,80 @@ def main():
                 frame_id=args.occupancy_frame,
                 render_options=occupancy_render_options,
             )
+        if args.with_3d_map:
+            dataviz.add_3d_map(
+                topic=args.map_3d_topic,
+                frame_id=args.map_3d_frame,
+                render_options={
+                    "point_size": 0.05,
+                    "max_points_per_frame": 0,
+                    "base_sample_stride": 1,
+                    "min_update_interval": 0.0,
+                    "enable_adaptive_quality": False,
+                    "target_framerate": 72.0,
+                    "min_quality_multiplier": 0.6,
+                    "min_distance": 0.0,
+                    "max_distance": 0.0,
+                    "replace_latest": True,
+                    "render_all_points": True,
+                    "auto_point_size_by_workspace_scale": True,
+                    "min_point_size": 0.002,
+                    "max_point_size": 0.04,
+                    "render_mode": "opaque_fast",
+                    "enable_view_frustum_culling": True,
+                    "frustum_padding": 0.03,
+                    "enable_subpixel_culling": True,
+                    "min_screen_radius_px": 0.8,
+                    "visible_points_budget": 120000,
+                    "max_visible_points_budget": 200000,
+                    "map_static_mode": True,
+                },
+            )
+        if args.with_3d_mesh:
+            dataviz.add_3d_mesh(
+                topic=args.map_3d_mesh_topic,
+                frame_id=args.map_3d_mesh_frame,
+                render_options={
+                    "use_vertex_colors": True,
+                    "alpha": 1.0,
+                    "double_sided": True,
+                    "max_triangles": 200000,
+                    "source_coordinate_space": "enu",
+                },
+            )
         datavizs.append(dataviz)
         robots.append(robot)
 
-    cli.print_step(f"Registering {len(robots)} robot(s)...")
-    success, result = register_robots(
-        robots,
-        datavizs=datavizs,
-        keep_alive=args.keep_alive,
-        show_dashboard=True,
-        workspace_scale=args.workspace_scale,
-    )
-    if not success:
-        if isinstance(result, dict) and result.get("error") == "Cancelled":
-            cli.print_info("Registration cancelled by user.")
+    fake_tf_process = None
+    try:
+        if args.with_fake_tf:
+            fake_tf_process = start_fake_tf_process(args, robot_names)
+            if args.with_3d_map:
+                cli.print_info(
+                    "Fake TF is running. Start fake_3d_map_publisher.py separately for /map_3d data."
+                )
+            if args.with_3d_mesh:
+                cli.print_info(
+                    "Mesh mode is enabled. Run pointcloud_to_voxel_mesh_marker.py separately to publish /map_3d_mesh."
+                )
+
+        cli.print_step(f"Registering {len(robots)} robot(s)...")
+        success, result = register_robots(
+            robots,
+            datavizs=datavizs,
+            keep_alive=args.keep_alive,
+            show_dashboard=True,
+            workspace_scale=args.workspace_scale,
+            compass_enabled=True if args.enable_compass else None,
+        )
+        if not success:
+            if isinstance(result, dict) and result.get("error") == "Cancelled":
+                cli.print_info("Registration cancelled by user.")
+                return
+            cli.print_error(f"Registration failed: {result}")
             return
-        cli.print_error(f"Registration failed: {result}")
-        return
+    finally:
+        stop_fake_tf_process(fake_tf_process)
 
 
 if __name__ == "__main__":

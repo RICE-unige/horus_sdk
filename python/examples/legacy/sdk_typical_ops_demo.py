@@ -8,11 +8,12 @@ from typing import List, Tuple
 
 # Ensure we can import 'horus' package regardless of where script is run from.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..")
+PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
 try:
+    from horus.dataviz import VisualizationType
     from horus.robot import Robot, RobotDimensions, RobotType, register_robots
     from horus.sensors import Camera
     from horus.utils import cli
@@ -70,7 +71,8 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description=(
             "Typical HORUS SDK registration flow: 10 named robots with camera, teleop, "
-            "go-to-point, and waypoint metadata."
+            "go-to-point, and waypoint metadata (also used as the host-authority registration "
+            "demo for multi-operator join tests)."
         )
     )
     parser.add_argument(
@@ -89,6 +91,23 @@ def build_parser():
         type=float,
         default=0.1,
         help="Global workspace position scale forwarded in registration payload (default: 0.1).",
+    )
+    parser.add_argument(
+        "--enable-compass",
+        action="store_true",
+        help="Enable the Compass CoPilot workspace capability for Horus.",
+    )
+    parser.add_argument(
+        "--go-to-min-altitude",
+        type=float,
+        default=0.0,
+        help="Go-to/waypoint minimum altitude metadata in map meters (default: 0.0).",
+    )
+    parser.add_argument(
+        "--go-to-max-altitude",
+        type=float,
+        default=10.0,
+        help="Go-to/waypoint maximum altitude metadata in map meters (default: 10.0).",
     )
     parser.add_argument(
         "--keep-alive",
@@ -122,7 +141,7 @@ def build_parser():
     )
     parser.add_argument(
         "--teleop-profile",
-        choices=["wheeled", "legged", "aerial", "custom"],
+        choices=["wheeled", "legged", "aerial", "drone", "custom"],
         default="wheeled",
         help="Teleop profile metadata (default: wheeled).",
     )
@@ -143,7 +162,63 @@ def build_parser():
         action="store_true",
         help="Set teleop custom_passthrough_only=true in metadata.",
     )
+    parser.add_argument(
+        "--enable-velocity-dataviz",
+        dest="enable_velocity_dataviz",
+        action="store_true",
+        default=True,
+        help="Register velocity text DataViz entry per robot (default: on).",
+    )
+    parser.add_argument(
+        "--no-enable-velocity-dataviz",
+        dest="enable_velocity_dataviz",
+        action="store_false",
+        help="Disable velocity text DataViz registration.",
+    )
+    parser.add_argument(
+        "--enable-odometry-trail-dataviz",
+        dest="enable_odometry_trail_dataviz",
+        action="store_true",
+        default=True,
+        help="Register odometry trail DataViz entry per robot (default: on).",
+    )
+    parser.add_argument(
+        "--no-enable-odometry-trail-dataviz",
+        dest="enable_odometry_trail_dataviz",
+        action="store_false",
+        help="Disable odometry trail DataViz registration.",
+    )
+    parser.add_argument(
+        "--enable-collision-risk-dataviz",
+        dest="enable_collision_risk_dataviz",
+        action="store_true",
+        default=True,
+        help="Register collision risk DataViz entry per robot (default: on).",
+    )
+    parser.add_argument(
+        "--no-enable-collision-risk-dataviz",
+        dest="enable_collision_risk_dataviz",
+        action="store_false",
+        help="Disable collision risk DataViz registration.",
+    )
+    parser.add_argument(
+        "--collision-threshold-m",
+        type=float,
+        default=1.2,
+        help="Collision risk threshold in meters used by risk visualization metadata (default: 1.2).",
+    )
     return parser
+
+
+def resolve_robot_type(teleop_profile: str) -> RobotType:
+    profile = str(teleop_profile or "wheeled").strip().lower()
+    if profile == "legged":
+        return RobotType.LEGGED
+    if profile == "aerial":
+        return RobotType.AERIAL
+    if profile == "drone":
+        return RobotType.DRONE
+    return RobotType.WHEELED
 
 
 def build_camera(name: str, args, resolution: Tuple[int, int]) -> Camera:
@@ -198,14 +273,24 @@ def main():
     args = build_parser().parse_args()
     robot_names = resolve_robot_names(args)
     camera_resolution = parse_resolution(args.camera_resolution)
+    min_altitude_m = max(0.0, float(args.go_to_min_altitude))
+    max_altitude_m = max(min_altitude_m + 0.1, float(args.go_to_max_altitude))
 
     cli.print_step("Defining typical multi-robot operations configuration...")
+    cli.print_info(
+        "Multi-operator v1 test: run this SDK demo once (host authority). "
+        "In the HORUS app, use one headset as Host and additional headsets as Join."
+    )
+    cli.print_info(
+        f"Task altitude bounds metadata: min={min_altitude_m:.2f}m max={max_altitude_m:.2f}m"
+    )
 
     robots: List[Robot] = []
+    datavizs = []
     for index, name in enumerate(robot_names):
         robot = Robot(
             name=name,
-            robot_type=RobotType.WHEELED,
+            robot_type=resolve_robot_type(args.teleop_profile),
             dimensions=RobotDimensions(
                 length=0.8 + (0.1 * index),
                 width=0.6 + (0.05 * index),
@@ -253,6 +338,8 @@ def main():
                     "frame_id": "map",
                     "position_tolerance_m": 0.20,
                     "yaw_tolerance_deg": 12.0,
+                    "min_altitude_m": min_altitude_m,
+                    "max_altitude_m": max_altitude_m,
                 },
                 "waypoint": {
                     "enabled": True,
@@ -266,14 +353,56 @@ def main():
         )
 
         robot.add_sensor(build_camera(name, args, camera_resolution))
+        dataviz = robot.create_dataviz()
+        robot.add_path_planning_to_dataviz(
+            dataviz,
+            global_path_topic=f"/{name}/global_path",
+            local_path_topic=f"/{name}/local_path",
+        )
+        robot.add_navigation_safety_to_dataviz(
+            dataviz,
+            odom_topic=f"/{name}/odom",
+            collision_risk_topic=f"/{name}/collision_risk",
+            include_velocity=bool(args.enable_velocity_dataviz),
+            include_trail=bool(args.enable_odometry_trail_dataviz),
+            include_collision=False,
+        )
+        if args.enable_collision_risk_dataviz:
+            threshold_m = max(0.1, float(args.collision_threshold_m))
+            dataviz.add_robot_collision_risk(
+                robot_name=name,
+                topic=f"/{name}/collision_risk",
+                frame_id=f"{name}/base_link",
+                render_options={
+                    "threshold_m": threshold_m,
+                    "radius_m": threshold_m,
+                    "source": "laser_scan",
+                    "alpha_min": 0.0,
+                    "alpha_max": 0.55,
+                },
+            )
+
+        # Navigation DataViz defaults ON; other channels stay OFF by default.
+        nav_default_on_types = {
+            VisualizationType.PATH,
+            VisualizationType.VELOCITY_DATA,
+            VisualizationType.ODOMETRY_TRAIL,
+            VisualizationType.COLLISION_RISK,
+        }
+        for viz in dataviz.visualizations:
+            viz.enabled = getattr(viz, "viz_type", None) in nav_default_on_types
+
         robots.append(robot)
+        datavizs.append(dataviz)
 
     cli.print_step(f"Registering {len(robots)} robot(s)...")
     success, result = register_robots(
         robots,
+        datavizs=datavizs,
         keep_alive=args.keep_alive,
         show_dashboard=True,
         workspace_scale=args.workspace_scale,
+        compass_enabled=True if args.enable_compass else None,
     )
 
     if not success:

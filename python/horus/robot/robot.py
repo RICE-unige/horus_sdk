@@ -8,6 +8,22 @@ import importlib
 import inspect
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
+from .config import (
+    GoToPointTaskConfig,
+    LocalBodyModelConfig,
+    NavigationTasksConfig,
+    RobotDescriptionConfig,
+    RobotManagerConfig,
+    RosBindingConfig,
+    TeleopConfig,
+    WaypointTaskConfig,
+    WorkspaceTutorialConfig,
+    normalize_binding_mode,
+    normalize_frame_token,
+    normalize_topic_leaf,
+    normalize_topic_prefix,
+)
+
 if TYPE_CHECKING:
     from ..dataviz import DataViz
     from ..sensors import SensorInstance, SensorType
@@ -19,6 +35,7 @@ class RobotType(Enum):
     WHEELED = "wheeled"
     LEGGED = "legged"
     AERIAL = "aerial"
+    DRONE = "drone"
 
 
 @dataclass
@@ -37,7 +54,7 @@ class Robot:
 
     Args:
         name: Robot identifier/namespace (unique)
-        robot_type: Classification of robot (wheeled, legged, aerial)
+        robot_type: Classification of robot (wheeled, legged, aerial, drone)
         metadata: Optional additional robot information
         sensors: List of sensors attached to this robot
     """
@@ -48,10 +65,14 @@ class Robot:
     sensors: List["SensorInstance"] = field(default_factory=list)
     dimensions: Optional[RobotDimensions] = None
 
+    _DEFAULT_LOGICAL_NAME = "robot"
+    _ROS_BINDING_METADATA_KEY = "ros_binding_config"
+    _LOCAL_BODY_MODEL_METADATA_KEY = "local_body_model_config"
+    _WORKSPACE_TUTORIAL_METADATA_KEY = "workspace_tutorial_config"
+
     def __post_init__(self):
         """Validate robot configuration after initialization"""
-        if not self.name:
-            raise ValueError("Robot name cannot be empty")
+        self.name = str(self.name or "").strip() or self._DEFAULT_LOGICAL_NAME
 
         if not isinstance(self.robot_type, RobotType):
             raise TypeError("robot_type must be a RobotType enum")
@@ -110,12 +131,105 @@ class Robot:
         return self.robot_type.value
 
     def add_metadata(self, key: str, value: Any) -> None:
-        """Add metadata to the robot"""
+        """Set a low-level metadata value on the robot.
+
+        This method is retained as the compatibility escape hatch for custom or
+        experimental HORUS MR payload fields. Prefer the semantic configure_*
+        methods for first-class SDK features.
+        """
         self.metadata[key] = value
+
+    def set_metadata(self, key: str, value: Any) -> None:
+        """Alias for add_metadata with wording that matches replacement behavior."""
+        self.add_metadata(key, value)
 
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value by key"""
         return self.metadata.get(key, default)
+
+    @staticmethod
+    def _normalize_binding_mode(value: Any, default: str) -> str:
+        return normalize_binding_mode(value, default)
+
+    @staticmethod
+    def _normalize_frame_token(value: Any, default: str = "") -> str:
+        return normalize_frame_token(value, default)
+
+    @staticmethod
+    def _normalize_topic_prefix(value: Any) -> str:
+        return normalize_topic_prefix(value)
+
+    @staticmethod
+    def _normalize_topic_leaf(value: Any, default: str = "") -> str:
+        return normalize_topic_leaf(value, default)
+
+    def configure_ros_binding(
+        self,
+        tf_mode: str = "prefixed",
+        topic_mode: str = "prefixed",
+        base_frame: str = "base_link",
+        tf_prefix: str = "",
+        topic_prefix: str = "",
+    ) -> None:
+        """Configure how HORUS logical robot identity binds to ROS TF/topics."""
+        self.add_metadata(
+            self._ROS_BINDING_METADATA_KEY,
+            RosBindingConfig.from_values(
+                logical_name=self.name,
+                tf_mode=tf_mode,
+                topic_mode=topic_mode,
+                base_frame=base_frame,
+                tf_prefix=tf_prefix,
+                topic_prefix=topic_prefix,
+            ).to_payload(),
+        )
+
+    def get_ros_binding(self) -> Dict[str, str]:
+        """Return the resolved ROS binding configuration for this robot."""
+        raw = self.metadata.get(self._ROS_BINDING_METADATA_KEY, {})
+
+        robot_desc_cfg = self.metadata.get("robot_description_config", {})
+        desc_base_frame = ""
+        if isinstance(robot_desc_cfg, dict):
+            desc_base_frame = normalize_frame_token(robot_desc_cfg.get("base_frame"), "")
+
+        return RosBindingConfig.from_metadata(
+            logical_name=self.name,
+            raw=raw,
+            description_base_frame=desc_base_frame,
+        ).to_payload()
+
+    def resolve_tf_frame(self, frame_name: Optional[str] = None) -> str:
+        """Resolve a frame name according to the configured TF binding mode."""
+        binding = self.get_ros_binding()
+        frame_token = self._normalize_frame_token(frame_name, binding["base_frame"])
+        prefix = self._normalize_frame_token(binding.get("tf_prefix", ""))
+
+        if prefix and (frame_token == prefix or frame_token.startswith(prefix + "/")):
+            return frame_token
+
+        if prefix:
+            return f"{prefix}/{frame_token}"
+        return frame_token
+
+    def resolve_topic(self, topic_name: Optional[str] = None) -> str:
+        """Resolve a topic according to the configured topic binding mode."""
+        binding = self.get_ros_binding()
+        raw_topic = str(topic_name or "").strip()
+        if raw_topic.startswith("/"):
+            return raw_topic
+
+        topic_leaf = self._normalize_topic_leaf(raw_topic)
+        prefix = self._normalize_topic_prefix(binding.get("topic_prefix", ""))
+        if prefix:
+            if not topic_leaf:
+                return prefix
+            prefixed_leaf = prefix.strip("/")
+            if topic_leaf == prefixed_leaf or topic_leaf.startswith(prefixed_leaf + "/"):
+                return "/" + topic_leaf
+            return f"{prefix}/{topic_leaf}"
+
+        return f"/{topic_leaf}" if topic_leaf else "/"
 
     # Sensor management methods
     def add_sensor(self, sensor: "SensorInstance") -> None:
@@ -154,6 +268,176 @@ class Robot:
         """Check if robot has any sensors"""
         return len(self.sensors) > 0
 
+    def configure_workspace_tutorial(
+        self,
+        preset_id: str,
+        enabled: bool = True,
+    ) -> None:
+        """Configure an opt-in workspace tutorial preset for MR onboarding."""
+        self.add_metadata(
+            self._WORKSPACE_TUTORIAL_METADATA_KEY,
+            WorkspaceTutorialConfig.from_values(preset_id, enabled=enabled).to_payload(),
+        )
+
+    def configure_robot_manager(
+        self,
+        *,
+        enabled: bool = True,
+        status: bool = True,
+        data_viz: bool = True,
+        teleop: bool = True,
+        tasks: bool = True,
+        prefab_asset_path: str = "Assets/Prefabs/UI/RobotManager.prefab",
+        prefab_resource_path: str = "",
+    ) -> None:
+        """Configure which Robot Manager sections HORUS MR exposes."""
+        self.add_metadata(
+            "robot_manager_config",
+            RobotManagerConfig.from_values(
+                enabled=enabled,
+                status=status,
+                data_viz=data_viz,
+                teleop=teleop,
+                tasks=tasks,
+                prefab_asset_path=prefab_asset_path,
+                prefab_resource_path=prefab_resource_path,
+            ).to_payload(),
+        )
+
+    def configure_teleop(
+        self,
+        *,
+        enabled: bool = True,
+        command_topic: Optional[str] = None,
+        raw_input_topic: Optional[str] = None,
+        head_pose_topic: Optional[str] = None,
+        robot_profile: Optional[str] = None,
+        response_mode: Optional[str] = None,
+        publish_rate_hz: Optional[float] = None,
+        custom_passthrough_only: Optional[bool] = None,
+        deadman_policy: Optional[str] = None,
+        deadman_timeout_ms: Optional[int] = None,
+        deadzone: Optional[float] = None,
+        expo: Optional[float] = None,
+        linear_xy_max_mps: Optional[float] = None,
+        linear_z_max_mps: Optional[float] = None,
+        angular_z_max_rps: Optional[float] = None,
+        discrete_threshold: Optional[float] = None,
+        linear_xy_step_mps: Optional[float] = None,
+        linear_z_step_mps: Optional[float] = None,
+        angular_z_step_rps: Optional[float] = None,
+    ) -> None:
+        """Configure HORUS MR teleoperation control for this robot."""
+        self.add_metadata(
+            "teleop_config",
+            TeleopConfig.from_values(
+                enabled=enabled,
+                command_topic=command_topic,
+                raw_input_topic=raw_input_topic,
+                head_pose_topic=head_pose_topic,
+                robot_profile=robot_profile,
+                response_mode=response_mode,
+                publish_rate_hz=publish_rate_hz,
+                custom_passthrough_only=custom_passthrough_only,
+                deadman_policy=deadman_policy,
+                deadman_timeout_ms=deadman_timeout_ms,
+                deadzone=deadzone,
+                expo=expo,
+                linear_xy_max_mps=linear_xy_max_mps,
+                linear_z_max_mps=linear_z_max_mps,
+                angular_z_max_rps=angular_z_max_rps,
+                discrete_threshold=discrete_threshold,
+                linear_xy_step_mps=linear_xy_step_mps,
+                linear_z_step_mps=linear_z_step_mps,
+                angular_z_step_rps=angular_z_step_rps,
+            ).to_payload(),
+        )
+
+    def configure_go_to_point_task(
+        self,
+        *,
+        enabled: bool = True,
+        goal_topic: Optional[str] = None,
+        cancel_topic: Optional[str] = None,
+        status_topic: Optional[str] = None,
+        frame_id: Optional[str] = None,
+        position_tolerance_m: Optional[float] = None,
+        yaw_tolerance_deg: Optional[float] = None,
+        min_altitude_m: Optional[float] = None,
+        max_altitude_m: Optional[float] = None,
+    ) -> None:
+        """Configure the Robot Manager Go-To Point task."""
+        task_config = dict(self.metadata.get("task_config") or {})
+        task_config["go_to_point"] = GoToPointTaskConfig.from_values(
+            enabled=enabled,
+            goal_topic=goal_topic,
+            cancel_topic=cancel_topic,
+            status_topic=status_topic,
+            frame_id=frame_id,
+            position_tolerance_m=position_tolerance_m,
+            yaw_tolerance_deg=yaw_tolerance_deg,
+            min_altitude_m=min_altitude_m,
+            max_altitude_m=max_altitude_m,
+        ).to_payload()
+        self.add_metadata("task_config", task_config)
+
+    def configure_waypoint_task(
+        self,
+        *,
+        enabled: bool = True,
+        path_topic: Optional[str] = None,
+        status_topic: Optional[str] = None,
+        frame_id: Optional[str] = None,
+        position_tolerance_m: Optional[float] = None,
+        yaw_tolerance_deg: Optional[float] = None,
+    ) -> None:
+        """Configure the Robot Manager Draw Waypoint task."""
+        task_config = dict(self.metadata.get("task_config") or {})
+        task_config["waypoint"] = WaypointTaskConfig.from_values(
+            enabled=enabled,
+            path_topic=path_topic,
+            status_topic=status_topic,
+            frame_id=frame_id,
+            position_tolerance_m=position_tolerance_m,
+            yaw_tolerance_deg=yaw_tolerance_deg,
+        ).to_payload()
+        self.add_metadata("task_config", task_config)
+
+    def configure_navigation_tasks(
+        self,
+        *,
+        go_to_point_enabled: bool = True,
+        waypoint_enabled: bool = True,
+        goal_topic: Optional[str] = None,
+        cancel_topic: Optional[str] = None,
+        goal_status_topic: Optional[str] = None,
+        waypoint_path_topic: Optional[str] = None,
+        waypoint_status_topic: Optional[str] = None,
+        frame_id: str = "map",
+        position_tolerance_m: Optional[float] = None,
+        yaw_tolerance_deg: Optional[float] = None,
+        min_altitude_m: Optional[float] = None,
+        max_altitude_m: Optional[float] = None,
+    ) -> None:
+        """Configure Go-To Point and Draw Waypoint task topics together."""
+        task_config = dict(self.metadata.get("task_config") or {})
+        navigation_tasks = NavigationTasksConfig.from_values(
+            go_to_point_enabled=go_to_point_enabled,
+            waypoint_enabled=waypoint_enabled,
+            goal_topic=goal_topic,
+            cancel_topic=cancel_topic,
+            goal_status_topic=goal_status_topic,
+            waypoint_path_topic=waypoint_path_topic,
+            waypoint_status_topic=waypoint_status_topic,
+            frame_id=frame_id,
+            position_tolerance_m=position_tolerance_m,
+            yaw_tolerance_deg=yaw_tolerance_deg,
+            min_altitude_m=min_altitude_m,
+            max_altitude_m=max_altitude_m,
+        ).to_payload()
+        task_config.update(navigation_tasks)
+        self.add_metadata("task_config", task_config)
+
     def create_dataviz(self, dataviz_name: Optional[str] = None) -> "DataViz":
         """
         Create a DataViz instance for this robot with all its sensors
@@ -177,11 +461,13 @@ class Robot:
         for sensor in self.sensors:
             dataviz.add_sensor_visualization(sensor, self.name)
 
+        # Use the configured base frame when available so TF visualization matches
+        # robots that do not use base_link (for example, go1/base).
         # Add robot transform visualization
         dataviz.add_robot_transform(
             robot_name=self.name,
             topic="/tf",
-            frame_id=f"{self.name}_base_link",
+            frame_id=self.resolve_tf_frame(),
         )
 
         return dataviz
@@ -220,6 +506,114 @@ class Robot:
                 robot_name=self.name, topic=trajectory_topic, frame_id="map"
             )
 
+    def add_navigation_safety_to_dataviz(
+        self,
+        dataviz: "DataViz",
+        odom_topic: Optional[str] = None,
+        collision_risk_topic: Optional[str] = None,
+        include_velocity: bool = True,
+        include_trail: bool = True,
+        include_collision: bool = True,
+    ) -> None:
+        """
+        Add navigation safety visualizations (velocity/trail/collision risk).
+
+        Args:
+            dataviz: DataViz instance to add visualizations to.
+            odom_topic: Topic for nav_msgs/Odometry input.
+            collision_risk_topic: Topic for SDK-published collision risk JSON.
+            include_velocity: Include floor velocity text visualization.
+            include_trail: Include short odometry trail visualization.
+            include_collision: Include collision risk halo visualization.
+        """
+        resolved_odom_topic = odom_topic or f"/{self.name}/odom"
+        resolved_collision_topic = collision_risk_topic or f"/{self.name}/collision_risk"
+
+        if include_velocity:
+            if hasattr(dataviz, "add_robot_velocity_data"):
+                dataviz.add_robot_velocity_data(
+                    robot_name=self.name,
+                    topic=resolved_odom_topic,
+                    frame_id="map",
+                )
+            else:
+                dataviz.add_robot_transform(
+                    robot_name=self.name,
+                    topic=resolved_odom_topic,
+                    frame_id="map",
+                )
+
+        if include_trail:
+            if hasattr(dataviz, "add_robot_odometry_trail"):
+                dataviz.add_robot_odometry_trail(
+                    robot_name=self.name,
+                    topic=resolved_odom_topic,
+                    frame_id="map",
+                )
+            else:
+                dataviz.add_robot_trajectory(
+                    robot_name=self.name,
+                    topic=resolved_odom_topic,
+                    frame_id="map",
+                )
+
+        if include_collision:
+            if hasattr(dataviz, "add_robot_collision_risk"):
+                dataviz.add_robot_collision_risk(
+                    robot_name=self.name,
+                    topic=resolved_collision_topic,
+                    frame_id=self.resolve_tf_frame(),
+                )
+
+    def configure_robot_description(
+        self,
+        urdf_path: str,
+        base_frame: str = "base_link",
+        source: str = "ros",
+        ros_param_node: str = "",
+        ros_param_name: str = "robot_description",
+        chunk_size_bytes: int = 12000,
+        is_transparent: bool = False,
+        include_visual_meshes: bool = True,
+        visual_mesh_triangle_budget: int = 90000,
+        body_mesh_mode: str = "preview_mesh",
+        enabled: bool = True,
+    ) -> None:
+        """Configure robot description resolution for MR collision/joint visualization."""
+        self.add_metadata(
+            "robot_description_config",
+            RobotDescriptionConfig.from_values(
+                urdf_path=urdf_path,
+                base_frame=base_frame,
+                source=source,
+                ros_param_node=ros_param_node,
+                ros_param_name=ros_param_name,
+                chunk_size_bytes=chunk_size_bytes,
+                is_transparent=is_transparent,
+                include_visual_meshes=include_visual_meshes,
+                visual_mesh_triangle_budget=visual_mesh_triangle_budget,
+                body_mesh_mode=body_mesh_mode,
+                enabled=enabled,
+            ).to_payload(),
+        )
+
+    def configure_local_body_model(
+        self,
+        robot_model_id: str,
+        enabled: bool = True,
+    ) -> None:
+        """
+        Configure a bundled MR-side robot body model by stable model identifier.
+
+        Args:
+            robot_model_id: Stable identifier for a model shipped with Horus MR.
+            enabled: Whether the bundled model should be advertised to MR.
+        """
+        self.add_metadata(
+            self._LOCAL_BODY_MODEL_METADATA_KEY,
+            LocalBodyModelConfig.from_values(robot_model_id, enabled=enabled).to_payload(),
+        )
+
     def create_full_dataviz(
         self,
         dataviz_name: Optional[str] = None,
@@ -255,6 +649,7 @@ class Robot:
         keep_alive: bool = True,
         show_dashboard: bool = True,
         workspace_scale: Optional[float] = None,
+        compass_enabled: Optional[bool] = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Register this robot with the HORUS backend system
@@ -264,6 +659,7 @@ class Robot:
             keep_alive: If True, keep the connection dashboard running
             show_dashboard: If False, skip the dashboard UI during registration
             workspace_scale: Optional global workspace position scale.
+            compass_enabled: Optional workspace-scoped Compass availability toggle.
 
         Returns:
             Tuple of (success, registration_data)
@@ -281,6 +677,8 @@ class Robot:
             keep_alive=keep_alive,
             show_dashboard=show_dashboard,
             workspace_scale=workspace_scale,
+            compass_enabled=compass_enabled,
+            wait_for_app_before_register=True,
         )
 
         if success:
@@ -383,6 +781,8 @@ def register_robots(
     show_dashboard: bool = True,
     timeout_sec: float = 10.0,
     workspace_scale: Optional[float] = None,
+    compass_enabled: Optional[bool] = None,
+    wait_for_app_before_register: bool = True,
     datavizs=None,
 ):
     """Register multiple robots using a shared registry session."""
@@ -395,6 +795,8 @@ def register_robots(
         keep_alive=keep_alive,
         show_dashboard=show_dashboard,
         workspace_scale=workspace_scale,
+        compass_enabled=compass_enabled,
+        wait_for_app_before_register=wait_for_app_before_register,
     )
 
 
@@ -419,6 +821,8 @@ def _invoke_register_robot(
     keep_alive: bool,
     show_dashboard: bool,
     workspace_scale: Optional[float],
+    compass_enabled: Optional[bool],
+    wait_for_app_before_register: bool,
 ):
     method = registry.register_robot
     kwargs: Dict[str, Any] = {}
@@ -434,6 +838,10 @@ def _invoke_register_robot(
         kwargs["show_dashboard"] = show_dashboard
     if workspace_scale is not None and "workspace_scale" in parameters:
         kwargs["workspace_scale"] = workspace_scale
+    if compass_enabled is not None and "compass_enabled" in parameters:
+        kwargs["compass_enabled"] = compass_enabled
+    if "wait_for_app_before_register" in parameters:
+        kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 
     return method(robot, dataviz, **kwargs)
 
@@ -446,6 +854,8 @@ def _invoke_register_robots(
     keep_alive: bool,
     show_dashboard: bool,
     workspace_scale: Optional[float],
+    compass_enabled: Optional[bool],
+    wait_for_app_before_register: bool,
 ):
     method = registry.register_robots
     kwargs: Dict[str, Any] = {}
@@ -465,5 +875,10 @@ def _invoke_register_robots(
         kwargs["show_dashboard"] = show_dashboard
     if workspace_scale is not None and "workspace_scale" in parameters:
         kwargs["workspace_scale"] = workspace_scale
+    if compass_enabled is not None and "compass_enabled" in parameters:
+        kwargs["compass_enabled"] = compass_enabled
+    if "wait_for_app_before_register" in parameters:
+        kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 
     return method(robots, **kwargs)
+

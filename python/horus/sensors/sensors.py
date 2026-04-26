@@ -5,7 +5,14 @@ Sensor system for robot data visualization in HORUS SDK
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Sequence, Union
+
+from .config import (
+    CameraImmersiveViewConfig,
+    CameraMinimapViewConfig,
+    CameraProjectedViewConfig,
+    CameraWebRtcTransportConfig,
+)
 
 
 class SensorType(Enum):
@@ -61,8 +68,16 @@ class BaseSensor(ABC):
         self.enabled = False
 
     def add_metadata(self, key: str, value: Any) -> None:
-        """Add metadata to sensor"""
+        """Set a low-level metadata value on the sensor.
+
+        This remains available for custom HORUS MR payload fields. Prefer the
+        sensor-specific configure_* methods for first-class SDK features.
+        """
         self.metadata[key] = value
+
+    def set_metadata(self, key: str, value: Any) -> None:
+        """Alias for add_metadata with wording that matches replacement behavior."""
+        self.add_metadata(key, value)
 
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value by key"""
@@ -91,6 +106,15 @@ class Camera(BaseSensor):
     minimap_streaming_type: str = "ros"
     teleop_streaming_type: str = "webrtc"
     startup_mode: str = "minimap"
+    stereo_layout: str = "side_by_side"
+    right_topic: str = ""
+    minimap_topic: str = ""
+    minimap_image_type: str = ""
+    minimap_max_fps: int = 30
+    teleop_topic: str = ""
+    teleop_image_type: str = ""
+    teleop_right_topic: str = ""
+    teleop_stereo_layout: str = ""
 
     def __init__(
         self,
@@ -106,6 +130,15 @@ class Camera(BaseSensor):
         minimap_streaming_type: str = "ros",
         teleop_streaming_type: str = "webrtc",
         startup_mode: str = "minimap",
+        stereo_layout: str = "side_by_side",
+        right_topic: str = "",
+        minimap_topic: str = "",
+        minimap_image_type: str = "",
+        minimap_max_fps: int = 30,
+        teleop_topic: str = "",
+        teleop_image_type: str = "",
+        teleop_right_topic: str = "",
+        teleop_stereo_layout: str = "",
         **kwargs,
     ):
         super().__init__(name, SensorType.CAMERA, frame_id, topic, **kwargs)
@@ -134,6 +167,69 @@ class Camera(BaseSensor):
             raise ValueError("Camera startup_mode must be 'minimap' or 'teleop'")
         self.startup_mode = normalized_startup_mode
 
+        normalized_layout = str(stereo_layout).strip().lower()
+        if normalized_layout in ("sbs", "side_by_side", "side-by-side"):
+            normalized_layout = "side_by_side"
+        elif normalized_layout in ("dual", "dual_topic", "two_topics", "two-topic"):
+            normalized_layout = "dual_topic"
+        elif normalized_layout in ("mono", ""):
+            normalized_layout = "mono"
+        else:
+            raise ValueError("Camera stereo_layout must be 'side_by_side', 'dual_topic', or 'mono'")
+
+        if not self.is_stereo:
+            normalized_layout = "mono"
+            right_topic = ""
+        elif normalized_layout == "mono":
+            normalized_layout = "side_by_side"
+
+        self.stereo_layout = normalized_layout
+        self.right_topic = str(right_topic).strip()
+
+        def _normalize_image_type(value: str, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            if not normalized:
+                return fallback
+            if normalized in ("raw", "compressed"):
+                return normalized
+            raise ValueError("Camera image type must be 'raw' or 'compressed'")
+
+        def _normalize_layout(value: str, fallback: str) -> str:
+            normalized = str(value or "").strip().lower()
+            if not normalized:
+                return fallback
+            if normalized in ("sbs", "side_by_side", "side-by-side"):
+                return "side_by_side"
+            if normalized in ("dual", "dual_topic", "two_topics", "two-topic"):
+                return "dual_topic"
+            if normalized in ("mono",):
+                return "mono"
+            raise ValueError("Camera stereo layout must be 'side_by_side', 'dual_topic', or 'mono'")
+
+        self.minimap_topic = str(minimap_topic).strip()
+        self.teleop_topic = str(teleop_topic).strip()
+        self.minimap_image_type = _normalize_image_type(minimap_image_type, "")
+        self.teleop_image_type = _normalize_image_type(teleop_image_type, "")
+        try:
+            minimap_fps_value = int(minimap_max_fps)
+        except (TypeError, ValueError):
+            minimap_fps_value = 30
+        self.minimap_max_fps = max(1, min(30, minimap_fps_value))
+
+        normalized_teleop_layout = _normalize_layout(teleop_stereo_layout, self.stereo_layout)
+        resolved_teleop_right_topic = str(teleop_right_topic).strip()
+        if not resolved_teleop_right_topic:
+            resolved_teleop_right_topic = self.right_topic
+
+        if not self.is_stereo:
+            normalized_teleop_layout = "mono"
+            resolved_teleop_right_topic = ""
+        elif normalized_teleop_layout == "mono":
+            normalized_teleop_layout = "side_by_side"
+
+        self.teleop_stereo_layout = normalized_teleop_layout
+        self.teleop_right_topic = resolved_teleop_right_topic
+
     def get_camera_type(self) -> str:
         """Get camera type as string"""
         return "stereo" if self.is_stereo else "mono"
@@ -142,6 +238,95 @@ class Camera(BaseSensor):
         """Get resolution as string"""
         return f"{self.resolution[0]}x{self.resolution[1]}"
 
+    @staticmethod
+    def _coerce_vec3(value: Sequence[float], field_name: str) -> list[float]:
+        if value is None or len(value) != 3:
+            raise ValueError(f"{field_name} must contain exactly 3 values")
+        return [float(value[0]), float(value[1]), float(value[2])]
+
+    def configure_projected_view(
+        self,
+        *,
+        position_offset: Optional[Sequence[float]] = None,
+        rotation_offset: Optional[Sequence[float]] = None,
+        scale_multiplier: Optional[Sequence[float]] = None,
+        image_scale: Optional[float] = None,
+        focal_length_scale: Optional[float] = None,
+        projection_target_frame: Optional[str] = None,
+        show_frustum: Optional[bool] = None,
+        frustum_color: Optional[str] = None,
+    ) -> None:
+        """Configure projected-view placement and sizing metadata for HORUS."""
+        self.metadata.update(
+            CameraProjectedViewConfig.from_values(
+                position_offset=position_offset,
+                rotation_offset=rotation_offset,
+                scale_multiplier=scale_multiplier,
+                image_scale=image_scale,
+                focal_length_scale=focal_length_scale,
+                projection_target_frame=projection_target_frame,
+                show_frustum=show_frustum,
+                frustum_color=frustum_color,
+            ).to_payload()
+        )
+
+    def configure_minimap_view(
+        self,
+        *,
+        size: Optional[float] = None,
+        position_offset: Optional[Sequence[float]] = None,
+        face_camera: Optional[bool] = None,
+        rotation_offset: Optional[Sequence[float]] = None,
+    ) -> None:
+        """Configure camera sizing and placement in the HORUS minimap view."""
+        self.metadata.update(
+            CameraMinimapViewConfig.from_values(
+                size=size,
+                position_offset=position_offset,
+                face_camera=face_camera,
+                rotation_offset=rotation_offset,
+            ).to_payload()
+        )
+
+    def configure_immersive_view(
+        self,
+        *,
+        ros_flip_x: Optional[bool] = None,
+        ros_flip_y: Optional[bool] = None,
+    ) -> None:
+        """Configure immersive teleop image orientation for ROS image streams."""
+        self.metadata.update(
+            CameraImmersiveViewConfig.from_values(
+                ros_flip_x=ros_flip_x,
+                ros_flip_y=ros_flip_y,
+            ).to_payload()
+        )
+
+    def configure_webrtc_transport(
+        self,
+        *,
+        client_signal_topic: str = "/horus/webrtc/client_signal",
+        server_signal_topic: str = "/horus/webrtc/server_signal",
+        bitrate_kbps: Optional[int] = None,
+        framerate: Optional[int] = None,
+        stun_server_url: Optional[str] = None,
+        turn_server_url: Optional[str] = None,
+        turn_username: Optional[str] = None,
+        turn_credential: Optional[str] = None,
+    ) -> None:
+        """Configure HORUS WebRTC camera transport signaling and bitrate hints."""
+        self.metadata.update(
+            CameraWebRtcTransportConfig.from_values(
+                client_signal_topic=client_signal_topic,
+                server_signal_topic=server_signal_topic,
+                bitrate_kbps=bitrate_kbps,
+                framerate=framerate,
+                stun_server_url=stun_server_url,
+                turn_server_url=turn_server_url,
+                turn_username=turn_username,
+                turn_credential=turn_credential,
+            ).to_payload()
+        )
 
 @dataclass
 class LaserScan(BaseSensor):

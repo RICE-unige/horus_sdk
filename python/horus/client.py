@@ -257,3 +257,45 @@ class Client:
             self.backend_manager.stop_backend()
 
         print("\033[92m  ✓ HORUS SDK shutdown complete\033[0m")
+
+
+def main(argv=None):
+    """Console entrypoint for the HORUS SDK connection client."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Start the HORUS SDK client.")
+    parser.add_argument(
+        "--backend",
+        default="ros2",
+        choices=("ros2",),
+        help="Backend transport to initialize. Default: ros2.",
+    )
+    parser.add_argument(
+        "--no-auto-launch",
+        action="store_true",
+        help="Do not auto-launch the configured backend process.",
+    )
+    parser.add_argument(
+        "--no-keep-alive",
+        action="store_true",
+        help="Exit after initialization instead of keeping the client alive.",
+    )
+    args = parser.parse_args(argv)
+
+    client = Client(backend=args.backend, auto_launch=not args.no_auto_launch)
+    if args.no_keep_alive:
+        client.shutdown()
+        return 0
+
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        client.shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

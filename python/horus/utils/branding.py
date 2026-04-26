@@ -1,4 +1,16 @@
-__version__ = "0.1.0"
+__version__ = "0.1.0-alpha"
+
+import sys
+
+
+def _safe_print(text: str = "") -> None:
+    """Print branding text without failing on narrow terminal encodings."""
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        sys.stdout.write(str(text) + "\n")
+    except UnicodeEncodeError:
+        safe_text = str(text).encode(encoding, errors="replace").decode(encoding, errors="replace")
+        sys.stdout.write(safe_text + "\n")
 
 
 def show_ascii_art():
@@ -51,16 +63,16 @@ def show_ascii_art():
         ),
     )
 
-    print()
+    _safe_print()
     for row in rows:
         line = "".join(f"{colors[idx]}{segment}" for idx, segment in enumerate(row))
-        print(f"{line}{reset}")
+        _safe_print(f"{line}{reset}")
 
-    print()
-    print(f"\033[94m        Holistic Operational Reality{reset}")
-    print(f"\033[95m            for Unified Systems{reset}")
-    print()
-    print(f"\033[2m\U0001F916 Mixed Reality Robot Management Platform{reset}")
-    print(f"\033[2m\U0001F3D7\ufe0f Developed at RICE Lab, University of Genoa{reset}")
-    print(f"\033[2mHORUS SDK v{__version__}{reset}")
-    print("=" * 60)
+    _safe_print()
+    _safe_print(f"\033[94m        Holistic Operational Reality{reset}")
+    _safe_print(f"\033[95m            for Unified Systems{reset}")
+    _safe_print()
+    _safe_print(f"\033[2m\U0001F916 Mixed Reality Robot Management Platform{reset}")
+    _safe_print(f"\033[2m\U0001F3D7\ufe0f Developed at RICE Lab, University of Genoa{reset}")
+    _safe_print(f"\033[2mHORUS SDK v{__version__}{reset}")
+    _safe_print("=" * 60)

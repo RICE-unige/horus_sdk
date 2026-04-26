@@ -2,172 +2,21 @@
 Data visualization system for robot sensors and environmental data in HORUS SDK
 """
 
-from abc import ABC
+import colorsys
+import hashlib
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..sensors import SensorInstance
-
-
-class DataSourceType(Enum):
-    """Types of data sources for visualization"""
-
-    # Sensor-based data
-    SENSOR = "sensor"
-
-    # Robot-specific data
-    ROBOT_STATE = "robot_state"
-    ROBOT_TRANSFORM = "robot_transform"
-    ROBOT_GLOBAL_PATH = "robot_global_path"
-    ROBOT_LOCAL_PATH = "robot_local_path"
-    ROBOT_TRAJECTORY = "robot_trajectory"
-
-    # Environmental/World data (robot-independent)
-    OCCUPANCY_GRID = "occupancy_grid"
-    COSTMAP = "costmap"
-    MAP_3D = "map_3d"
-    GLOBAL_NAVIGATION_PATH = "global_navigation_path"
-
-    # Shared/Global data
-    TF_TREE = "tf_tree"
-    GLOBAL_MARKERS = "global_markers"
-    COORDINATE_FRAME = "coordinate_frame"
-
-
-class VisualizationType(Enum):
-    """Types of data visualization rendering"""
-
-    CAMERA_FEED = "camera_feed"
-    LASER_SCAN = "laser_scan"
-    POINT_CLOUD = "point_cloud"
-    OCCUPANCY_GRID = "occupancy_grid"
-    TRAJECTORY = "trajectory"
-    PATH = "path"
-    MARKERS = "markers"
-    TRANSFORM_TREE = "transform_tree"
-    COORDINATE_AXES = "coordinate_axes"
-    MESH = "mesh"
-    HEATMAP = "heatmap"
-
-
-@dataclass
-class DataSource(ABC):
-    """
-    Abstract base class for data sources
-
-    Args:
-        name: Unique identifier for the data source
-        source_type: Type of data source
-        topic: ROS topic or data channel
-        frame_id: Reference frame for the data
-        robot_name: Associated robot (None for robot-independent data)
-    """
-
-    name: str
-    source_type: DataSourceType
-    topic: str
-    frame_id: str = "map"
-    robot_name: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self):
-        if not self.name:
-            raise ValueError("Data source name cannot be empty")
-        if not self.topic:
-            raise ValueError("Data source topic cannot be empty")
-
-    def is_robot_specific(self) -> bool:
-        """Check if this data source is tied to a specific robot"""
-        return self.robot_name is not None
-
-    def add_metadata(self, key: str, value: Any) -> None:
-        """Add metadata to data source"""
-        self.metadata[key] = value
-
-    def get_metadata(self, key: str, default: Any = None) -> Any:
-        """Get metadata value by key"""
-        return self.metadata.get(key, default)
-
-
-class SensorDataSource(DataSource):
-    """Data source from a robot sensor"""
-
-    def __init__(self, sensor: SensorInstance, **kwargs):
-        super().__init__(
-            name=sensor.name,
-            source_type=DataSourceType.SENSOR,
-            topic=sensor.topic,
-            frame_id=sensor.frame_id,
-            **kwargs,
-        )
-        self.sensor = sensor
-
-
-class RobotDataSource(DataSource):
-    """Data source from robot state/transforms"""
-
-    def __init__(
-        self,
-        name: str,
-        source_type: DataSourceType,
-        topic: str,
-        robot_name: str,
-        frame_id: str = "map",
-        **kwargs,
-    ):
-        super().__init__(name, source_type, topic, frame_id, robot_name, **kwargs)
-
-
-class EnvironmentDataSource(DataSource):
-    """Data source from environment/world (robot-independent)"""
-
-    def __init__(
-        self,
-        name: str,
-        source_type: DataSourceType,
-        topic: str,
-        frame_id: str = "map",
-        **kwargs,
-    ):
-        super().__init__(name, source_type, topic, frame_id, None, **kwargs)
-
-
-@dataclass
-class VisualizationConfig:
-    """
-    Configuration for a specific visualization
-
-    Args:
-        viz_type: Type of visualization rendering
-        data_source: Associated data source
-        display_name: Human-readable name for display
-        enabled: Whether visualization is active
-        render_options: Rendering-specific options
-        layer_priority: Display layer priority (higher = front)
-    """
-
-    viz_type: VisualizationType
-    data_source: DataSource
-    display_name: str = ""
-    enabled: bool = True
-    render_options: Dict[str, Any] = field(default_factory=dict)
-    layer_priority: int = 0
-
-    def __post_init__(self):
-        """Set default display name if not provided"""
-        if not self.display_name:
-            source_desc = (
-                f"{self.data_source.robot_name}:" if self.data_source.robot_name else ""
-            )
-            self.display_name = (
-                f"{source_desc}{self.data_source.name} ({self.viz_type.value})"
-            )
-
-    def is_robot_specific(self) -> bool:
-        """Check if this visualization is tied to a specific robot"""
-        return self.data_source.is_robot_specific()
-
+from .models import (
+    DataSource,
+    DataSourceType,
+    EnvironmentDataSource,
+    RobotDataSource,
+    SensorDataSource,
+    VisualizationConfig,
+    VisualizationType,
+)
 
 @dataclass
 class DataViz:
@@ -200,14 +49,72 @@ class DataViz:
 
             self.color_manager = ColorManager()
 
+    @staticmethod
+    def _deterministic_robot_hex_color(robot_name: str) -> str:
+        """
+        Generate a stable, robot-unique color independent of DataViz instance state.
+        """
+        normalized_name = str(robot_name or "").strip().lower().encode("utf-8")
+        digest = hashlib.sha256(normalized_name).hexdigest()
+        # Lift channel floor so colors remain visible in MR overlays.
+        r = 64 + (int(digest[0:2], 16) // 2)
+        g = 64 + (int(digest[2:4], 16) // 2)
+        b = 64 + (int(digest[4:6], 16) // 2)
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    @staticmethod
+    def _deterministic_robot_laser_hex_color(robot_name: str) -> str:
+        """
+        Generate a vivid, high-separation laser color from robot name.
+        """
+        normalized_name = str(robot_name or "").strip().lower().encode("utf-8")
+        digest = hashlib.sha256(normalized_name).digest()
+        hue = ((digest[0] << 8) | digest[1]) / 65535.0
+        saturation = 0.82 + (digest[2] / 255.0) * 0.10
+        value = 0.86 + (digest[3] / 255.0) * 0.10
+        red, green, blue = colorsys.hsv_to_rgb(
+            hue % 1.0,
+            min(0.95, saturation),
+            min(0.96, value),
+        )
+        return "#{:02x}{:02x}{:02x}".format(
+            int(round(red * 255.0)),
+            int(round(green * 255.0)),
+            int(round(blue * 255.0)),
+        )
+
+    @staticmethod
+    def _deterministic_robot_nav_path_hex_color(robot_name: str, role: str) -> str:
+        """
+        Generate a stable robot-specific nav-path color with global/local gradient variants.
+        """
+        normalized_name = str(robot_name or "").strip().lower().encode("utf-8")
+        digest = hashlib.sha256(normalized_name).digest()
+        hue = (digest[0] / 255.0 + (digest[1] / 255.0) * 0.12) % 1.0
+
+        if str(role).strip().lower() == "local":
+            saturation = 0.54
+            value = 0.97
+        else:
+            saturation = 0.82
+            value = 0.90
+
+        red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
+        return "#{:02x}{:02x}{:02x}".format(
+            int(round(red * 255.0)),
+            int(round(green * 255.0)),
+            int(round(blue * 255.0)),
+        )
+
     # Sensor-based visualizations
     def add_sensor_visualization(
         self,
         sensor: SensorInstance,
         robot_name: str,
+        enabled: bool = True,
         render_options: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add a sensor-based visualization with automatic color assignment"""
+        """Add a sensor-based visualization with automatic color assignment."""
         if render_options is None:
             render_options = {}
 
@@ -220,17 +127,18 @@ class DataViz:
         # Auto-assign color based on sensor type and robot
         if "color" not in render_options:
             if viz_type == VisualizationType.LASER_SCAN:
-                color = self.color_manager.get_laser_scan_color(robot_name)
-                render_options["color"] = color.to_hex()
-                render_options["alpha"] = color.a
+                render_options["color"] = self._deterministic_robot_laser_hex_color(robot_name)
+                render_options["alpha"] = 0.8
             else:
-                # For other sensors, use base robot color
-                color = self.color_manager.get_robot_color(robot_name)
-                render_options["color"] = color.to_hex()
+                # Sensor colors must stay stable across separate DataViz instances.
+                render_options["color"] = self._deterministic_robot_hex_color(robot_name)
 
         # Create and add visualization
         viz_config = VisualizationConfig(
-            viz_type=viz_type, data_source=data_source, render_options=render_options
+            viz_type=viz_type,
+            data_source=data_source,
+            enabled=bool(enabled),
+            render_options=render_options,
         )
 
         self._add_or_update_visualization(viz_config)
@@ -282,9 +190,10 @@ class DataViz:
 
         # Auto-assign color for global path
         if "color" not in render_options:
-            color = self.color_manager.get_path_color(robot_name, "global")
-            render_options["color"] = color.to_hex()
-            render_options["alpha"] = color.a
+            render_options["color"] = self._deterministic_robot_nav_path_hex_color(
+                robot_name, "global"
+            )
+            render_options["alpha"] = 0.9
             render_options["line_width"] = render_options.get("line_width", 3)
 
         data_source = RobotDataSource(
@@ -318,9 +227,10 @@ class DataViz:
 
         # Auto-assign color for local path (lighter than global)
         if "color" not in render_options:
-            color = self.color_manager.get_path_color(robot_name, "local")
-            render_options["color"] = color.to_hex()
-            render_options["alpha"] = color.a
+            render_options["color"] = self._deterministic_robot_nav_path_hex_color(
+                robot_name, "local"
+            )
+            render_options["alpha"] = 0.72
             render_options["line_width"] = render_options.get("line_width", 2)
             render_options["line_style"] = render_options.get("line_style", "dashed")
 
@@ -376,6 +286,114 @@ class DataViz:
 
         self._add_or_update_visualization(viz_config)
 
+    def add_robot_velocity_data(
+        self,
+        robot_name: str,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add robot planar velocity text visualization backed by odometry."""
+        if render_options is None:
+            render_options = {}
+
+        if "color" not in render_options:
+            color = self.color_manager.get_robot_color(robot_name)
+            render_options["color"] = color.to_hex()
+        render_options.setdefault("units", "m/s")
+        render_options.setdefault("text_back_offset_m", 0.36)
+        render_options.setdefault("floor_offset_m", 0.01)
+        render_options.setdefault("update_hz", 10.0)
+
+        data_source = RobotDataSource(
+            name=f"{robot_name}_velocity_data",
+            source_type=DataSourceType.ROBOT_ODOMETRY,
+            topic=topic,
+            robot_name=robot_name,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.VELOCITY_DATA,
+            data_source=data_source,
+            render_options=render_options,
+            layer_priority=6,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_robot_odometry_trail(
+        self,
+        robot_name: str,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add short decimated odometry trail visualization."""
+        if render_options is None:
+            render_options = {}
+
+        if "color" not in render_options:
+            render_options["color"] = self._deterministic_robot_hex_color(robot_name)
+        render_options.setdefault("max_points", 48)
+        render_options.setdefault("history_seconds", 3.2)
+        render_options.setdefault("min_spacing_m", 0.07)
+        render_options.setdefault("line_width_m", 0.0096)
+        render_options.setdefault("trail_back_offset_m", 0.44)
+
+        data_source = RobotDataSource(
+            name=f"{robot_name}_odometry_trail",
+            source_type=DataSourceType.ROBOT_ODOMETRY,
+            topic=topic,
+            robot_name=robot_name,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.ODOMETRY_TRAIL,
+            data_source=data_source,
+            render_options=render_options,
+            layer_priority=2,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_robot_collision_risk(
+        self,
+        robot_name: str,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add collision risk visualization driven by SDK-published risk signal."""
+        if render_options is None:
+            render_options = {}
+
+        if "color" not in render_options:
+            render_options["color"] = "#FF6A00"
+        render_options.setdefault("threshold_m", 0.45)
+        render_options.setdefault("radius_m", 0.45)
+        render_options.setdefault("source", "laser_scan")
+        render_options.setdefault("alpha_min", 0.0)
+        render_options.setdefault("alpha_max", 0.55)
+
+        data_source = RobotDataSource(
+            name=f"{robot_name}_collision_risk",
+            source_type=DataSourceType.ROBOT_COLLISION_RISK,
+            topic=topic,
+            robot_name=robot_name,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.COLLISION_RISK,
+            data_source=data_source,
+            render_options=render_options,
+            layer_priority=7,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
     # Environment/World visualizations (robot-independent)
     def add_occupancy_grid(
         self,
@@ -419,6 +437,52 @@ class DataViz:
             data_source=data_source,
             render_options=render_options or {},
             layer_priority=-5,  # Background layer
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_3d_mesh(
+        self,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add global 3D mesh map visualization."""
+        data_source = EnvironmentDataSource(
+            name="map_3d_mesh",
+            source_type=DataSourceType.MAP_3D,
+            topic=topic,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.MESH,
+            data_source=data_source,
+            render_options=render_options or {},
+            layer_priority=-4,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_3d_octomap(
+        self,
+        topic: str,
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add global OctoMap visualization metadata."""
+        data_source = EnvironmentDataSource(
+            name="map_3d_octomap",
+            source_type=DataSourceType.MAP_3D,
+            topic=topic,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.OCTOMAP,
+            data_source=data_source,
+            render_options=render_options or {},
+            layer_priority=-4,
         )
 
         self._add_or_update_visualization(viz_config)
@@ -486,6 +550,59 @@ class DataViz:
             viz_type=VisualizationType.TRANSFORM_TREE,
             data_source=data_source,
             render_options=render_options or {},
+        )
+
+        self._add_or_update_visualization(viz_config)
+
+    def add_semantic_box(
+        self,
+        semantic_id: str,
+        label: str,
+        center: Tuple[float, float, float],
+        size: Tuple[float, float, float],
+        frame_id: str = "map",
+        rotation_offset_euler: Optional[Tuple[float, float, float]] = None,
+        enabled: bool = True,
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add a static semantic perception box as a global map overlay."""
+        semantic_id = str(semantic_id or "").strip()
+        if not semantic_id:
+            raise ValueError("semantic_id cannot be empty")
+
+        label = str(label or "").strip()
+        if not label:
+            raise ValueError("label cannot be empty")
+
+        if center is None or len(center) != 3:
+            raise ValueError("center must be a 3-tuple")
+        if size is None or len(size) != 3:
+            raise ValueError("size must be a 3-tuple")
+
+        options = dict(render_options or {})
+        options["id"] = semantic_id
+        options["label"] = label
+        options["center"] = [float(center[0]), float(center[1]), float(center[2])]
+        options["size"] = [float(size[0]), float(size[1]), float(size[2])]
+        options["rotation_offset_euler"] = [
+            float(rotation_offset_euler[0]) if rotation_offset_euler else 0.0,
+            float(rotation_offset_euler[1]) if rotation_offset_euler else 0.0,
+            float(rotation_offset_euler[2]) if rotation_offset_euler else 0.0,
+        ]
+
+        data_source = EnvironmentDataSource(
+            name=f"semantic_box_{semantic_id}",
+            source_type=DataSourceType.GLOBAL_MARKERS,
+            topic=f"/horus/semantic_boxes/{semantic_id}",
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.SEMANTIC_BOX,
+            data_source=data_source,
+            enabled=bool(enabled),
+            render_options=options,
+            layer_priority=4,
         )
 
         self._add_or_update_visualization(viz_config)

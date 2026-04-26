@@ -1,23 +1,33 @@
-"""HORUS Mixed Reality Robot Management SDK"""
-from .utils.branding import show_ascii_art
-
-# Display branding automatically on import
-show_ascii_art()
+"""HORUS Mixed Reality Robot Management SDK."""
 
 from .client import Client
 from .color import ColorManager, ColorScheme, RGBColor
 from .core import (
-    Event, EventBus, EventPriority, get_event_bus, publish, subscribe, unsubscribe,
-    TopicMap, TopicInfo, TopicType, TopicDirection, get_topic_map
+    Event,
+    EventBus,
+    EventPriority,
+    TopicDirection,
+    TopicInfo,
+    TopicMap,
+    TopicType,
+    get_event_bus,
+    get_topic_map,
+    publish,
+    subscribe,
+    unsubscribe,
 )
 from .dataviz import DataSourceType, DataViz, VisualizationType
 from .robot import Robot, RobotDimensions, RobotType, register_robots
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
-from .utils.branding import __version__
+from .utils.branding import __version__, show_ascii_art
+
+# HORUS intentionally shows its project branding when the SDK is imported.
+show_ascii_art()
 
 __all__ = [
     "Client",
     "__version__",
+    "show_ascii_art",
     "Robot",
     "RobotDimensions",
     "RobotType",
@@ -32,14 +42,14 @@ __all__ = [
     "ColorScheme",
     "RGBColor",
     "Event",
-    "EventBus", 
+    "EventBus",
     "EventPriority",
     "get_event_bus",
     "publish",
-    "subscribe", 
+    "subscribe",
     "unsubscribe",
     "TopicMap",
-    "TopicInfo", 
+    "TopicInfo",
     "TopicType",
     "TopicDirection",
     "get_topic_map",

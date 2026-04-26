@@ -31,14 +31,8 @@ classifiers = [
 keywords = ["robotics", "mixed-reality", "ros2", "meta-quest", "visualization"]
 requires-python = ">=3.10"
 dependencies = [
-    "rclpy>=3.0.0",
-    "std_msgs",
-    "geometry_msgs",
-    "sensor_msgs",
-    "nav_msgs",
-    "tf2_ros",
     "numpy>=1.21.0",
-    "dataclasses-json>=0.5.0",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]

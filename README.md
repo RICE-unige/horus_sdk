@@ -28,6 +28,7 @@ npm run docs:start
 > [!IMPORTANT]
 > This repository owns the SDK/client orchestration layer of HORUS.
 > The ROS 2 bridge runtime is maintained in [`horus_ros2`](https://github.com/RICE-unige/horus_ros2), and the MR release/distribution repository is [`horus`](https://github.com/RICE-unige/horus).
+> Adjacent future services for copilot orchestration and scene understanding are now being developed separately in [`compass`](https://github.com/Omotoye/compass) and [`lenses`](https://github.com/Omotoye/lenses).
 
 ## Research Focus
 
@@ -45,13 +46,17 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | SDK + registration payloads | `horus_sdk` | Robot config modeling, metadata, monitor UX |
 | ROS 2 bridge runtime | `horus_ros2` | TCP/WebRTC bridge, ROS topic/service routing |
 | MR app runtime | `horus` | Unity Quest scene, workspace flow, in-headset UX |
+| Copilot/orchestration service | `compass` | Future conversational planning, approvals, and backend execution orchestration |
+| Scene understanding service | `lenses` | Future perception, scene graph generation, and semantic context |
 
 ## Repository Map
 
 | Path | Description |
 |---|---|
 | `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
-| `python/examples/` | Operational demos (`sdk_registration_demo.py`, `sdk_typical_ops_demo.py`, fake publishers, e2e checks) |
+| `python/examples/` | Curated, no-CLI SDK registration examples for normal user workflows |
+| `python/examples/legacy/` | Full legacy fake-runtime and SDK demo catalog preserved for validation and advanced variants |
+| `python/examples/tools/` | Support utilities for legacy demos (for example asset fetchers) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
 | `cpp/` | C++ SDK parity track (paused) |
 | `rust/` | Rust SDK parity track (paused) |
@@ -71,7 +76,8 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 
 - Python **3.10+**
 - ROS 2 **Humble** or **Jazzy** environment available (`rclpy` + message packages)
-- Running bridge from `horus_ros2` (`horus_unity_bridge`)
+- ROS packages are installed through the ROS/apt environment, not as portable PyPI dependencies.
+- Installed/buildable `horus_ros2` bridge runtime (`horus_unity_bridge`); SDK registration auto-starts it when needed
 
 > [!WARNING]
 > `horus_ros2/main` currently includes `GenericClient`-based bridge code that is not available in ROS 2 Humble headers.
@@ -116,37 +122,215 @@ pip install -e ".[dev]"
 
 ## End-to-End Quick Start
 
-### 1) Start bridge (`horus_ros2`)
+> [!NOTE]
+> Commands below use repository-clone paths (`~/horus_sdk`, `~/horus_ws`).
+> If you installed with `install.sh`, adapt paths to `~/horus/sdk` and `~/horus/ros2`.
 
-Follow the setup/install instructions in the [`horus_ros2` README](https://github.com/RICE-unige/horus_ros2), then run from the ROS 2 workspace root:
+### 1) Prepare the SDK shell
 
-```bash
-cd ~/horus_ws
-source /opt/ros/humble/setup.bash  # use jazzy if that is your active ROS distro
-colcon build --symlink-install --packages-select horus_unity_bridge --cmake-args -DENABLE_WEBRTC=ON
-source install/setup.bash
-ros2 launch horus_unity_bridge unity_bridge.launch.py
-```
+The SDK registration client manages the HORUS bridge for the normal curated examples. When registration starts, it checks port `10000`; if the bridge is not already running, it auto-starts `horus_unity_bridge` from the current ROS shell first and then falls back to the installer `horus-start` helper when available.
 
-### 2) Start unified fake ops runtime (TF + camera + teleop + tasks)
+Manual bridge launch is therefore not part of the normal quick start. Keep manual `ros2 launch horus_unity_bridge unity_bridge.launch.py` usage for legacy validation, custom bridge debugging, or cases where `HORUS_SDK_BRIDGE_AUTOSTART_MODE=off`.
+
+When running from a source checkout, keep your ROS environment and SDK path active:
 
 ```bash
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
-source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images --task-path-publish-rate 5
+source /opt/ros/jazzy/setup.bash  # or humble when using a Humble-compatible bridge revision
+source ~/horus_ws/install/setup.bash  # makes horus_unity_bridge discoverable for auto-start
+export PYTHONPATH=python:$PYTHONPATH
 ```
 
-### 3) Run typical SDK registration demo
+### 2) Use the curated SDK examples
+
+The root `python/examples/` scripts are intentionally small: no CLI flags, no option matrix, just realistic SDK registrations that match one useful HORUS MR workflow.
+
+Each workflow uses one fake/runtime terminal and one SDK registration terminal unless noted otherwise. The SDK registration terminal is also responsible for bridge auto-start.
+
+### Ground robot ops fleet
+
+Use this first. It covers the normal ground-robot workflow: Robot Manager, camera, minimap/immersive teleop, go-to point, waypoint, paths, odometry, and collision-risk overlays.
+
+```bash
+# Terminal A: fake robot data and task subscribers
+python3 python/examples/legacy/fake_tf_ops_suite.py
+
+# Terminal B: SDK registration
+python3 python/examples/ops_registration.py
+```
+
+### Flat single-robot ROS binding
+
+Use this when a robot publishes flat ROS topics such as `/cmd_vel`, `/goal_pose`, `/global_path`, `/local_path`, and `/camera/image_raw` instead of namespaced topics. The fake runtime publishes a front raw camera stream and continuously refreshes nav paths while goals or waypoints are active.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_single_flat.py
+
+# Terminal B
+python3 python/examples/flat_robot_registration.py
+```
+
+### Drone registration
+
+Use this for aerial robots. HORUS MR keeps the drone `Take Off` and `Land` controls enabled for this robot type.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_drone_ops_suite.py
+
+# Terminal B
+python3 python/examples/drone_registration.py
+```
+
+### Legged robot registration
+
+Use this for legged robots. HORUS MR presents the action controls as `Stand Up` and `Sit Down` instead of drone takeoff/land controls.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_legged_ops_suite.py
+
+# Terminal B
+python3 python/examples/legged_registration.py
+```
+
+### Live Carter registration
+
+Use this for the live NVIDIA Carter multi-robot setup. The curated example registers three Carter robots, the shared occupancy map, front compressed cameras, 2D lidar, teleop, Robot Manager task topics, odometry trails, and RViz-relayed global/local plans.
+
+Expected live topics include `/tf`, `/tf_static`, `/shared_map`, `/<robot>/cmd_vel`, `/<robot>/chassis/odom`, `/<robot>/front_2d_lidar/scan`, `/<robot>/front_stereo_camera/left/image_raw/compressed`, `/rviz/<robot>/plan`, and `/rviz/<robot>/local_plan` for `carter1`, `carter2`, and `carter3`.
 
 ```bash
 cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
+source /opt/ros/jazzy/setup.bash
 source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
+export PYTHONPATH=python:$PYTHONPATH
+
+python3 python/examples/carter_registration.py
 ```
+
+For advanced Carter validation with topic probing, Nav2 action bridging, and AprilTag semantic overlays, use the legacy live Carter demo documented in [python/examples/legacy/README.md](python/examples/legacy/README.md).
+
+### Live Unitree Go1 registration
+
+Use this for the real Unitree Go1 ROS graph. The registration includes TF, the front compressed camera, LaserScan, collision alert DataViz, Robot Manager, legged teleop on `/unitree_go1/cmd_vel`, and the real Go1 URDF visual mesh from `/home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description`.
+
+The HORUS MR legged action buttons publish `/unitree_go1/stand_up` and `/unitree_go1/sit_down`. The support relay below maps those to the Unitree SDK high-mode service `/unitree_go1/legged_sdk/set_high_mode` with `mode=10` for stand and `mode=20` for sit. The same relay also converts `/unitree_go1/scan` into `/unitree_go1/collision_risk` so the HORUS collision alert layer can render live obstacle risk.
+
+```bash
+cd ~/horus_sdk
+source /opt/ros/jazzy/setup.bash
+source ~/horus_ws/install/setup.bash
+export PYTHONPATH=python:$PYTHONPATH
+
+# Required robot-description source for visual mesh registration:
+# /home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description/urdf/go1.urdf
+
+# Terminal A: relay HORUS legged buttons to Unitree SetHighMode service
+python3 python/examples/tools/unitree_go1_high_mode_relay.py
+
+# Terminal B: SDK registration
+python3 python/examples/unitree_go1_registration.py
+```
+
+### Robot-description registration
+
+Use this when you want HORUS MR to load URDF-backed robot bodies instead of simple bounding boxes.
+
+```bash
+# One-time asset fetch
+python3 python/examples/tools/fetch_robot_description_assets.py
+
+# Terminal A
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
+
+# Terminal B
+python3 python/examples/robot_description_registration.py
+```
+
+### Stereo camera registration
+
+Use this for the dual camera policy used by teleop: mono minimap stream plus side-by-side stereo teleop stream.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_stereo_camera_multi.py
+
+# Terminal B
+python3 python/examples/stereo_registration.py
+```
+
+### Occupancy Grid Map
+
+Use this to showcase a 2D occupancy-grid map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
+
+```bash
+# One-time asset fetch
+python3 python/examples/tools/fetch_robot_description_assets.py
+
+# Terminal A: real-model robots plus occupancy grid
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --publish-occupancy-grid
+
+# Terminal B: SDK registration
+python3 python/examples/occupancy_map_registration.py
+```
+
+### PointCloud Map
+
+Use this to showcase a global PointCloud2 map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
+
+```bash
+# Terminal A: real-model robots plus PointCloud2 map
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode pointcloud --map-3d-profile realistic
+
+# Terminal B: SDK registration
+python3 python/examples/pointcloud_map_registration.py
+```
+
+### Dense Mesh Map
+
+Use this to showcase the highest-detail synthetic mesh map currently exposed by the examples. This workflow is paired with the real-model robot-description fake runtime, but the focus is the dense mesh map layer. It is intentionally dense and should be used for visual quality/performance validation, not as the first Quest stress test.
+
+```bash
+# Terminal A: real-model robots plus ultra-dense mesh map
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-profile realistic --map-3d-mesh-voxel-size 0.07 --map-3d-mesh-max-voxels 220000 --map-3d-mesh-max-triangles 220000 --map-3d-mesh-update-policy snapshot
+
+# Terminal B: SDK registration
+python3 python/examples/mesh_map_registration.py
+```
+
+### Octomap Map
+
+Use this to showcase the octomap-style global map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
+
+```bash
+# Terminal A: real-model robots plus octomap mesh layer
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode octomap --map-3d-profile realistic
+
+# Terminal B: SDK registration
+python3 python/examples/octomap_registration.py
+```
+
+### Semantic perception registration
+
+Use this to register global semantic boxes, such as detected people or equipment, as default-visible DataViz layers.
+
+```bash
+# Terminal A
+python3 python/examples/legacy/fake_tf_ops_suite.py --robot-count 4
+
+# Terminal B
+python3 python/examples/semantic_perception_registration.py
+```
+
+### Multi-operator note
+
+The curated registration examples all use `keep_alive=True`, so they remain suitable for host/join and private multi-operator validation. Start any example above before or during the shared HORUS MR session; joiners can receive the SDK registration replay from the active host-side SDK process.
+
+### Legacy catalog
+
+The full legacy command catalog remains in [python/examples/legacy/README.md](python/examples/legacy/README.md). Use it for stress tests, advanced flag variants, Carter/live integrations, tutorial-specific flows, and lower-level validation.
 
 ## Camera Registration Model
 
@@ -155,10 +339,18 @@ Camera payloads support legacy and profile-based transport fields:
 - `minimap_streaming_type`
 - `teleop_streaming_type`
 - `startup_mode`
+- `is_stereo`, `stereo_layout`, `right_topic` (base stereo capability/source descriptors)
+- `minimap_topic`, `minimap_image_type`, `minimap_max_fps`
+- `teleop_topic`, `teleop_image_type`
+- `teleop_stereo_layout`, `teleop_right_topic` (for dual-topic stereo)
 
 Typical policy:
 - MiniMap -> ROS
 - Teleop -> WebRTC
+
+Dual-stream policy used by the stereo demos:
+- MiniMap topic is mono and capped at 30 FPS from source.
+- Teleop topic is high-rate (SBS via WebRTC, dual-topic via ROS).
 
 > [!TIP]
 > Keep legacy `streaming_type` populated for compatibility with older MR clients while using profile fields for new behavior.
@@ -167,28 +359,28 @@ Typical policy:
 
 Current SDK-side teleoperation support includes:
 - `control.teleop` payload serialization (`command_topic`, `raw_input_topic`, `head_pose_topic`, profile/response/deadman/axes/discrete settings),
-- teleop fake TF test scenarios (`fake_tf_teleop_single.py`, `fake_tf_teleop_multi.py`) for command-flow validation,
+- unified fake ops runtime (`python/examples/legacy/fake_tf_ops_suite.py`) for command-flow validation across teleop, go-to-point, waypoint, paths, odometry, and collision-risk data,
 - dashboard control-topic visibility for `cmd_vel`, `joy`, and `head_pose`,
 - runtime transport observability via `/horus/teleop/runtime_state` (ROS/WebRTC active path highlight).
 
 ## Robot Task Contract Baseline
 
 Current SDK-side robot task support includes:
-- `control.tasks.go_to_point` payload serialization (`goal_topic`, `cancel_topic`, `status_topic`, `frame_id`, tolerances),
+- `control.tasks.go_to_point` payload serialization (`goal_topic`, `cancel_topic`, `status_topic`, `frame_id`, tolerances, `min_altitude_m`, `max_altitude_m`),
 - `control.tasks.waypoint` payload serialization (`path_topic`, `status_topic`, `frame_id`, tolerances),
 - metadata override source `robot.metadata["task_config"]["go_to_point"]`,
 - metadata override source `robot.metadata["task_config"]["waypoint"]`,
 - go-to-point cancel contract on `/<robot>/goal_cancel` using `std_msgs/String` payload `"cancel"`,
-- fake goal-navigation simulator `python/examples/fake_tf_go_to_point.py` for send/cancel/reached cycle tests,
-- fake waypoint simulator `python/examples/fake_tf_waypoint.py` for ordered path/status cycle tests.
+- unified fake ops runtime `python/examples/legacy/fake_tf_ops_suite.py` for ground teleop, go-to-point, waypoint, task path, and status cycle tests,
+- fake aerial ops simulator `python/examples/legacy/fake_tf_drone_ops_suite.py` for drone takeoff/land + 3D go-to/waypoint validation.
 
 ## Global Visualization and Workspace Config Model
 
 Registration payloads can now include:
-- `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid),
+- `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid, 3D maps, octomap mesh layers, and semantic boxes),
 - `workspace_config.position_scale` (global scale hint consumed by MR runtime).
 
-This enables 2D occupancy-map wiring without duplicating map config in each robot-scoped visualization block.
+This enables workspace-level visualization wiring without duplicating map or semantic-layer config in each robot-scoped visualization block. In current MR builds, global semantic layers are default-visible for all operators, while a user closing/hiding a layer is treated as a local display choice.
 
 ## Dashboard Semantics
 
@@ -208,92 +400,44 @@ Link/Data interpretation:
 > [!WARNING]
 > Topic truth depends on both ROS graph state and app connection phase. Validate with full workflow (connect -> workspace accept -> register).
 
+Camera dashboard notes:
+- Camera transport badge is resolved from active runtime mode (`ROS` or `WEBRTC`) with profile fallback.
+- For camera rows on active `WEBRTC`, `Link` is app-session/runtime-state based (not ROS-subscriber based).
+- For camera rows on active `ROS`, `Link` follows backend subscriber presence.
+- Runtime transport overrides have expiry/refresh handling to reduce stale mode indicators.
+
+## Multi-Operator SDK Baseline
+
+Current SDK support for the multi-operator runtime includes:
+- dashboard `Operators` summary and presence-stage visibility for shared-host, shared-join, and private-workspace progression,
+- dedicated host-side test flow via `python/examples/legacy/sdk_multi_operator_host_demo.py`,
+- SDK registry replay protocol publishing for joiner baseline reconstruction:
+  - `/horus/multi_operator/sdk_registration_replay_request`
+  - `/horus/multi_operator/sdk_registry_replay_begin`
+  - `/horus/multi_operator/sdk_registry_replay_item`
+  - `/horus/multi_operator/sdk_registry_replay_end`
+- private-operator presence reporting and direct collaborative registration/replay support without shared workspace sync,
+- bridge auto-start strategy hardening that prefers the current shell ROS 2 workspace before helper fallback (with mismatch diagnostics).
+
+> [!NOTE]
+> The SDK is not the source of truth for host-authored workspace geometry. Workspace baseline still comes from the MR runtime (`horus`).
+
 ## Practical Validation Workflows
 
-### All-in-one 10-robot ops test (no occupancy map)
+The runnable command catalog for the preserved demo suite now lives in [python/examples/legacy/README.md](python/examples/legacy/README.md).
 
-```bash
-# Terminal A: unified fake runtime (robots stay static until teleop/task commands)
-python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --rate 30 --static-camera --publish-compressed-images
+Use that document for:
+- registration smoke tests and multi-robot camera stress,
+- teleop, go-to-point, waypoint, drone, and legged action validation,
+- robot-description, tutorial, RViz, and Carter live integrations,
+- stereo camera and immersive transport coverage,
+- synthetic 3D map, octomap, and mesh-conversion support flows.
 
-# Terminal B: typical SDK registration flow (camera + teleop + go-to-point + waypoint)
-python3 python/examples/sdk_typical_ops_demo.py --robot-count 10 --workspace-scale 0.1
-```
-
-Notes:
-- this scenario intentionally does not publish occupancy grid,
-- robots move only from `/<robot>/cmd_vel`, `/<robot>/goal_pose`, or `/<robot>/waypoint_path`,
-- active teleop input cancels active go-to-point/waypoint motion and requires task resend.
-
-Command examples while the suite is running:
-
-```bash
-# Teleop (atlas): move forward while turning
-ros2 topic pub -r 10 /atlas/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.35}, angular: {z: 0.30}}"
-
-# Go-to-point (nova)
-ros2 topic pub --once /nova/goal_pose geometry_msgs/msg/PoseStamped "{header: {frame_id: map}, pose: {position: {x: 1.5, y: -0.8, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}"
-
-# Waypoint path (orion)
-ros2 topic pub --once /orion/waypoint_path nav_msgs/msg/Path "{header: {frame_id: map}, poses: [{header: {frame_id: map}, pose: {position: {x: 0.8, y: 0.8, z: 0.0}, orientation: {w: 1.0}}}, {header: {frame_id: map}, pose: {position: {x: 1.6, y: 0.2, z: 0.0}, orientation: {w: 1.0}}}]}"
-```
-
-### Registration smoke test
-
-```bash
-python3 python/examples/e2e_registration_check.py
-```
-
-### Multi-robot camera stress test
-
-```bash
-cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
-source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-
-python3 python/examples/fake_tf_ops_suite.py --robot-count 10 --static-camera --publish-compressed-images
-python3 python/examples/sdk_registration_demo.py --robot-count 10 --with-camera --workspace-scale 0.1
-```
-
-### Occupancy-map integration test
-
-```bash
-cd ~/horus_sdk
-source /opt/ros/humble/setup.bash
-source ~/horus_ws/install/setup.bash
-export PYTHONPATH=python
-
-python3 python/examples/fake_tf_ops_suite.py --robot-count 6 --publish-occupancy-grid --occupancy-rate 1.0 --static-camera --publish-compressed-images
-python3 python/examples/sdk_registration_demo.py --robot-count 6 --with-camera --with-occupancy-grid --workspace-scale 0.1
-```
-
-### Teleop command-flow fake TF tests
-
-```bash
-# Single robot: remains static until /test_bot/cmd_vel receives Twist
-python3 python/examples/fake_tf_teleop_single.py --robot-name test_bot --static-camera --publish-compressed-images
-
-# Multi-robot: all stay static until per-robot cmd_vel commands arrive
-python3 python/examples/fake_tf_teleop_multi.py --robot-count 4 --robot-name test_bot --static-camera --publish-compressed-images
-```
-
-### Go-to-point task fake TF test
-
-```bash
-# Robots stay idle until /<robot>/goal_pose is published.
-# Cancel with:  ros2 topic pub --once /<robot>/goal_cancel std_msgs/msg/String '{data: "cancel"}'
-# Goal completion/cancel status is published on /<robot>/goal_status.
-python3 python/examples/fake_tf_go_to_point.py --robot-count 3 --robot-name test_bot --static-camera
-```
-
-### Waypoint task fake TF test
-
-```bash
-# Send nav_msgs/Path to /<robot>/waypoint_path.
-# Execution progress/status is emitted on /<robot>/waypoint_status.
-python3 python/examples/fake_tf_waypoint.py --robot-count 3 --robot-name test_bot --static-camera
-```
+Recommended first checks:
+- `python/examples/legacy/e2e_registration_check.py`
+- `python/examples/legacy/fake_tf_ops_suite.py`
+- `python/examples/legacy/sdk_typical_ops_demo.py`
+- `python/examples/legacy/sdk_multi_operator_host_demo.py`
 
 ## Known Constraints
 
@@ -308,6 +452,9 @@ Current Unity MR baseline relevant to SDK integration:
 - Camera runtime follows MiniMap/Teleop transport profiles (MiniMap-first startup policy).
 - Occupancy map is consumed from global visualization payload and remains hidden until workspace accept.
 - Registration-path batching/deduping exists on MR side to reduce workspace-accept stalls.
+- Multi-operator host/join workspace baseline is active in MR (`Join Workspace` gating after alignment).
+- Joiner robot baseline reconstruction uses SDK replay begin/item/end topics (workspace baseline remains MR-owned).
+- Per-robot lease-based multi-operator control foundation is integrated on the MR/bridge path (SDK currently provides observability and replay support, not arbitration).
 
 > [!NOTE]
 > When validating SDK changes, always test against the full MR flow:
@@ -316,28 +463,33 @@ Current Unity MR baseline relevant to SDK integration:
 ## Cross-Repo Alignment Priorities
 
 The MR roadmap introduces upcoming requirements that depend on SDK payload and orchestration maturity:
-- 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-lead teleop).
+- 2D/3D tasking workflows (go-to-point, waypoints, path drawing, go-to-label, multi-robot go-to-point, follow-leader teleop).
 - Expanded sensor visualization requirements (battery, velocity, LaserScan, PointCloud).
+- Robot description evolution from runtime visual-mesh delivery toward known-robot local hero meshes and unknown-robot ingestion policy.
 - Session recording + after-action replay data contracts.
 - Resource-aware streaming policy signals (quality tiers, priority, stream caps).
 - Persistent mission objects (pins/annotations/evidence/task assignment).
-- Safety and semantic perception signals for teleop and supervision.
-- Multi-operator and copilot-oriented orchestration scenarios.
+- Safety and semantic-perception signals for teleop and supervision, with future scene-context sources expected from `lenses`.
+- Multi-operator and copilot-oriented orchestration scenarios, with future copilot workflows expected from `compass`.
 
 SDK roadmap and examples should evolve to provide the metadata, presets, and validation scripts needed for these MR milestones.
 
 ## Roadmap
 
 > [!NOTE]
-> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features.
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features. Current baseline includes compatibility guardrail tests, curated no-CLI examples, preserved legacy examples, semantic configuration helpers, description-driven visual mesh bodies with Collada/DAE baking, Carter and Unitree live registrations, global map/semantic visualization examples, flat single-robot ROS-binding compatibility, multi-operator registration replay, and the separate initialization of `compass` and `lenses` as adjacent future services.
 
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
-| Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support and demo defaults are in place. | Extend schema for status/task bindings and section-level runtime options. |
-| Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, and runtime transport-state signaling are integrated. | Add follow-leader/advanced handoff metadata and manipulator-capability descriptors. |
+| Robot Manager Contracts | :large_orange_diamond: In progress | `robot_manager_config` payload support, typed semantic configuration helpers, demo defaults, and robot-type action semantics are in place. Drone robots keep Take Off/Land, wheeled robots disable those actions, and legged robots map them to Stand Up/Sit Down action commands. | Extend schema for richer status bindings, task availability reasons, and section-level runtime options. |
+| Teleoperation Contracts | :large_orange_diamond: In progress | `control.teleop` contract, teleop fake TF scenarios, control-topic dashboard rows, runtime transport-state signaling, curated teleop examples, and live Unitree Go1 conservative speed defaults are integrated. Follow-leader teleop V1 in MR reuses this contract with no schema change. | Add subset/handoff metadata, safety-speed profile presets, and manipulator-capability descriptors. |
+| ROS Binding Compatibility | :large_orange_diamond: In progress | Optional ROS-binding metadata is integrated for prefixed and flat single-robot workflows, with resolved registration payloads, dashboard topic ownership overrides for root topics, curated flat registration examples, and compatibility tests. | Document backend metadata conventions more formally and add diagnostics for frame/topic mismatches before registration. |
 | 2D Map Contracts | :white_check_mark: Foundation complete | Global occupancy-grid visualization payload and workspace scale forwarding are integrated. | Add richer map overlay contracts (goals, nav path layers, region semantics). |
-| 3D Map Contracts | :white_circle: Planned | - | Define 3D map source descriptors and rendering policy hints. |
-| Tasking (2D/3D) | :large_orange_diamond: In progress | Typed schemas for Go-To Point and Waypoint are integrated, with fake TF validation scripts and fixtures/tests. | Add Path Drawing + Go-To Label + Multi-Robot Go-To Point contracts and validation presets. |
+| 3D Map Contracts | :large_orange_diamond: In progress | Point-cloud, mesh, and octomap global visualization payload wiring is integrated with greedy voxel meshing, snapshot-first Quest defaults, marker-only mesh transport coercion for runtime stability, replay-time bounded republish bursts, consolidated legacy 3D-map helpers, and a curated global-map registration example. | Expand native octomap interoperability beyond metadata-only publish path and add renderer policy hints (decimation/quality tiers) for runtime tuning. |
+| DataViz API Structure | :large_orange_diamond: In progress | Current fixed DataViz helpers remain compatible, while internal visualization models, global visualization builders, semantic helpers, and curated examples now provide a cleaner v1 foundation. | Introduce an additive entity-based v2 DataViz contract with annotation contexts, batch updates, temporal metadata, and compatibility adapters back to v1. |
+| Examples and Compatibility Guardrails | :large_orange_diamond: In progress | Public import/payload guardrail tests, curated no-CLI examples, a preserved legacy catalog, and legacy help/command documentation are in place. | Add automated launch-smoke coverage for curated examples and payload snapshot coverage for every new contract family. |
+| Robot Description Contracts (V1) | :large_orange_diamond: In progress | URDF resolver + compiled collision/joint/visual-mesh schema, manifest hashing, chunked request/reply transport, body mesh modes (`collision_only`, `preview_mesh`, `runtime_high_mesh`), source-color recovery, Collada/DAE mesh baking, curated robot-description examples, and Unitree Go1 visual mesh registration are integrated. | Add known-robot local hero-mesh fallback policy, package/material diagnostics, and validation for mixed mesh+collision deployments across more real robot descriptions. |
+| Tasking (2D/3D) | :large_orange_diamond: In progress | Typed Go-To/Waypoint schemas are integrated with altitude-bounds support for aerial robots, legged stand/sit action commands, and fake TF validation scripts for ground, drone, and legged ops suites. | Add explicit payload contracts for Draw Path, Label Pose, Go-To Labeled Pose, and subset-based Multi-Robot Go-To policies. |
 | Session Recording | :white_circle: Planned | - | Add mission/session record contract (events, commands, timeline references). |
 | After-Action Replay | :white_circle: Planned | - | Add replay manifest schema and deterministic timeline reconstruction inputs. |
 | Adaptive Streaming Policies | :white_circle: Planned | Static transport profiles exist, but no load-aware policy orchestration. | Add policy payload for per-robot FPS/resolution tiers, priority (teleop-first), transport fallback, and dynamic max-stream guardrails. |
@@ -345,10 +497,11 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Persistent Mission Objects | :white_circle: Planned | - | Add shared mission-object schema (pins, notes, attachments, assignees, lifecycle). |
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
-| Semantic Perception Layers | :white_circle: Planned | - | Add semantic layer payloads with confidence, uncertainty, and spatial anchoring metadata. |
-| Copilot and Multi-Operator | :white_circle: Planned | Single-operator path is primary baseline. | Add operator identity/session ownership metadata and copilot action-scoping contracts. |
+| Semantic Perception Layers | :large_orange_diamond: In progress | Semantic box payloads and a curated semantic perception registration example are integrated as global visualization layers; `lenses` remains the future richer scene-understanding producer. | Add semantic tracks, class dictionaries, confidence/staleness styling, segmentation/depth overlays, uncertainty, spatial anchoring, and scene-context references aligned with `lenses` outputs. |
+| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility now tracks shared-host, shared-join, and private-workspace operators; multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, replay-triggered map/semantic layer replay behavior, and direct private-operator replay support are integrated. | Add richer operator identity/lease observability summaries, explicit ownership metadata schemas, layer visibility ownership semantics, and stronger rejoin/replay validation suites. |
+| AI Copilot Orchestration | :white_circle: Planned | No copilot contract is integrated into `horus_sdk` yet; `compass` now exists separately as the future copilot/orchestration service. | Define copilot action-scoping contracts, approval/guardrail metadata, operator-visible intervention traces, and the first stable `horus_sdk <-> compass` contract boundary. |
 
-## 📖 Citation
+## Citation
 
 If you use HORUS or ideas from this work in your research, please cite:
 
@@ -368,14 +521,14 @@ O. S. Adekoya, A. Sgorbissa, C. T. Recchiuto. HORUS: A Mixed Reality Interface f
 }
 ```
 
-## 📬 Contact
+## Contact
 
 For questions or support:
 
-- Omotoye Shamsudeen Adekoya  
+- Omotoye Shamsudeen Adekoya
 - Email: `omotoye.adekoya@edu.unige.it`
 
-## 💡 Acknowledgments
+## Acknowledgments
 
 This project is part of PhD research at the University of Genoa, under the supervision of:
 
@@ -389,6 +542,13 @@ Developed by **RICE Lab**, University of Genoa.
 1. Reproduce behavior with explicit command lines.
 2. Include before/after impact on registration and dashboard states.
 3. Add or update focused tests when changing serialization/state logic.
+
+## Related Repositories
+
+- MR runtime: <https://github.com/RICE-unige/horus>
+- ROS 2 bridge runtime: <https://github.com/RICE-unige/horus_ros2>
+- Copilot/orchestration service: <https://github.com/Omotoye/compass>
+- Scene-understanding service: <https://github.com/Omotoye/lenses>
 
 ## License
 

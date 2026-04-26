@@ -40,7 +40,6 @@ setup_python_sdk_runtime() {
   run_silent "Installing Python dependencies" \
     "$pip_bin" install \
       "numpy>=1.21.0" \
-      "dataclasses-json>=0.5.0" \
       "rich>=13.0.0"
 
   run_silent "Installing HORUS SDK package" \

@@ -37,11 +37,23 @@ Defaults:
 - `minimap_streaming_type`: `ros`
 - `teleop_streaming_type`: `webrtc`
 - `startup_mode`: `minimap`
+- `minimap_topic`: sensor `topic`
+- `teleop_topic`: sensor `topic`
+- `minimap_image_type`: `image_type` (or `raw`)
+- `teleop_image_type`: `image_type` (or `raw`)
+- `minimap_max_fps`: `30`
+- `teleop_stereo_layout`: `stereo_layout`
+- `teleop_right_topic`: `right_topic`
 
 Fallback behavior:
 - `minimap_streaming_type` falls back to `streaming_type` when empty/invalid.
 - `teleop_streaming_type` falls back to `streaming_type` when empty/invalid.
 - `startup_mode` falls back to `minimap` when empty/invalid.
+- Per-mode source fields fall back to legacy camera fields when missing:
+  - `minimap_topic`/`teleop_topic` -> `topic`
+  - `minimap_image_type`/`teleop_image_type` -> `image_type`
+  - `teleop_right_topic` -> `right_topic`
+  - `teleop_stereo_layout` -> `stereo_layout`
 
 Allowed transport values:
 - `ros`, `webrtc`.
@@ -65,6 +77,43 @@ Occupancy payload:
 - `occupancy.position_scale`: float coercion.
 - `occupancy.position_offset`: vec3 coercion from dict/list.
 - `occupancy.rotation_offset_euler`: vec3 coercion from dict/list.
+
+Point-cloud payload (global 3D map):
+- `point_cloud` block is always emitted for `type=point_cloud` (defaults included when options are omitted).
+- Defaults keep full ingest fidelity (`point_size=0.05`, `max_points_per_frame=0`, `render_all_points=true`, `max_distance=0`, `auto_point_size_by_workspace_scale=true`) and use Quest-friendly visible-set defaults (`render_mode=opaque_fast`, frustum/subpixel culling enabled, `visible_points_budget=120000`, `max_visible_points_budget=200000`).
+- Runtime behavior in `horus`: `opaque_fast` is square quad billboard rendering. When `map_static_mode=true`, runtime uses direct draw under budget and automatically falls back to culling above budget; subpixel culling is disabled in static mode for stability.
+- `point_cloud.point_size`: float coercion, clamped to `>= 0.001`.
+- `point_cloud.max_points_per_frame`: int coercion, clamped to `>= 0` (`0 = unlimited / all points`).
+- `point_cloud.base_sample_stride`: int coercion, clamped to `>= 1`.
+- `point_cloud.min_update_interval`: float coercion, clamped to `>= 0.0`.
+- `point_cloud.enable_adaptive_quality`: bool coercion.
+- `point_cloud.target_framerate`: float coercion, clamped to `>= 30.0`.
+- `point_cloud.min_quality_multiplier`: float coercion, clamped to `[0.25, 1.0]`.
+- `point_cloud.min_distance`: float coercion, clamped to `>= 0.0`.
+- `point_cloud.max_distance`: float coercion, clamped to `>= 0.0` (`0 = unlimited`).
+- `point_cloud.replace_latest`: bool coercion.
+- `point_cloud.render_all_points`: bool coercion.
+- `point_cloud.auto_point_size_by_workspace_scale`: bool coercion.
+- `point_cloud.min_point_size`: float coercion, clamped to `>= 0.0001`.
+- `point_cloud.max_point_size`: float coercion, clamped to `>= min_point_size`.
+- `point_cloud.render_mode`: enum coercion (`opaque_fast|transparent_hq`, fallback `opaque_fast`).
+- `point_cloud.enable_view_frustum_culling`: bool coercion.
+- `point_cloud.frustum_padding`: float coercion, clamped to `[0.0, 0.5]`.
+- `point_cloud.enable_subpixel_culling`: bool coercion.
+- `point_cloud.min_screen_radius_px`: float coercion, clamped to `>= 0.0`.
+- `point_cloud.visible_points_budget`: int coercion, clamped to `[1000, max_visible_points_budget]`.
+- `point_cloud.max_visible_points_budget`: int coercion, clamped to `>= 1000`.
+- `point_cloud.map_static_mode`: bool coercion.
+
+Mesh payload (global 3D mesh map):
+- `mesh` block is always emitted for `type=mesh` (defaults included when options are omitted).
+- Runtime behavior in `horus`: only `visualization_msgs/Marker` with `TRIANGLE_LIST` is consumed for mesh map rendering.
+- Runtime precedence in `horus`: when global `mesh` visualization is active, global `point_cloud` map rendering is disabled (mesh-only map policy).
+- `mesh.use_vertex_colors`: bool coercion (default `true`).
+- `mesh.alpha`: float coercion, clamped to `[0.0, 1.0]` (default `1.0`).
+- `mesh.double_sided`: bool coercion (default `true`).
+- `mesh.max_triangles`: int coercion, clamped to `>= 1000` (default `200000`).
+- `mesh.source_coordinate_space`: enum coercion (`enu|optical`, fallback `enu`).
 
 ## Robot Manager Config
 
@@ -120,6 +169,8 @@ Discrete response defaults:
 - `frame_id = map`
 - `position_tolerance_m = 0.20` (clamped to `[0.01, 10.0]`)
 - `yaw_tolerance_deg = 12.0` (clamped to `[0.1, 180.0]`)
+- `min_altitude_m = 0.0` (clamped to `[0.0, 100.0]`)
+- `max_altitude_m = 10.0` (clamped to `[min_altitude_m + 0.1, 100.0]`)
 
 `control.tasks.waypoint` defaults:
 - `enabled = true`
