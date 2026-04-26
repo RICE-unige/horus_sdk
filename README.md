@@ -15,7 +15,8 @@
 ## Documentation
 
 - Site: <https://rice-unige.github.io/horus_sdk/>
-- Docs branch: `docs/site-v1`
+- Source branch: `main`
+- Staging branch for large docs refactors: `docs/site-v1`
 - Local commands:
 
 ```bash

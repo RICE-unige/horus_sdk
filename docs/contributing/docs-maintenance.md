@@ -7,7 +7,8 @@ sidebar_position: 1
 
 ## Branch and deployment
 
-- canonical docs branch: `docs/site-v1`
+- canonical docs source branch: `main`
+- staging branch for large docs refactors: `docs/site-v1`
 - published site: `https://rice-unige.github.io/horus_sdk/`
 
 ## Local checks

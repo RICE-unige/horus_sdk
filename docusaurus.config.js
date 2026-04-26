@@ -30,7 +30,7 @@ const config = {
         docs: {
           routeBasePath: "docs",
           sidebarPath: require.resolve("./sidebars.js"),
-          editUrl: "https://github.com/RICE-unige/horus_sdk/tree/docs/site-v1/"
+          editUrl: "https://github.com/RICE-unige/horus_sdk/tree/main/"
         },
         blog: false,
         theme: {

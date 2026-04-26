@@ -14,7 +14,7 @@ on:
       - ".github/scripts/check_docs_examples.py"
   push:
     branches:
-      - docs/site-v1
+      - main
     paths:
       - "docs/**"
       - "src/**"
