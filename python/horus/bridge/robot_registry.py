@@ -1657,6 +1657,87 @@ class RobotRegistryClient:
 
             payload["point_cloud"] = point_cloud_payload
 
+        if viz_type_value == "gaussian_splat":
+            gaussian_payload: Dict[str, Any] = {}
+            manifest_topic = str(render_options.get("manifest_topic", topic)).strip()
+            gaussian_payload["manifest_topic"] = manifest_topic or topic
+
+            asset_format = str(render_options.get("asset_format", "3dgs_ply")).strip().lower()
+            if asset_format not in {"3dgs_ply"}:
+                asset_format = "3dgs_ply"
+            gaussian_payload["asset_format"] = asset_format
+
+            source_coordinate_space = str(
+                render_options.get("source_coordinate_space", "colmap")
+            ).strip().lower()
+            if source_coordinate_space not in {"colmap", "3dgs", "opencv", "unity"}:
+                source_coordinate_space = "colmap"
+            gaussian_payload["source_coordinate_space"] = source_coordinate_space
+
+            gaussian_payload["max_splats"] = max(
+                1000,
+                int(self._payload_coerce_float(render_options.get("max_splats"), 350000.0)),
+            )
+            gaussian_payload["render_scale"] = min(
+                1.0,
+                max(0.25, self._payload_coerce_float(render_options.get("render_scale"), 0.5)),
+            )
+            gaussian_payload["sh_order"] = min(
+                3,
+                max(0, int(self._payload_coerce_float(render_options.get("sh_order"), 2.0))),
+            )
+            gaussian_payload["half_precision_sh"] = self._payload_coerce_bool(
+                render_options.get("half_precision_sh"),
+                True,
+            )
+            gaussian_payload["adaptive_sort"] = self._payload_coerce_bool(
+                render_options.get("adaptive_sort"),
+                True,
+            )
+            gaussian_payload["sort_passes"] = min(
+                4,
+                max(2, int(self._payload_coerce_float(render_options.get("sort_passes"), 2.0))),
+            )
+            gaussian_payload["opacity_scale"] = min(
+                20.0,
+                max(0.05, self._payload_coerce_float(render_options.get("opacity_scale"), 1.0)),
+            )
+            gaussian_payload["splat_scale"] = min(
+                4.0,
+                max(0.05, self._payload_coerce_float(render_options.get("splat_scale"), 1.0)),
+            )
+            gaussian_payload["contribution_cull_threshold"] = min(
+                1.0,
+                max(
+                    0.0,
+                    self._payload_coerce_float(
+                        render_options.get("contribution_cull_threshold"),
+                        0.1,
+                    ),
+                ),
+            )
+            gaussian_payload["high_precision_rt"] = self._payload_coerce_bool(
+                render_options.get("high_precision_rt"),
+                False,
+            )
+            gaussian_payload["pointcloud_fallback"] = self._payload_coerce_bool(
+                render_options.get("pointcloud_fallback"),
+                True,
+            )
+
+            fallback_topic = str(
+                render_options.get("fallback_topic", "/map_gaussian_splat_preview")
+            ).strip()
+            gaussian_payload["fallback_topic"] = fallback_topic or "/map_gaussian_splat_preview"
+            fallback_frame = str(render_options.get("fallback_frame", frame_id or "map")).strip()
+            gaussian_payload["fallback_frame"] = fallback_frame or "map"
+
+            fallback_point_cloud = render_options.get("fallback_point_cloud")
+            if isinstance(fallback_point_cloud, dict):
+                gaussian_payload["fallback_point_cloud"] = dict(fallback_point_cloud)
+
+            payload["gaussian_splat"] = gaussian_payload
+
         if viz_type_value == "mesh":
             mesh_payload: Dict[str, Any] = {}
             mesh_payload["use_vertex_colors"] = self._payload_coerce_bool(

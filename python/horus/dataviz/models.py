@@ -53,6 +53,7 @@ class VisualizationType(Enum):
     COORDINATE_AXES = "coordinate_axes"
     MESH = "mesh"
     OCTOMAP = "octomap"
+    GAUSSIAN_SPLAT = "gaussian_splat"
     HEATMAP = "heatmap"
     SEMANTIC_BOX = "semantic_box"
 

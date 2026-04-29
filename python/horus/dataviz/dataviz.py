@@ -487,6 +487,68 @@ class DataViz:
 
         self._add_or_update_visualization(viz_config)
 
+    def add_gaussian_splat_map(
+        self,
+        manifest_topic: str = "/horus/gaussian_splat/manifest",
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+        preview_topic: str = "/map_gaussian_splat_preview",
+    ) -> None:
+        """Add a global Gaussian Splat map visualization."""
+        options = dict(render_options or {})
+        options.setdefault("manifest_topic", manifest_topic)
+        options.setdefault("asset_format", "3dgs_ply")
+        options.setdefault("source_coordinate_space", "colmap")
+        options.setdefault("max_splats", 350000)
+        options.setdefault("render_scale", 0.5)
+        options.setdefault("sh_order", 2)
+        options.setdefault("half_precision_sh", True)
+        options.setdefault("adaptive_sort", True)
+        options.setdefault("sort_passes", 2)
+        options.setdefault("opacity_scale", 1.0)
+        options.setdefault("splat_scale", 1.0)
+        options.setdefault("contribution_cull_threshold", 0.1)
+        options.setdefault("high_precision_rt", False)
+        options.setdefault("pointcloud_fallback", True)
+        options.setdefault("fallback_topic", preview_topic)
+        options.setdefault("fallback_frame", frame_id)
+        options.setdefault(
+            "fallback_point_cloud",
+            {
+                "point_size": 0.035,
+                "max_points_per_frame": 0,
+                "base_sample_stride": 1,
+                "render_all_points": True,
+                "auto_point_size_by_workspace_scale": True,
+                "min_point_size": 0.0015,
+                "max_point_size": 0.012,
+                "point_shape": "circle",
+                "enable_view_frustum_culling": False,
+                "enable_subpixel_culling": False,
+                "min_screen_radius_px": 0.0,
+                "visible_points_budget": 120000,
+                "max_visible_points_budget": 180000,
+                "map_static_mode": True,
+                "render_mode": "opaque_fast",
+            },
+        )
+
+        data_source = EnvironmentDataSource(
+            name="gaussian_splat",
+            source_type=DataSourceType.MAP_3D,
+            topic=manifest_topic,
+            frame_id=frame_id,
+        )
+
+        viz_config = VisualizationConfig(
+            viz_type=VisualizationType.GAUSSIAN_SPLAT,
+            data_source=data_source,
+            render_options=options,
+            layer_priority=-4,
+        )
+
+        self._add_or_update_visualization(viz_config)
+
     def add_global_navigation_path(
         self,
         topic: str,
