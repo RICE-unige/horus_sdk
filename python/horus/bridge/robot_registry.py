@@ -1615,6 +1615,12 @@ class RobotRegistryClient:
             if render_mode not in {"opaque_fast", "transparent_hq"}:
                 render_mode = "opaque_fast"
             point_cloud_payload["render_mode"] = render_mode
+            point_shape = str(render_options.get("point_shape", "square")).strip().lower()
+            if point_shape == "disc":
+                point_shape = "circle"
+            if point_shape not in {"square", "circle"}:
+                point_shape = "square"
+            point_cloud_payload["point_shape"] = point_shape
             point_cloud_payload["enable_view_frustum_culling"] = self._payload_coerce_bool(
                 render_options.get("enable_view_frustum_culling"),
                 True,
