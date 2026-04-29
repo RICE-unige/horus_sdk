@@ -3,7 +3,7 @@
 
 This publishes two complementary streams:
   * a sampled PointCloud2 preview that current HORUS builds can visualize
-  * a small JSON manifest with the source .ply path for the future splat renderer
+  * a JSON manifest with an HTTP URL for a capped runtime .ply splat asset
 
 Fetch data first with:
     python3 python/examples/tools/fetch_gaussian_splat_fixtures.py --bundle prebuilt
@@ -12,9 +12,13 @@ Fetch data first with:
 from __future__ import annotations
 
 import argparse
+import functools
+import hashlib
+import http.server
 import json
 import math
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +62,7 @@ class PlyHeader:
     vertex_count: int
     vertex_properties: Sequence[PlyProperty]
     data_offset: int
+    header_lines: Sequence[str]
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,26 @@ class PreviewData:
     center_offset: Tuple[float, float, float]
     scale: float
     ply_path: Path
+
+
+@dataclass(frozen=True)
+class RuntimeAsset:
+    path: Path
+    uri: str
+    splat_count: int
+    sha256: str
+    content_length: int
+
+
+@dataclass
+class AssetHttpServer:
+    httpd: http.server.ThreadingHTTPServer
+    thread: threading.Thread
+
+    def stop(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2.0)
 
 
 @dataclass
@@ -107,6 +132,44 @@ def parse_args() -> argparse.Namespace:
         default="/horus/gaussian_splat/manifest",
         help="std_msgs/String topic carrying future Gaussian Splat renderer metadata.",
     )
+    parser.add_argument(
+        "--splat-render-count",
+        type=int,
+        default=350000,
+        help="Maximum splats written into the runtime PLY served to HORUS. Use 0 for all vertices.",
+    )
+    parser.add_argument(
+        "--asset-cache-dir",
+        type=Path,
+        default=Path("~/.cache/horus/gaussian_splatting/runtime").expanduser(),
+        help="Directory for generated runtime PLY subsets served over HTTP.",
+    )
+    parser.add_argument(
+        "--asset-server-bind",
+        default="0.0.0.0",
+        help="Interface for the local HTTP asset server.",
+    )
+    parser.add_argument(
+        "--asset-server-port",
+        type=int,
+        default=8765,
+        help="Port for the local HTTP asset server. Use 0 to let the OS choose.",
+    )
+    parser.add_argument(
+        "--asset-base-url",
+        default="",
+        help=(
+            "Base URL that HORUS/Quest can use to fetch runtime splat assets, "
+            "for example http://192.168.1.40:8765. Defaults to localhost."
+        ),
+    )
+    parser.add_argument(
+        "--no-asset-server",
+        dest="asset_server",
+        action="store_false",
+        help="Do not start the local HTTP server; use with --asset-base-url when another server hosts the asset.",
+    )
+    parser.set_defaults(asset_server=True)
     parser.add_argument("--frame-id", default="map", help="ROS frame for the preview point cloud.")
     parser.add_argument(
         "--sample-count",
@@ -282,6 +345,7 @@ def read_ply_header(path: Path) -> PlyHeader:
         vertex_count: Optional[int] = None
         vertex_properties: List[PlyProperty] = []
         current_element: Optional[str] = None
+        header_lines = ["ply"]
 
         while True:
             line_bytes = handle.readline()
@@ -292,12 +356,14 @@ def read_ply_header(path: Path) -> PlyHeader:
             except UnicodeDecodeError as exc:
                 raise ValueError(f"PLY header is not ASCII in {path}") from exc
 
+            header_lines.append(line)
             if line == "end_header":
                 return PlyHeader(
                     format_name=format_name,
                     vertex_count=int(vertex_count or 0),
                     vertex_properties=tuple(vertex_properties),
                     data_offset=handle.tell(),
+                    header_lines=tuple(header_lines),
                 )
 
             if not line or line.startswith("comment"):
@@ -414,6 +480,101 @@ def parse_binary_vertices(path: Path, header: PlyHeader, indices: Sequence[int])
     return points
 
 
+def rewrite_ply_header_for_vertex_count(header: PlyHeader, vertex_count: int) -> bytes:
+    lines = []
+    replaced = False
+    for line in header.header_lines:
+        if line.startswith("element vertex "):
+            lines.append(f"element vertex {vertex_count}")
+            replaced = True
+        else:
+            lines.append(line)
+
+    if not replaced:
+        raise ValueError("PLY header did not include an element vertex line")
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def runtime_subset_path(source_path: Path, header: PlyHeader, render_count: int, cache_dir: Path) -> Path:
+    source_stat = source_path.stat()
+    requested_count = header.vertex_count if render_count <= 0 else min(render_count, header.vertex_count)
+    key = hashlib.sha256(
+        f"{source_path.resolve()}|{source_stat.st_size}|{source_stat.st_mtime_ns}|{requested_count}".encode("utf-8")
+    ).hexdigest()[:16]
+    return cache_dir.expanduser() / f"{source_path.stem}_{requested_count}_{key}.ply"
+
+
+def write_runtime_ply_subset(source_path: Path, render_count: int, cache_dir: Path) -> Tuple[Path, int]:
+    header = read_ply_header(source_path)
+    if header.vertex_count <= 0:
+        raise ValueError(f"No vertices found in {source_path}")
+    if header.format_name != "binary_little_endian":
+        raise ValueError(
+            f"Runtime Gaussian Splat assets must be binary_little_endian PLY, got {header.format_name}"
+        )
+
+    indices = selected_indices(header.vertex_count, render_count)
+    vertex_struct = binary_vertex_struct(header)
+    output_path = runtime_subset_path(source_path, header, render_count, cache_dir)
+    if output_path.exists():
+        return output_path, len(indices)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    if temp_path.exists():
+        temp_path.unlink()
+
+    vertex_data_end = header.data_offset + header.vertex_count * vertex_struct.size
+    with source_path.open("rb") as source, temp_path.open("wb") as target:
+        target.write(rewrite_ply_header_for_vertex_count(header, len(indices)))
+        for vertex_index in indices:
+            source.seek(header.data_offset + vertex_index * vertex_struct.size)
+            data = source.read(vertex_struct.size)
+            if len(data) != vertex_struct.size:
+                raise ValueError(f"Unexpected end of PLY vertex data at index {vertex_index}")
+            target.write(data)
+
+        source.seek(vertex_data_end)
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            target.write(chunk)
+
+    temp_path.replace(output_path)
+    return output_path, len(indices)
+
+
+def resolve_asset_uri(asset_path: Path, args: argparse.Namespace, actual_port: Optional[int] = None) -> str:
+    base_url = str(args.asset_base_url or "").strip().rstrip("/")
+    if not base_url:
+        port = int(actual_port if actual_port is not None else args.asset_server_port)
+        base_url = f"http://127.0.0.1:{port}"
+    return f"{base_url}/{asset_path.name}"
+
+
+def start_asset_http_server(asset_path: Path, args: argparse.Namespace) -> Optional[AssetHttpServer]:
+    if not args.asset_server:
+        return None
+
+    handler_cls = functools.partial(
+        http.server.SimpleHTTPRequestHandler,
+        directory=str(asset_path.parent),
+    )
+    httpd = http.server.ThreadingHTTPServer(
+        (str(args.asset_server_bind), int(args.asset_server_port)),
+        handler_cls,
+    )
+    thread = threading.Thread(target=httpd.serve_forever, name="horus-gaussian-splat-http", daemon=True)
+    thread.start()
+    return AssetHttpServer(httpd=httpd, thread=thread)
+
+
 def load_preview_points(path: Path, sample_count: int, scale: float, center: bool) -> PreviewData:
     header = read_ply_header(path)
     if header.vertex_count <= 0:
@@ -458,21 +619,35 @@ def load_preview_points(path: Path, sample_count: int, scale: float, center: boo
     )
 
 
-def build_runtime_manifest(source_manifest: Dict, preview: PreviewData, args: argparse.Namespace) -> Dict:
+def build_runtime_manifest(
+    source_manifest: Dict,
+    preview: PreviewData,
+    runtime_asset: RuntimeAsset,
+    args: argparse.Namespace,
+) -> Dict:
     prebuilt = source_manifest.get("prebuilt") or {}
     return {
         "schema": "horus.gaussian_splat.fixture.v1",
         "visualization_type": "gaussian_splat",
+        "asset_uri": runtime_asset.uri,
+        "asset_format": "3dgs_ply",
+        "sha256": runtime_asset.sha256,
+        "content_length": runtime_asset.content_length,
         "source_format": "3dgs_ply",
-        "splat_ply": str(preview.ply_path),
+        "splat_ply": str(runtime_asset.path),
         "dataset": prebuilt.get("dataset", "custom"),
         "scene": prebuilt.get("scene", ""),
         "iteration": prebuilt.get("iteration", ""),
         "source_url": prebuilt.get("source_url", ""),
         "frame_id": args.frame_id,
+        "source_coordinate_space": "colmap",
+        "center_offset": preview.center_offset,
+        "scale": preview.scale,
+        "splat_count": runtime_asset.splat_count,
         "preview_topic": args.preview_topic,
         "manifest_topic": args.manifest_topic,
         "original_vertex_count": preview.original_vertex_count,
+        "runtime_vertex_count": runtime_asset.splat_count,
         "published_preview_vertex_count": preview.published_vertex_count,
         "preview_center_offset": preview.center_offset,
         "preview_scale": preview.scale,
@@ -674,15 +849,45 @@ def main() -> int:
     source_manifest = read_manifest(args.manifest.expanduser()) if args.ply is None else {}
     ply_path = choose_ply_path(args, source_manifest)
     preview = load_preview_points(ply_path, args.sample_count, args.scale, args.center)
-    runtime_manifest = build_runtime_manifest(source_manifest, preview, args)
+    runtime_ply_path, runtime_splat_count = write_runtime_ply_subset(
+        ply_path,
+        args.splat_render_count,
+        args.asset_cache_dir,
+    )
+    asset_server = start_asset_http_server(runtime_ply_path, args)
+    actual_port = asset_server.httpd.server_address[1] if asset_server is not None else None
+    asset_uri = resolve_asset_uri(runtime_ply_path, args, actual_port)
+    runtime_asset = RuntimeAsset(
+        path=runtime_ply_path,
+        uri=asset_uri,
+        splat_count=runtime_splat_count,
+        sha256=file_sha256(runtime_ply_path),
+        content_length=runtime_ply_path.stat().st_size,
+    )
+    runtime_manifest = build_runtime_manifest(source_manifest, preview, runtime_asset, args)
 
     print(
         f"Loaded {preview.published_vertex_count}/{preview.original_vertex_count} preview vertices "
         f"from {ply_path}"
     )
+    print(
+        f"Runtime splat asset: {runtime_asset.path} "
+        f"({runtime_asset.splat_count} splats, {runtime_asset.content_length} bytes)"
+    )
+    print(f"Asset URI:      {runtime_asset.uri}")
     print(f"Preview topic:  {args.preview_topic}")
     print(f"Manifest topic: {args.manifest_topic}")
-    publish_ros(preview, runtime_manifest, args)
+    if not args.asset_base_url:
+        print(
+            "Note: --asset-base-url was not set, so the manifest uses localhost. "
+            "For Quest, pass a LAN-reachable URL such as http://<wsl-ip>:8765."
+        )
+
+    try:
+        publish_ros(preview, runtime_manifest, args)
+    finally:
+        if asset_server is not None:
+            asset_server.stop()
     return 0
 
 
