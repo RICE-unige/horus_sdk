@@ -76,7 +76,7 @@ world_layers.add_occupancy_grid(
 world_layers.add_3d_map(
     "/map_3d",
     frame_id="map",
-    render_options={"point_size": 0.04, "max_points_per_frame": 0, "render_all_points": True, "auto_point_size_by_workspace_scale": False, "enable_view_frustum_culling": False, "enable_subpixel_culling": False, "color": "#6ED7FF"},
+    render_options={"point_size": 0.045, "max_points_per_frame": 0, "render_all_points": True, "auto_point_size_by_workspace_scale": True, "min_point_size": 0.002, "max_point_size": 0.018, "point_shape": "circle", "enable_view_frustum_culling": False, "enable_subpixel_culling": False, "color": "#6ED7FF"},
 )
 world_layers.add_3d_mesh(
     "/map_3d_mesh",
