@@ -497,6 +497,9 @@ class DataViz:
         """Add a global Gaussian Splat map visualization."""
         options = dict(render_options or {})
         options.setdefault("manifest_topic", manifest_topic)
+        options.setdefault("chunk_begin_topic", "/horus/gaussian_splat/chunk_begin")
+        options.setdefault("chunk_item_topic", "/horus/gaussian_splat/chunk_item")
+        options.setdefault("chunk_end_topic", "/horus/gaussian_splat/chunk_end")
         options.setdefault("asset_format", "3dgs_ply")
         options.setdefault("source_coordinate_space", "colmap")
         options.setdefault("max_splats", 350000)

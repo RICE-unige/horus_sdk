@@ -1661,6 +1661,18 @@ class RobotRegistryClient:
             gaussian_payload: Dict[str, Any] = {}
             manifest_topic = str(render_options.get("manifest_topic", topic)).strip()
             gaussian_payload["manifest_topic"] = manifest_topic or topic
+            chunk_begin_topic = str(
+                render_options.get("chunk_begin_topic", "/horus/gaussian_splat/chunk_begin")
+            ).strip()
+            gaussian_payload["chunk_begin_topic"] = chunk_begin_topic or "/horus/gaussian_splat/chunk_begin"
+            chunk_item_topic = str(
+                render_options.get("chunk_item_topic", "/horus/gaussian_splat/chunk_item")
+            ).strip()
+            gaussian_payload["chunk_item_topic"] = chunk_item_topic or "/horus/gaussian_splat/chunk_item"
+            chunk_end_topic = str(
+                render_options.get("chunk_end_topic", "/horus/gaussian_splat/chunk_end")
+            ).strip()
+            gaussian_payload["chunk_end_topic"] = chunk_end_topic or "/horus/gaussian_splat/chunk_end"
 
             asset_format = str(render_options.get("asset_format", "3dgs_ply")).strip().lower()
             if asset_format not in {"3dgs_ply"}:
