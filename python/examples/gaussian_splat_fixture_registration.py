@@ -6,6 +6,9 @@ Pair this with:
 
 The publisher emits matching TF/odom for splat_rover_1 and splat_rover_2 plus
 a Gaussian Splat manifest and PointCloud2 fallback preview.
+
+From a source checkout:
+    PYTHONPATH=python:$PYTHONPATH python3 python/examples/gaussian_splat_fixture_registration.py
 """
 
 from horus.robot import Robot, RobotDimensions, RobotType, register_robots
