@@ -3,7 +3,7 @@
 
 This publishes two complementary streams:
   * a sampled PointCloud2 preview that current HORUS builds can visualize
-  * a JSON manifest with an HTTP URL for a capped runtime .ply splat asset
+  * a JSON manifest plus ROS String chunks for a capped runtime .ply splat asset
 
 Fetch data first with:
     python3 python/examples/tools/fetch_gaussian_splat_fixtures.py --bundle prebuilt
@@ -12,9 +12,8 @@ Fetch data first with:
 from __future__ import annotations
 
 import argparse
-import functools
+import base64
 import hashlib
-import http.server
 import json
 import math
 import struct
@@ -78,21 +77,11 @@ class PreviewData:
 @dataclass(frozen=True)
 class RuntimeAsset:
     path: Path
-    uri: str
     splat_count: int
     sha256: str
     content_length: int
-
-
-@dataclass
-class AssetHttpServer:
-    httpd: http.server.ThreadingHTTPServer
-    thread: threading.Thread
-
-    def stop(self) -> None:
-        self.httpd.shutdown()
-        self.httpd.server_close()
-        self.thread.join(timeout=2.0)
+    chunks: Sequence[str]
+    chunk_size_bytes: int
 
 
 @dataclass
@@ -142,34 +131,59 @@ def parse_args() -> argparse.Namespace:
         "--asset-cache-dir",
         type=Path,
         default=Path("~/.cache/horus/gaussian_splatting/runtime").expanduser(),
-        help="Directory for generated runtime PLY subsets served over HTTP.",
+        help="Directory for generated runtime PLY subsets published over ROS chunks.",
     )
     parser.add_argument(
-        "--asset-server-bind",
-        default="0.0.0.0",
-        help="Interface for the local HTTP asset server.",
+        "--chunk-begin-topic",
+        default="/horus/gaussian_splat/chunk_begin",
+        help="std_msgs/String topic announcing the start of a Gaussian Splat asset chunk transfer.",
     )
     parser.add_argument(
-        "--asset-server-port",
+        "--chunk-item-topic",
+        default="/horus/gaussian_splat/chunk_item",
+        help="std_msgs/String topic carrying base64 runtime PLY chunks.",
+    )
+    parser.add_argument(
+        "--chunk-end-topic",
+        default="/horus/gaussian_splat/chunk_end",
+        help="std_msgs/String topic announcing the end of a Gaussian Splat asset chunk transfer.",
+    )
+    parser.add_argument(
+        "--chunk-size-bytes",
         type=int,
-        default=8765,
-        help="Port for the local HTTP asset server. Use 0 to let the OS choose.",
+        default=9000,
+        help="Raw PLY bytes per ROS chunk. Default keeps base64 JSON payloads near the SDK robot-description chunk size.",
     )
     parser.add_argument(
-        "--asset-base-url",
-        default="",
-        help=(
-            "Base URL that HORUS/Quest can use to fetch runtime splat assets, "
-            "for example http://192.168.1.40:8765. Defaults to localhost."
-        ),
+        "--chunk-republish-period",
+        type=float,
+        default=10.0,
+        help="Seconds between full ROS chunk transfer bursts for late HORUS subscribers. Use 0 to publish once.",
     )
     parser.add_argument(
-        "--no-asset-server",
-        dest="asset_server",
-        action="store_false",
-        help="Do not start the local HTTP server; use with --asset-base-url when another server hosts the asset.",
+        "--chunk-begin-delay",
+        type=float,
+        default=0.05,
+        help="Delay after chunk_begin before chunk items are published.",
     )
-    parser.set_defaults(asset_server=True)
+    parser.add_argument(
+        "--chunk-item-delay",
+        type=float,
+        default=0.006,
+        help="Optional delay after each chunk item publish.",
+    )
+    parser.add_argument(
+        "--chunk-batch-size",
+        type=int,
+        default=6,
+        help="Number of chunk items sent before applying --chunk-batch-pause.",
+    )
+    parser.add_argument(
+        "--chunk-batch-pause",
+        type=float,
+        default=0.02,
+        help="Pause between chunk batches to avoid flooding ROS TCP bridges.",
+    )
     parser.add_argument("--frame-id", default="map", help="ROS frame for the preview point cloud.")
     parser.add_argument(
         "--sample-count",
@@ -550,29 +564,13 @@ def write_runtime_ply_subset(source_path: Path, render_count: int, cache_dir: Pa
     return output_path, len(indices)
 
 
-def resolve_asset_uri(asset_path: Path, args: argparse.Namespace, actual_port: Optional[int] = None) -> str:
-    base_url = str(args.asset_base_url or "").strip().rstrip("/")
-    if not base_url:
-        port = int(actual_port if actual_port is not None else args.asset_server_port)
-        base_url = f"http://127.0.0.1:{port}"
-    return f"{base_url}/{asset_path.name}"
-
-
-def start_asset_http_server(asset_path: Path, args: argparse.Namespace) -> Optional[AssetHttpServer]:
-    if not args.asset_server:
-        return None
-
-    handler_cls = functools.partial(
-        http.server.SimpleHTTPRequestHandler,
-        directory=str(asset_path.parent),
-    )
-    httpd = http.server.ThreadingHTTPServer(
-        (str(args.asset_server_bind), int(args.asset_server_port)),
-        handler_cls,
-    )
-    thread = threading.Thread(target=httpd.serve_forever, name="horus-gaussian-splat-http", daemon=True)
-    thread.start()
-    return AssetHttpServer(httpd=httpd, thread=thread)
+def build_asset_chunks(asset_path: Path, chunk_size_bytes: int) -> List[str]:
+    chunk_size = max(1024, min(1024 * 1024, int(chunk_size_bytes)))
+    chunks: List[str] = []
+    with asset_path.open("rb") as handle:
+        for raw_chunk in iter(lambda: handle.read(chunk_size), b""):
+            chunks.append(base64.b64encode(raw_chunk).decode("ascii"))
+    return chunks or [""]
 
 
 def load_preview_points(path: Path, sample_count: int, scale: float, center: bool) -> PreviewData:
@@ -629,10 +627,17 @@ def build_runtime_manifest(
     return {
         "schema": "horus.gaussian_splat.fixture.v1",
         "visualization_type": "gaussian_splat",
-        "asset_uri": runtime_asset.uri,
+        "asset_id": f"sha256:{runtime_asset.sha256}",
+        "asset_transport": "ros_chunks",
         "asset_format": "3dgs_ply",
         "sha256": runtime_asset.sha256,
         "content_length": runtime_asset.content_length,
+        "chunk_begin_topic": args.chunk_begin_topic,
+        "chunk_item_topic": args.chunk_item_topic,
+        "chunk_end_topic": args.chunk_end_topic,
+        "chunk_count": len(runtime_asset.chunks),
+        "chunk_size_bytes": runtime_asset.chunk_size_bytes,
+        "chunk_encoding": "raw+base64",
         "source_format": "3dgs_ply",
         "splat_ply": str(runtime_asset.path),
         "dataset": prebuilt.get("dataset", "custom"),
@@ -663,7 +668,7 @@ def build_runtime_manifest(
     }
 
 
-def publish_ros(preview: PreviewData, runtime_manifest: Dict, args: argparse.Namespace) -> None:
+def publish_ros(preview: PreviewData, runtime_asset: RuntimeAsset, runtime_manifest: Dict, args: argparse.Namespace) -> None:
     try:
         import rclpy
         from rclpy.executors import ExternalShutdownException
@@ -691,6 +696,12 @@ def publish_ros(preview: PreviewData, runtime_manifest: Dict, args: argparse.Nam
 
     point_pub = node.create_publisher(PointCloud2, args.preview_topic, qos)
     manifest_pub = node.create_publisher(String, args.manifest_topic, qos)
+
+    chunk_qos = QoSProfile(depth=256)
+    chunk_qos.reliability = ReliabilityPolicy.RELIABLE
+    chunk_begin_pub = node.create_publisher(String, args.chunk_begin_topic, chunk_qos)
+    chunk_item_pub = node.create_publisher(String, args.chunk_item_topic, chunk_qos)
+    chunk_end_pub = node.create_publisher(String, args.chunk_end_topic, chunk_qos)
 
     fake_robot_states = build_fake_robot_states(args)
     tf_pub = None
@@ -720,6 +731,8 @@ def publish_ros(preview: PreviewData, runtime_manifest: Dict, args: argparse.Nam
     cloud_msg = point_cloud2.create_cloud(header, fields, preview.points)
     manifest_msg = String()
     manifest_msg.data = json.dumps(runtime_manifest, separators=(",", ":"))
+    asset_id = str(runtime_manifest.get("asset_id") or f"sha256:{runtime_asset.sha256}")
+    chunk_burst_lock = threading.Lock()
 
     period = 1.0 / args.publish_rate if args.publish_rate > 0 else 5.0
     start_time = time.monotonic()
@@ -815,6 +828,89 @@ def publish_ros(preview: PreviewData, runtime_manifest: Dict, args: argparse.Nam
         point_pub.publish(cloud_msg)
         manifest_pub.publish(manifest_msg)
 
+    def publish_chunk_burst() -> None:
+        expected_chunks = len(runtime_asset.chunks)
+        progress_step = max(1, expected_chunks // 10)
+        now_ms = int(time.time() * 1000)
+        begin = String()
+        begin.data = json.dumps(
+            {
+                "asset_id": asset_id,
+                "asset_format": "3dgs_ply",
+                "sha256": runtime_asset.sha256,
+                "content_length": runtime_asset.content_length,
+                "expected_chunks": expected_chunks,
+                "splat_count": runtime_asset.splat_count,
+                "encoding": "raw+base64",
+                "ts_unix_ms": now_ms,
+            },
+            separators=(",", ":"),
+        )
+        chunk_begin_pub.publish(begin)
+        begin_delay = max(0.0, float(args.chunk_begin_delay))
+        if begin_delay > 0.0:
+            time.sleep(begin_delay)
+
+        item_delay = max(0.0, float(args.chunk_item_delay))
+        batch_size = max(1, int(args.chunk_batch_size))
+        batch_pause = max(0.0, float(args.chunk_batch_pause))
+        for index, chunk_data in enumerate(runtime_asset.chunks):
+            item = String()
+            item.data = json.dumps(
+                {
+                    "asset_id": asset_id,
+                    "chunk_index": index,
+                    "total_chunks": expected_chunks,
+                    "chunk_data": chunk_data,
+                },
+                separators=(",", ":"),
+            )
+            chunk_item_pub.publish(item)
+            sent_count = index + 1
+            if sent_count == 1 or sent_count == expected_chunks or (sent_count % progress_step) == 0:
+                node.get_logger().info(
+                    f"Publishing Gaussian Splat chunk asset_id={asset_id} chunks={sent_count}/{expected_chunks}"
+                )
+            if item_delay > 0.0:
+                time.sleep(item_delay)
+            if batch_pause > 0.0 and (index + 1) < expected_chunks and ((index + 1) % batch_size) == 0:
+                time.sleep(batch_pause)
+
+        end = String()
+        end.data = json.dumps(
+            {
+                "asset_id": asset_id,
+                "sha256": runtime_asset.sha256,
+                "content_length": runtime_asset.content_length,
+                "received_count": expected_chunks,
+                "ts_unix_ms": int(time.time() * 1000),
+            },
+            separators=(",", ":"),
+        )
+        chunk_end_pub.publish(end)
+        node.get_logger().info(
+            f"Published Gaussian Splat ROS chunk burst asset_id={asset_id} chunks={expected_chunks}"
+        )
+
+    def start_chunk_burst() -> None:
+        if not chunk_burst_lock.acquire(blocking=False):
+            node.get_logger().info(
+                f"Skipped Gaussian Splat chunk burst because one is still active asset_id={asset_id}"
+            )
+            return
+
+        def worker() -> None:
+            try:
+                publish_chunk_burst()
+            finally:
+                chunk_burst_lock.release()
+
+        threading.Thread(
+            target=worker,
+            name="horus_gaussian_splat_chunk_burst",
+            daemon=True,
+        ).start()
+
     node.create_timer(period, publish_once)
     publish_once()
     if fake_robot_states:
@@ -822,12 +918,19 @@ def publish_ros(preview: PreviewData, runtime_manifest: Dict, args: argparse.Nam
         node.create_timer(robot_period, publish_fake_robots)
         publish_static_robot_frames()
         publish_fake_robots()
+    start_chunk_burst()
+    if args.chunk_republish_period > 0:
+        node.create_timer(float(args.chunk_republish_period), start_chunk_burst)
 
     node.get_logger().info(
         f"Publishing {preview.published_vertex_count}/{preview.original_vertex_count} vertices "
         f"from {preview.ply_path} on {args.preview_topic}"
     )
     node.get_logger().info(f"Publishing Gaussian Splat manifest on {args.manifest_topic}")
+    node.get_logger().info(
+        f"Publishing Gaussian Splat asset chunks on {args.chunk_begin_topic}, "
+        f"{args.chunk_item_topic}, {args.chunk_end_topic}"
+    )
     if fake_robot_states:
         robot_summary = ", ".join(f"{state.name}/{state.base_frame}" for state in fake_robot_states)
         node.get_logger().info(
@@ -854,15 +957,15 @@ def main() -> int:
         args.splat_render_count,
         args.asset_cache_dir,
     )
-    asset_server = start_asset_http_server(runtime_ply_path, args)
-    actual_port = asset_server.httpd.server_address[1] if asset_server is not None else None
-    asset_uri = resolve_asset_uri(runtime_ply_path, args, actual_port)
+    chunk_size_bytes = max(1024, min(1024 * 1024, int(args.chunk_size_bytes)))
+    asset_chunks = build_asset_chunks(runtime_ply_path, chunk_size_bytes)
     runtime_asset = RuntimeAsset(
         path=runtime_ply_path,
-        uri=asset_uri,
         splat_count=runtime_splat_count,
         sha256=file_sha256(runtime_ply_path),
         content_length=runtime_ply_path.stat().st_size,
+        chunks=asset_chunks,
+        chunk_size_bytes=chunk_size_bytes,
     )
     runtime_manifest = build_runtime_manifest(source_manifest, preview, runtime_asset, args)
 
@@ -874,20 +977,15 @@ def main() -> int:
         f"Runtime splat asset: {runtime_asset.path} "
         f"({runtime_asset.splat_count} splats, {runtime_asset.content_length} bytes)"
     )
-    print(f"Asset URI:      {runtime_asset.uri}")
+    print(
+        f"ROS chunks:     {len(runtime_asset.chunks)} chunks "
+        f"({runtime_asset.chunk_size_bytes} raw bytes/chunk)"
+    )
     print(f"Preview topic:  {args.preview_topic}")
     print(f"Manifest topic: {args.manifest_topic}")
-    if not args.asset_base_url:
-        print(
-            "Note: --asset-base-url was not set, so the manifest uses localhost. "
-            "For Quest, pass a LAN-reachable URL such as http://<wsl-ip>:8765."
-        )
+    print(f"Chunk topics:   {args.chunk_begin_topic}, {args.chunk_item_topic}, {args.chunk_end_topic}")
 
-    try:
-        publish_ros(preview, runtime_manifest, args)
-    finally:
-        if asset_server is not None:
-            asset_server.stop()
+    publish_ros(preview, runtime_asset, runtime_manifest, args)
     return 0
 
 
