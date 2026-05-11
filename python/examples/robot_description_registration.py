@@ -64,58 +64,69 @@ def build_camera(robot_name: str) -> Camera:
     return camera
 
 
-robots = []
-datavizs = []
+def build_robot_description_registration():
+    robots = []
+    datavizs = []
 
-for name, robot_type, dimensions, base_frame, urdf_file in ROBOT_MODELS:
-    robot = Robot(name=name, robot_type=robot_type, dimensions=dimensions)
-    robot.configure_ros_binding(base_frame=base_frame)
-    robot.configure_robot_description(
-        urdf_path=str(require_urdf(urdf_file)),
-        base_frame=base_frame,
-        source="ros",
-        include_visual_meshes=True,
-        visual_mesh_triangle_budget=90000,
-        body_mesh_mode="preview_mesh",
-    )
-    robot.configure_robot_manager()
-    robot.configure_teleop(
-        command_topic=f"/{name}/cmd_vel",
-        robot_profile=robot_type.value,
-    )
-    robot.configure_navigation_tasks(
-        goal_topic=f"/{name}/goal_pose",
-        cancel_topic=f"/{name}/goal_cancel",
-        goal_status_topic=f"/{name}/goal_status",
-        waypoint_path_topic=f"/{name}/waypoint_path",
-        waypoint_status_topic=f"/{name}/waypoint_status",
-        frame_id="map",
-    )
-    robot.add_sensor(build_camera(name))
+    for name, robot_type, dimensions, base_frame, urdf_file in ROBOT_MODELS:
+        robot = Robot(name=name, robot_type=robot_type, dimensions=dimensions)
+        robot.configure_ros_binding(base_frame=base_frame)
+        robot.configure_robot_description(
+            urdf_path=str(require_urdf(urdf_file)),
+            base_frame=base_frame,
+            source="ros",
+            include_visual_meshes=True,
+            visual_mesh_triangle_budget=90000,
+            body_mesh_mode="preview_mesh",
+        )
+        robot.configure_robot_manager()
+        robot.configure_teleop(
+            command_topic=f"/{name}/cmd_vel",
+            robot_profile=robot_type.value,
+        )
+        robot.configure_navigation_tasks(
+            goal_topic=f"/{name}/goal_pose",
+            cancel_topic=f"/{name}/goal_cancel",
+            goal_status_topic=f"/{name}/goal_status",
+            waypoint_path_topic=f"/{name}/waypoint_path",
+            waypoint_status_topic=f"/{name}/waypoint_status",
+            frame_id="map",
+        )
+        robot.add_sensor(build_camera(name))
 
-    dataviz = robot.create_dataviz()
-    robot.add_path_planning_to_dataviz(
-        dataviz,
-        global_path_topic=f"/{name}/global_path",
-        local_path_topic=f"/{name}/local_path",
+        dataviz = robot.create_dataviz()
+        robot.add_path_planning_to_dataviz(
+            dataviz,
+            global_path_topic=f"/{name}/global_path",
+            local_path_topic=f"/{name}/local_path",
+        )
+        robot.add_navigation_safety_to_dataviz(
+            dataviz,
+            odom_topic=f"/{name}/odom",
+            collision_risk_topic=f"/{name}/collision_risk",
+        )
+        robots.append(robot)
+        datavizs.append(dataviz)
+
+    return robots, datavizs
+
+
+def run_registration(*, compass_enabled: bool = False):
+    robots, datavizs = build_robot_description_registration()
+
+    # No global map layer is registered in this base robot-description example.
+    success, result = register_robots(
+        robots,
+        datavizs=datavizs,
+        workspace_scale=0.1,
+        compass_enabled=compass_enabled,
+        keep_alive=True,
     )
-    robot.add_navigation_safety_to_dataviz(
-        dataviz,
-        odom_topic=f"/{name}/odom",
-        collision_risk_topic=f"/{name}/collision_risk",
-    )
-    robots.append(robot)
-    datavizs.append(dataviz)
 
-# No global map layer is registered in this base robot-description example.
+    if not success:
+        raise SystemExit(f"HORUS registration failed: {result}")
+    return result
 
-success, result = register_robots(
-    robots,
-    datavizs=datavizs,
-    workspace_scale=0.1,
-    compass_enabled=False,
-    keep_alive=True,
-)
 
-if not success:
-    raise SystemExit(f"HORUS registration failed: {result}")
+if __name__ == "__main__":
+    run_registration()

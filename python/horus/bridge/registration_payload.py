@@ -464,6 +464,10 @@ def build_robot_config_dict(
         linear_z_max_mps = max(0.0, min(5.0, linear_z_max_mps))
         angular_z_max_rps = _coerce_float(axes_metadata.get("angular_z_max_rps"), 1.2)
         angular_z_max_rps = max(0.0, min(6.0, angular_z_max_rps))
+        invert_linear_x = _coerce_bool(axes_metadata.get("invert_linear_x"), False)
+        invert_linear_y = _coerce_bool(axes_metadata.get("invert_linear_y"), False)
+        invert_linear_z = _coerce_bool(axes_metadata.get("invert_linear_z"), False)
+        invert_angular_z = _coerce_bool(axes_metadata.get("invert_angular_z"), False)
 
         discrete_metadata = teleop_metadata.get("discrete")
         if not isinstance(discrete_metadata, dict):
@@ -500,6 +504,10 @@ def build_robot_config_dict(
                 "linear_xy_max_mps": linear_xy_max_mps,
                 "linear_z_max_mps": linear_z_max_mps,
                 "angular_z_max_rps": angular_z_max_rps,
+                "invert_linear_x": invert_linear_x,
+                "invert_linear_y": invert_linear_y,
+                "invert_linear_z": invert_linear_z,
+                "invert_angular_z": invert_angular_z,
             },
             "discrete": {
                 "threshold": discrete_threshold,
@@ -685,10 +693,36 @@ def build_robot_config_dict(
     if normalized_workspace_scale is not None:
         workspace_config["position_scale"] = normalized_workspace_scale
 
-    if compass_enabled is not None:
-        workspace_config["compass"] = {
-            "enabled": _coerce_bool(compass_enabled, False),
+    def _normalize_compass_voice_mode(value):
+        normalized = str(value or "auto").strip().lower()
+        return normalized if normalized in ("auto", "batch", "realtime") else "auto"
+
+    def _build_compass_config():
+        metadata = robot.get_metadata("workspace_compass_config", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        if compass_enabled is None and "enabled" not in metadata:
+            return None
+
+        gateway_port = _coerce_int(metadata.get("gateway_port"), 8088)
+        if gateway_port <= 0 or gateway_port > 65535:
+            gateway_port = 8088
+
+        return {
+            "enabled": _coerce_bool(
+                compass_enabled if compass_enabled is not None else metadata.get("enabled"),
+                False,
+            ),
+            "gateway_port": gateway_port,
+            "voice_mode": _normalize_compass_voice_mode(metadata.get("voice_mode")),
+            "autonomy": "approve_actions",
+            "contract_version": _coerce_text(metadata.get("contract_version"), "compass.v1"),
         }
+
+    compass_config = _build_compass_config()
+    if compass_config is not None:
+        workspace_config["compass"] = compass_config
 
     workspace_tutorial_metadata = robot.get_metadata("workspace_tutorial_config", {})
     if isinstance(workspace_tutorial_metadata, dict):

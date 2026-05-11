@@ -17,6 +17,7 @@ from .config import (
     RosBindingConfig,
     TeleopConfig,
     WaypointTaskConfig,
+    WorkspaceCompassConfig,
     WorkspaceTutorialConfig,
     normalize_binding_mode,
     normalize_frame_token,
@@ -69,6 +70,7 @@ class Robot:
     _ROS_BINDING_METADATA_KEY = "ros_binding_config"
     _LOCAL_BODY_MODEL_METADATA_KEY = "local_body_model_config"
     _WORKSPACE_TUTORIAL_METADATA_KEY = "workspace_tutorial_config"
+    _WORKSPACE_COMPASS_METADATA_KEY = "workspace_compass_config"
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -279,6 +281,26 @@ class Robot:
             WorkspaceTutorialConfig.from_values(preset_id, enabled=enabled).to_payload(),
         )
 
+    def configure_workspace_compass(
+        self,
+        *,
+        enabled: bool = True,
+        gateway_port: int = 8088,
+        voice_mode: str = "auto",
+        contract_version: str = "compass.v1",
+    ) -> None:
+        """Configure the workspace-scoped Compass copilot contract."""
+        self.add_metadata(
+            self._WORKSPACE_COMPASS_METADATA_KEY,
+            WorkspaceCompassConfig.from_values(
+                enabled=enabled,
+                gateway_port=gateway_port,
+                voice_mode=voice_mode,
+                autonomy="approve_actions",
+                contract_version=contract_version,
+            ).to_payload(),
+        )
+
     def configure_robot_manager(
         self,
         *,
@@ -322,6 +344,10 @@ class Robot:
         linear_xy_max_mps: Optional[float] = None,
         linear_z_max_mps: Optional[float] = None,
         angular_z_max_rps: Optional[float] = None,
+        invert_linear_x: Optional[bool] = None,
+        invert_linear_y: Optional[bool] = None,
+        invert_linear_z: Optional[bool] = None,
+        invert_angular_z: Optional[bool] = None,
         discrete_threshold: Optional[float] = None,
         linear_xy_step_mps: Optional[float] = None,
         linear_z_step_mps: Optional[float] = None,
@@ -346,6 +372,10 @@ class Robot:
                 linear_xy_max_mps=linear_xy_max_mps,
                 linear_z_max_mps=linear_z_max_mps,
                 angular_z_max_rps=angular_z_max_rps,
+                invert_linear_x=invert_linear_x,
+                invert_linear_y=invert_linear_y,
+                invert_linear_z=invert_linear_z,
+                invert_angular_z=invert_angular_z,
                 discrete_threshold=discrete_threshold,
                 linear_xy_step_mps=linear_xy_step_mps,
                 linear_z_step_mps=linear_z_step_mps,
@@ -881,4 +911,3 @@ def _invoke_register_robots(
         kwargs["wait_for_app_before_register"] = wait_for_app_before_register
 
     return method(robots, **kwargs)
-

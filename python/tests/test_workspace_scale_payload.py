@@ -55,6 +55,10 @@ def test_compass_serialized_when_explicitly_enabled():
 
     assert "workspace_config" in config
     assert config["workspace_config"]["compass"]["enabled"] is True
+    assert config["workspace_config"]["compass"]["gateway_port"] == 8088
+    assert config["workspace_config"]["compass"]["voice_mode"] == "auto"
+    assert config["workspace_config"]["compass"]["autonomy"] == "approve_actions"
+    assert config["workspace_config"]["compass"]["contract_version"] == "compass.v1"
 
 
 def test_compass_serialized_when_explicitly_disabled():
@@ -65,6 +69,24 @@ def test_compass_serialized_when_explicitly_disabled():
 
     assert "workspace_config" in config
     assert config["workspace_config"]["compass"]["enabled"] is False
+    assert config["workspace_config"]["compass"]["gateway_port"] == 8088
+
+
+def test_compass_serialized_from_robot_metadata():
+    robot, dataviz = _build_robot_and_dataviz()
+    robot.configure_workspace_compass(enabled=True, gateway_port=9090, voice_mode="batch")
+    client = _build_client()
+
+    config = client._build_robot_config_dict(robot, dataviz)
+
+    assert "workspace_config" in config
+    assert config["workspace_config"]["compass"] == {
+        "enabled": True,
+        "gateway_port": 9090,
+        "voice_mode": "batch",
+        "autonomy": "approve_actions",
+        "contract_version": "compass.v1",
+    }
 
 
 def test_workspace_scale_omitted_when_invalid():

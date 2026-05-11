@@ -45,6 +45,7 @@ def test_teleop_helper_keeps_payload_shape_and_defaults():
         linear_xy_max_mps=0.35,
         linear_z_max_mps=0.0,
         angular_z_max_rps=0.8,
+        invert_angular_z=True,
     )
 
     teleop = _build_config(robot)["control"]["teleop"]
@@ -57,6 +58,7 @@ def test_teleop_helper_keeps_payload_shape_and_defaults():
     assert teleop["axes"]["linear_xy_max_mps"] == 0.35
     assert teleop["axes"]["linear_z_max_mps"] == 0.0
     assert teleop["axes"]["angular_z_max_rps"] == 0.8
+    assert teleop["axes"]["invert_angular_z"] is True
 
 
 def test_navigation_task_helpers_keep_payload_shape():

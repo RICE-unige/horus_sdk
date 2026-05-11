@@ -250,6 +250,21 @@ python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profil
 python3 python/examples/robot_description_registration.py
 ```
 
+For Compass tests, use the Compass-enabled variant of the same registration. Start the Compass voice gateway before accepting the workspace in HORUS MR.
+
+```bash
+# Terminal C
+cd ~/compass
+source .venv/bin/activate
+compass voice-gateway serve --host 0.0.0.0 --port 8088
+
+# Terminal B
+python3 python/examples/robot_description_compass_registration.py
+```
+
+That variant sends `workspace_config.compass` with the `compass.v1` defaults used by HORUS MR:
+`enabled=true`, `gateway_port=8088`, `voice_mode=auto`, and `autonomy=approve_actions`.
+
 ### Stereo camera registration
 
 Use this for the dual camera policy used by teleop: mono minimap stream plus side-by-side stereo teleop stream.
@@ -379,7 +394,8 @@ Current SDK-side robot task support includes:
 
 Registration payloads can now include:
 - `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid, 3D maps, octomap mesh layers, and semantic boxes),
-- `workspace_config.position_scale` (global scale hint consumed by MR runtime).
+- `workspace_config.position_scale` (global scale hint consumed by MR runtime),
+- `workspace_config.compass` for the approval-gated Compass copilot contract (`enabled`, `gateway_port`, `voice_mode`, `autonomy`, `contract_version`).
 
 This enables workspace-level visualization wiring without duplicating map or semantic-layer config in each robot-scoped visualization block. In current MR builds, global semantic layers are default-visible for all operators, while a user closing/hiding a layer is treated as a local display choice.
 
@@ -500,7 +516,7 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
 | Semantic Perception Layers | :large_orange_diamond: In progress | Semantic box payloads and a curated semantic perception registration example are integrated as global visualization layers; `lenses` remains the future richer scene-understanding producer. | Add semantic tracks, class dictionaries, confidence/staleness styling, segmentation/depth overlays, uncertainty, spatial anchoring, and scene-context references aligned with `lenses` outputs. |
 | Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility now tracks shared-host, shared-join, and private-workspace operators; multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, replay-triggered map/semantic layer replay behavior, and direct private-operator replay support are integrated. | Add richer operator identity/lease observability summaries, explicit ownership metadata schemas, layer visibility ownership semantics, and stronger rejoin/replay validation suites. |
-| AI Copilot Orchestration | :white_circle: Planned | No copilot contract is integrated into `horus_sdk` yet; `compass` now exists separately as the future copilot/orchestration service. | Define copilot action-scoping contracts, approval/guardrail metadata, operator-visible intervention traces, and the first stable `horus_sdk <-> compass` contract boundary. |
+| AI Copilot Orchestration | :large_orange_diamond: In progress | `workspace_config.compass` now carries the stable `compass.v1` enablement contract, the robot-description Compass example is the canonical MR fake-fleet registration, and autonomy is fixed to `approve_actions`. | Add integration smoke tests that start HORUS bridge, the fake robot-description suite, the Compass voice gateway, and the Compass registration together. |
 
 ## Citation
 

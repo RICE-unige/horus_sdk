@@ -36,6 +36,10 @@ def test_teleop_control_defaults():
     assert teleop["custom_passthrough_only"] is False
     assert teleop["deadman"]["policy"] == "either_grip_trigger"
     assert teleop["deadman"]["timeout_ms"] == 200
+    assert teleop["axes"]["invert_linear_x"] is False
+    assert teleop["axes"]["invert_linear_y"] is False
+    assert teleop["axes"]["invert_linear_z"] is False
+    assert teleop["axes"]["invert_angular_z"] is False
 
 
 def test_teleop_control_overrides():
@@ -60,6 +64,10 @@ def test_teleop_control_overrides():
                 "linear_xy_max_mps": 1.8,
                 "linear_z_max_mps": 1.2,
                 "angular_z_max_rps": 1.5,
+                "invert_linear_x": True,
+                "invert_linear_y": False,
+                "invert_linear_z": True,
+                "invert_angular_z": True,
             },
             "discrete": {
                 "threshold": 0.55,
@@ -86,6 +94,10 @@ def test_teleop_control_overrides():
     assert teleop["deadman"]["timeout_ms"] == 450
     assert teleop["axes"]["deadzone"] == 0.18
     assert teleop["axes"]["expo"] == 2.0
+    assert teleop["axes"]["invert_linear_x"] is True
+    assert teleop["axes"]["invert_linear_y"] is False
+    assert teleop["axes"]["invert_linear_z"] is True
+    assert teleop["axes"]["invert_angular_z"] is True
     assert teleop["discrete"]["threshold"] == 0.55
 
 

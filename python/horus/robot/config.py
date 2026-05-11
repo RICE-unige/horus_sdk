@@ -132,6 +132,10 @@ class TeleopConfig:
     linear_xy_max_mps: Optional[Any] = None
     linear_z_max_mps: Optional[Any] = None
     angular_z_max_rps: Optional[Any] = None
+    invert_linear_x: Optional[Any] = None
+    invert_linear_y: Optional[Any] = None
+    invert_linear_z: Optional[Any] = None
+    invert_angular_z: Optional[Any] = None
     discrete_threshold: Optional[Any] = None
     linear_xy_step_mps: Optional[Any] = None
     linear_z_step_mps: Optional[Any] = None
@@ -167,6 +171,10 @@ class TeleopConfig:
             "linear_xy_max_mps",
             "linear_z_max_mps",
             "angular_z_max_rps",
+            "invert_linear_x",
+            "invert_linear_y",
+            "invert_linear_z",
+            "invert_angular_z",
         ):
             _put_if_set(axes, key, getattr(self, key))
         if axes:
@@ -380,6 +388,53 @@ class WorkspaceTutorialConfig:
 
     def to_payload(self) -> Dict[str, Any]:
         return {"enabled": self.enabled, "preset_id": self.preset_id}
+
+
+@dataclass(frozen=True)
+class WorkspaceCompassConfig:
+    enabled: bool = False
+    gateway_port: int = 8088
+    voice_mode: str = "auto"
+    autonomy: str = "approve_actions"
+    contract_version: str = "compass.v1"
+
+    @classmethod
+    def from_values(
+        cls,
+        enabled: Any = False,
+        gateway_port: Any = 8088,
+        voice_mode: Any = "auto",
+        autonomy: Any = "approve_actions",
+        contract_version: Any = "compass.v1",
+    ) -> "WorkspaceCompassConfig":
+        normalized_voice_mode = str(voice_mode or "auto").strip().lower()
+        if normalized_voice_mode not in {"auto", "batch", "realtime"}:
+            normalized_voice_mode = "auto"
+
+        normalized_contract = str(contract_version or "compass.v1").strip()
+        if not normalized_contract:
+            normalized_contract = "compass.v1"
+
+        resolved_port = coerce_int(gateway_port, 8088)
+        if resolved_port <= 0 or resolved_port > 65535:
+            resolved_port = 8088
+
+        return cls(
+            enabled=bool(enabled),
+            gateway_port=resolved_port,
+            voice_mode=normalized_voice_mode,
+            autonomy="approve_actions",
+            contract_version=normalized_contract,
+        )
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "gateway_port": self.gateway_port,
+            "voice_mode": self.voice_mode,
+            "autonomy": self.autonomy,
+            "contract_version": self.contract_version,
+        }
 
 
 @dataclass(frozen=True)

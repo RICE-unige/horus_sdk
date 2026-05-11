@@ -50,7 +50,13 @@ def test_registration_payload_keeps_core_horus_mr_sections():
     assert "waypoint" in config["control"]["tasks"]
     assert config["robot_manager_config"]["enabled"] is True
     assert config["workspace_config"]["position_scale"] == 0.1
-    assert config["workspace_config"]["compass"]["enabled"] is True
+    assert config["workspace_config"]["compass"] == {
+        "enabled": True,
+        "gateway_port": 8088,
+        "voice_mode": "auto",
+        "autonomy": "approve_actions",
+        "contract_version": "compass.v1",
+    }
     assert config["workspace_config"]["tutorial"] == {
         "enabled": True,
         "preset_id": "robot_description_onboarding_v1",
