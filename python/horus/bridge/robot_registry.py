@@ -1686,6 +1686,11 @@ class RobotRegistryClient:
                 source_coordinate_space = "colmap"
             gaussian_payload["source_coordinate_space"] = source_coordinate_space
 
+            render_mode = str(render_options.get("render_mode", "splats")).strip().lower()
+            if render_mode not in {"splats", "debug_points", "mono_center_eye", "no_covariance"}:
+                render_mode = "splats"
+            gaussian_payload["render_mode"] = render_mode
+
             gaussian_payload["max_splats"] = max(
                 1000,
                 int(self._payload_coerce_float(render_options.get("max_splats"), 350000.0)),

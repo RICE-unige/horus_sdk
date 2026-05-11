@@ -51,6 +51,7 @@ world_layers.add_gaussian_splat_map(
     preview_topic="/map_gaussian_splat_preview",
     render_options={
         "max_splats": 350000,
+        "render_mode": "splats",
         "render_scale": 0.5,
         "sh_order": 2,
         "half_precision_sh": True,

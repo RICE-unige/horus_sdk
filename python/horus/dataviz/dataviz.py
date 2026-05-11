@@ -502,6 +502,7 @@ class DataViz:
         options.setdefault("chunk_end_topic", "/horus/gaussian_splat/chunk_end")
         options.setdefault("asset_format", "3dgs_ply")
         options.setdefault("source_coordinate_space", "colmap")
+        options.setdefault("render_mode", "splats")
         options.setdefault("max_splats", 350000)
         options.setdefault("render_scale", 0.5)
         options.setdefault("sh_order", 2)
