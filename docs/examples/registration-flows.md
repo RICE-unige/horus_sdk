@@ -36,6 +36,8 @@ The paired fake runtimes may still live under `python/examples/legacy/`, but the
 | `mesh_map_registration.py` | you want a dense mesh layer | same robot-description runtime with `--map-3d-mode mesh` |
 | `octomap_registration.py` | you want the octomap-style mesh path | same robot-description runtime with `--map-3d-mode octomap` |
 | `global_maps_registration.py` | you want one registration that carries all map families together | dedicated validation only |
+| `gaussian_splat_fixture_registration.py` | you want to validate experimental Gaussian Splat DataViz with a PointCloud2 fallback | `python/examples/tools/publish_gaussian_splat_fixture.py --profile small` |
+| `robot_description_compass_registration.py` | you want robot-description registration plus workspace compass metadata | project-specific compass validation |
 
 ## Live robot workflows
 
@@ -52,7 +54,8 @@ Start here in order:
 2. `flat_robot_registration.py`
 3. `robot_description_registration.py`
 4. the map showcase registrations
-5. live Carter or Unitree only after the first three are stable
+5. `gaussian_splat_fixture_registration.py` only after pointcloud map behavior is stable
+6. live Carter or Unitree only after the first three are stable
 
 ## Where legacy still matters
 

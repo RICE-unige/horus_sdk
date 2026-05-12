@@ -14,6 +14,7 @@ The curated SDK now keeps each major map family in its own registration example 
 - pointcloud
 - dense mesh
 - octomap
+- Gaussian splat fixture with pointcloud fallback
 
 ## Goal
 
@@ -48,9 +49,14 @@ world_layers.add_3d_map(
     "/map_3d",
     frame_id="map",
     render_options={
-        "point_size": 0.055,
+        "point_size": 0.035,
+        "auto_point_size_by_workspace_scale": True,
+        "min_point_size": 0.0015,
+        "max_point_size": 0.012,
+        "point_shape": "circle",
+        "render_mode": "opaque_fast",
         "render_all_points": True,
-        "visible_points_budget": 180000,
+        "visible_points_budget": 120000,
         "color": "#6ED7FF",
     },
 )
@@ -96,6 +102,36 @@ Reference script:
 
 - `python/examples/octomap_registration.py`
 
+## Gaussian splat fixture
+
+Use this when you want to validate the experimental 3D Gaussian Splat visualization path while keeping the normal HORUS ROS workflow. The fixture publisher emits:
+
+- a Gaussian splat manifest
+- ROS chunk topics for the binary PLY asset
+- a PointCloud2 fallback preview
+- TF and odometry for two fake robots so workspace registration remains realistic
+
+```python
+world_layers.add_gaussian_splat_map(
+    manifest_topic="/horus/gaussian_splat/manifest",
+    frame_id="map",
+    preview_topic="/map_gaussian_splat_preview",
+    render_options={
+        "render_mode": "splats",
+        "max_splats": 350000,
+        "render_scale": 0.5,
+        "pointcloud_fallback": True,
+    },
+)
+```
+
+Reference scripts:
+
+- `python/examples/tools/publish_gaussian_splat_fixture.py`
+- `python/examples/gaussian_splat_fixture_registration.py`
+
+During XR debugging, change `render_mode` to `debug_points`, `mono_center_eye`, or `no_covariance` in the registration script. Return to `splats` after the layer stays fixed in the accepted workspace while moving the headset.
+
 ## Why these are separate examples
 
 This is one of the places where the curated examples are intentionally not over-generalized.
@@ -120,6 +156,13 @@ python3 python/examples/occupancy_map_registration.py
 ```bash
 python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode pointcloud --map-3d-profile realistic
 python3 python/examples/pointcloud_map_registration.py
+```
+
+Gaussian splat fixture:
+
+```bash
+python3 python/examples/tools/publish_gaussian_splat_fixture.py --profile small
+PYTHONPATH=python:$PYTHONPATH python3 python/examples/gaussian_splat_fixture_registration.py
 ```
 
 ## What comes next
