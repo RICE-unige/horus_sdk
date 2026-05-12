@@ -25,6 +25,7 @@ REQUIRED_DOCS = [
     "docs/examples/camera-transport-profiles.md",
     "docs/examples/topic-monitoring-dashboard.md",
     "docs/examples/occupancy-grid-workflow.md",
+    "docs/examples/gaussian-splat-fixture.md",
     "docs/integration/horus-ros2.md",
     "docs/integration/horus-mr-app.md",
     "docs/reference/implementation-status.md",

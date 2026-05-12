@@ -17,6 +17,11 @@ const startLinks = [
     title: "Tutorial track",
     href: "/docs/tutorials/summary",
     description: "Learn how to build your own registration layer by layer."
+  },
+  {
+    title: "Gaussian splat fixture",
+    href: "/docs/examples/gaussian-splat-fixture",
+    description: "Validate the experimental 3DGS DataViz path with the normal ROS workflow."
   }
 ];
 
@@ -37,6 +42,7 @@ const paths = [
       "Use the curated example catalog and Python API pages once you know which contract shape you need.",
     links: [
       { title: "Curated examples", href: "/docs/examples/registration-flows" },
+      { title: "Gaussian splat fixture", href: "/docs/examples/gaussian-splat-fixture" },
       { title: "Robot model API", href: "/docs/python-sdk/robot-model" },
       { title: "Registration API", href: "/docs/python-sdk/registration" }
     ]

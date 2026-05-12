@@ -45,6 +45,7 @@ const sidebars = {
         "examples/registration-flows",
         "examples/camera-transport-profiles",
         "examples/occupancy-grid-workflow",
+        "examples/gaussian-splat-fixture",
         "examples/topic-monitoring-dashboard"
       ]
     },

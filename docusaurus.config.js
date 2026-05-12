@@ -85,6 +85,7 @@ const config = {
         { to: "/docs/intro", label: "Overview", position: "left" },
         { to: "/docs/tutorials/summary", label: "Tutorials", position: "left" },
         { to: "/docs/examples/registration-flows", label: "Examples", position: "left" },
+        { to: "/docs/examples/gaussian-splat-fixture", label: "Gaussian Splat", position: "left" },
         { to: "/docs/python-sdk/registration", label: "Python SDK", position: "left" },
         { to: "/docs/integration/horus-ros2", label: "Integration", position: "left" },
         {
@@ -117,6 +118,7 @@ const config = {
           title: "Reference",
           items: [
             { label: "Curated examples", to: "/docs/examples/registration-flows" },
+            { label: "Gaussian splat fixture", to: "/docs/examples/gaussian-splat-fixture" },
             { label: "Robot model", to: "/docs/python-sdk/robot-model" },
             { label: "DataViz", to: "/docs/python-sdk/dataviz" }
           ]

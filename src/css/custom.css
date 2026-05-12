@@ -109,7 +109,7 @@ h5,
 h6 {
   font-family: var(--ifm-heading-font-family);
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .navbar {
@@ -120,7 +120,7 @@ h6 {
 .navbar__brand {
   font-family: var(--ifm-heading-font-family);
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .navbar__link {
@@ -312,7 +312,7 @@ table td {
 }
 
 .homeGrid--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .homeCard {
