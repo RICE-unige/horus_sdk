@@ -89,4 +89,3 @@ The manifest should report `visualization_type: gaussian_splat`, `asset_format: 
 | Fallback pointcloud appears but splat does not | Keep the fallback enabled, then test `render_mode="debug_points"` |
 | Splat follows the headset | Test `debug_points`, then `mono_center_eye`, then `no_covariance` |
 | Dense profile never appears | Return to `--profile small` and confirm the cache path and hash validation first |
-
