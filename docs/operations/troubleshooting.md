@@ -61,6 +61,61 @@ Check that:
 - the required topic is publishing
 - the MR workspace has already been accepted
 
+## Pointcloud map points are too large
+
+Check the pointcloud render options in the registration script:
+
+```python
+render_options={
+    "point_size": 0.035,
+    "auto_point_size_by_workspace_scale": True,
+    "min_point_size": 0.0015,
+    "max_point_size": 0.012,
+    "point_shape": "circle",
+    "render_mode": "opaque_fast",
+}
+```
+
+If the layer still looks like large flat panels, confirm the workspace scale in the registration payload and the map frame used by the PointCloud2 publisher.
+
+## Gaussian splat does not appear
+
+Start with ROS transport and cache state:
+
+```bash
+ros2 topic echo /horus/gaussian_splat/manifest --once
+ros2 topic hz /horus/gaussian_splat/chunk_item
+ros2 topic echo /horus/registration_ack
+```
+
+Then check HORUS MR logs for:
+
+- manifest received
+- cache path and hash validation
+- chunk progress
+- runtime PLY load complete
+- active splat renderer count
+
+Keep `pointcloud_fallback=True` while debugging. If the fallback pointcloud appears but the splat does not, set `render_mode="debug_points"` in `python/examples/gaussian_splat_fixture_registration.py`.
+
+## Gaussian splat moves with the headset
+
+Use the small fixture first:
+
+```bash
+python3 python/examples/tools/publish_gaussian_splat_fixture.py --profile small
+PYTHONPATH=python:$PYTHONPATH python3 python/examples/gaussian_splat_fixture_registration.py
+```
+
+Then test render modes in this order:
+
+1. `debug_points`
+2. `mono_center_eye`
+3. `no_covariance`
+4. `splats`
+
+Watch HORUS MR logs for `[GaussianSplatURP]` descriptor lines and `[GaussianSplat.XR]` stereo matrix lines. Plausible Quest stereo logs should show a texture-array target and a non-zero eye separation.
+
 ## WSL2 networking
 
 If the headset cannot reach the bridge ports from WSL, use mirrored networking:

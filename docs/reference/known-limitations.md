@@ -10,6 +10,7 @@ sidebar_position: 2
 - high-rate multi-robot camera streaming can still saturate bridge or headset budgets
 - the most complete WebRTC validation path remains Jazzy-oriented
 - workspace acceptance in MR is intentionally required before full activation
+- Gaussian Splat rendering is experimental; use small fixtures and pointcloud fallback before dense Quest validation
 
 ## Example-model constraints
 
@@ -19,6 +20,7 @@ sidebar_position: 2
 ## API-surface constraints
 
 - legacy transport fields still coexist with newer per-view camera transport fields for compatibility
+- Gaussian Splat assets currently target standard 3DGS binary PLY fixtures; compressed SPZ-style paths are not the primary SDK contract yet
 - Python is the reference SDK; C++ and Rust are not the primary onboarding path yet
 
 ## Recommendation
