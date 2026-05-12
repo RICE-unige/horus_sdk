@@ -14,6 +14,8 @@ Keep two scopes separate:
 - robot-scoped overlays belong on the robot's own `DataViz`
 - shared world layers belong on one global `DataViz`, usually the first one passed to `register_robots(...)`
 
+![HORUS DataViz layer model](../assets/diagrams/dataviz-layers.svg)
+
 That separation matters in MR because global maps are anchored to the accepted workspace, while robot-scoped layers follow robot identity and TF.
 
 ## Minimal example

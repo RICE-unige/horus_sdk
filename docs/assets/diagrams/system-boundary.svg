@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="640" viewBox="0 0 1120 640" role="img" aria-labelledby="title desc">
+  <title id="title">HORUS system boundary</title>
+  <desc id="desc">Diagram showing how robotics runtimes publish into HORUS SDK, horus_ros2, and HORUS MR, with repository ownership boundaries.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155" />
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#0f172a" flood-opacity="0.12" />
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .lane { fill: #ffffff; stroke: #dbe4ee; stroke-width: 1.5; filter: url(#shadow); }
+      .runtime { fill: #fff7ed; stroke: #fdba74; }
+      .sdk { fill: #eff6ff; stroke: #93c5fd; }
+      .ros { fill: #f0fdf4; stroke: #86efac; }
+      .mr { fill: #f5f3ff; stroke: #c4b5fd; }
+      .contract { fill: #ecfeff; stroke: #67e8f9; }
+      .title { font: 700 25px Inter, Segoe UI, Arial, sans-serif; fill: #0f172a; }
+      .section { font: 700 16px Inter, Segoe UI, Arial, sans-serif; fill: #0f172a; }
+      .label { font: 600 14px Inter, Segoe UI, Arial, sans-serif; fill: #1e293b; }
+      .body { font: 500 12.5px Inter, Segoe UI, Arial, sans-serif; fill: #475569; }
+      .small { font: 600 11.5px Inter, Segoe UI, Arial, sans-serif; fill: #64748b; }
+      .line { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .dashed { stroke-dasharray: 8 8; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1120" height="640" rx="24" />
+  <text class="title" x="40" y="56">HORUS repository boundary and runtime contract</text>
+  <text class="body" x="40" y="82">The SDK describes the robot and operator-facing data. ROS 2 transports it. HORUS MR decides how it is placed, rendered, and controlled.</text>
+
+  <rect class="lane runtime" x="42" y="125" width="214" height="336" rx="18" />
+  <text class="section" x="68" y="160">Robot runtime</text>
+  <text class="body" x="68" y="188">Live robot, simulator,</text>
+  <text class="body" x="68" y="207">or fake fixture graph</text>
+  <rect class="lane" x="68" y="242" width="162" height="64" rx="12" />
+  <text class="label" x="88" y="268">ROS topics</text>
+  <text class="body" x="88" y="289">TF, sensors, maps</text>
+  <rect class="lane" x="68" y="330" width="162" height="64" rx="12" />
+  <text class="label" x="88" y="356">Services/actions</text>
+  <text class="body" x="88" y="377">Teleop, tasks</text>
+
+  <rect class="lane sdk" x="322" y="125" width="214" height="336" rx="18" />
+  <text class="section" x="348" y="160">horus_sdk</text>
+  <text class="body" x="348" y="188">Python model API and</text>
+  <text class="body" x="348" y="207">registration payloads</text>
+  <rect class="lane" x="348" y="242" width="162" height="64" rx="12" />
+  <text class="label" x="368" y="268">Robot model</text>
+  <text class="body" x="368" y="289">Frames, dimensions</text>
+  <rect class="lane" x="348" y="330" width="162" height="64" rx="12" />
+  <text class="label" x="368" y="356">DataViz config</text>
+  <text class="body" x="368" y="377">Topics, maps, style</text>
+
+  <rect class="lane ros" x="602" y="125" width="214" height="336" rx="18" />
+  <text class="section" x="628" y="160">horus_ros2</text>
+  <text class="body" x="628" y="188">Bridge lifecycle, topic</text>
+  <text class="body" x="628" y="207">routing, app transport</text>
+  <rect class="lane" x="628" y="242" width="162" height="64" rx="12" />
+  <text class="label" x="648" y="268">Registration bus</text>
+  <text class="body" x="648" y="289">ACK and keep-alive</text>
+  <rect class="lane" x="628" y="330" width="162" height="64" rx="12" />
+  <text class="label" x="648" y="356">Runtime bridge</text>
+  <text class="body" x="648" y="377">ROS data to app</text>
+
+  <rect class="lane mr" x="882" y="125" width="196" height="336" rx="18" />
+  <text class="section" x="908" y="160">horus</text>
+  <text class="body" x="908" y="188">Unity MR workspace,</text>
+  <text class="body" x="908" y="207">rendering, and UX</text>
+  <rect class="lane" x="908" y="242" width="144" height="64" rx="12" />
+  <text class="label" x="928" y="268">Placement</text>
+  <text class="body" x="928" y="289">Workspace and TF</text>
+  <rect class="lane" x="908" y="330" width="144" height="64" rx="12" />
+  <text class="label" x="928" y="356">Interaction</text>
+  <text class="body" x="928" y="377">Robot manager, UI</text>
+
+  <path class="line" d="M256 286 C282 286 294 286 322 286" />
+  <text class="small" x="266" y="265">developer uses</text>
+  <path class="line" d="M536 286 C562 286 574 286 602 286" />
+  <text class="small" x="548" y="265">publishes</text>
+  <path class="line" d="M816 286 C842 286 854 286 882 286" />
+  <text class="small" x="827" y="265">forwards</text>
+
+  <path class="line dashed" d="M882 390 C818 516 658 536 504 438" />
+  <text class="small" x="613" y="537">ACK, operator state, dashboard truth</text>
+
+  <rect class="lane contract" x="210" y="502" width="700" height="82" rx="18" />
+  <text class="section" x="238" y="534">Stable SDK contract</text>
+  <text class="body" x="238" y="558">Robot identity, dimensions, frames, sensor topics, teleop topics, task topics, visual layers, keep-alive, dashboard metadata.</text>
+</svg>

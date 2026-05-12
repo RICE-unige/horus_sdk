@@ -33,6 +33,14 @@ npm run docs:start
 - keep the Python SDK pages aligned with the actual public methods used in the curated examples
 - update the docs whenever registration payload semantics or example ownership changes
 
+## Diagram rules
+
+- keep architecture diagrams in `docs/assets/diagrams/` so they are versioned with the page that explains them
+- use diagrams for system boundaries, runtime flows, and data ownership, not decoration
+- prefer simple vector diagrams with labeled repositories, topics, frames, and fallback paths
+- avoid generated bitmap art unless it shows a real product, robot, map, or UI state that cannot be represented accurately as a diagram
+- update the diagram and the surrounding prose together whenever a runtime path changes
+
 ## Review checklist
 
 - no broken links

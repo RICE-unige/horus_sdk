@@ -5,6 +5,10 @@ sidebar_position: 2
 
 # Runtime Flow
 
+![HORUS runtime flow](../assets/diagrams/runtime-flow.svg)
+
+This flow is the path to debug first: make sure the SDK registration exists, the bridge has routed it, the workspace has been accepted, and the registered topics are actually publishing before looking at MR rendering behavior.
+
 ## End-to-end sequence
 
 1. Your Python code builds `Robot`, `Sensor`, and `DataViz` objects.

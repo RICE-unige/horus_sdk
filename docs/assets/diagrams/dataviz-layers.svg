@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="650" viewBox="0 0 1120 650" role="img" aria-labelledby="title desc">
+  <title id="title">HORUS DataViz layer model</title>
+  <desc id="desc">Diagram separating robot-scoped DataViz overlays from global workspace map layers in HORUS MR.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155" />
+    </marker>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#0f172a" flood-opacity="0.12" />
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #dbe4ee; stroke-width: 1.5; filter: url(#shadow); }
+      .global { fill: #ecfeff; stroke: #67e8f9; stroke-width: 1.4; }
+      .robot { fill: #f5f3ff; stroke: #c4b5fd; stroke-width: 1.4; }
+      .sensor { fill: #fff7ed; stroke: #fdba74; stroke-width: 1.4; }
+      .render { fill: #ecfdf5; stroke: #86efac; stroke-width: 1.4; }
+      .title { font: 700 25px Inter, Segoe UI, Arial, sans-serif; fill: #0f172a; }
+      .label { font: 700 15px Inter, Segoe UI, Arial, sans-serif; fill: #111827; }
+      .body { font: 500 12.5px Inter, Segoe UI, Arial, sans-serif; fill: #475569; }
+      .small { font: 600 11.5px Inter, Segoe UI, Arial, sans-serif; fill: #64748b; }
+      .line { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .soft { stroke: #94a3b8; stroke-width: 2; fill: none; stroke-dasharray: 8 8; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1120" height="650" rx="24" />
+  <text class="title" x="40" y="56">DataViz ownership in HORUS MR</text>
+  <text class="body" x="40" y="82">Global layers anchor to the accepted workspace. Robot-scoped overlays follow robot identity and TF.</text>
+
+  <rect class="panel" x="56" y="126" width="452" height="440" rx="22" />
+  <text class="label" x="88" y="164">Robot-scoped DataViz</text>
+  <text class="body" x="88" y="188">Attached to one robot registration.</text>
+  <rect class="robot" x="92" y="226" width="172" height="78" rx="14" />
+  <text class="label" x="116" y="255">Robot frame tree</text>
+  <text class="body" x="116" y="278">base_link, sensors,</text>
+  <text class="body" x="116" y="295">interaction box</text>
+  <rect class="sensor" x="300" y="226" width="172" height="78" rx="14" />
+  <text class="label" x="324" y="255">Live sensors</text>
+  <text class="body" x="324" y="278">camera, LaserScan,</text>
+  <text class="body" x="324" y="295">PointCloud2</text>
+  <rect class="robot" x="92" y="346" width="172" height="78" rx="14" />
+  <text class="label" x="116" y="375">Navigation</text>
+  <text class="body" x="116" y="398">paths, odometry,</text>
+  <text class="body" x="116" y="415">collision signals</text>
+  <rect class="robot" x="300" y="346" width="172" height="78" rx="14" />
+  <text class="label" x="324" y="375">Task context</text>
+  <text class="body" x="324" y="398">operator actions,</text>
+  <text class="body" x="324" y="415">robot status</text>
+
+  <rect class="panel" x="612" y="126" width="452" height="440" rx="22" />
+  <text class="label" x="644" y="164">Global DataViz</text>
+  <text class="body" x="644" y="188">Shared world layers registered once.</text>
+  <rect class="global" x="648" y="226" width="172" height="78" rx="14" />
+  <text class="label" x="672" y="255">2D map</text>
+  <text class="body" x="672" y="278">OccupancyGrid</text>
+  <text class="body" x="672" y="295">navigation context</text>
+  <rect class="global" x="856" y="226" width="172" height="78" rx="14" />
+  <text class="label" x="880" y="255">3D evidence</text>
+  <text class="body" x="880" y="278">PointCloud2, mesh,</text>
+  <text class="body" x="880" y="295">octomap</text>
+  <rect class="global" x="648" y="346" width="172" height="78" rx="14" />
+  <text class="label" x="672" y="375">3DGS map</text>
+  <text class="body" x="672" y="398">manifest, chunks,</text>
+  <text class="body" x="672" y="415">preview fallback</text>
+  <rect class="global" x="856" y="346" width="172" height="78" rx="14" />
+  <text class="label" x="880" y="375">Semantics</text>
+  <text class="body" x="880" y="398">boxes, zones,</text>
+  <text class="body" x="880" y="415">labels</text>
+
+  <rect class="render" x="402" y="492" width="316" height="80" rx="18" />
+  <text class="label" x="432" y="523">Accepted workspace map root</text>
+  <text class="body" x="432" y="548">Final placement uses TF plus operator workspace acceptance.</text>
+
+  <path class="line" d="M264 304 C336 344 364 426 438 492" />
+  <path class="line" d="M856 424 C796 466 762 486 718 514" />
+  <path class="soft" d="M560 492 V126" />
+  <text class="small" x="510" y="116">separate scopes</text>
+</svg>

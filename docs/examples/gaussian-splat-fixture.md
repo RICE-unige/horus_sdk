@@ -13,6 +13,8 @@ The Gaussian splat fixture is the safest way to test HORUS Gaussian Splat DataVi
 - the map is anchored under the accepted workspace map transform
 - a PointCloud2 preview remains available as fallback
 
+![HORUS Gaussian splat fixture data path](../assets/diagrams/gaussian-splat-fixture.svg)
+
 :::warning[Experimental renderer]
 
 Gaussian splatting is still an experimental HORUS MR path. Validate the small fixture first, then move to denser assets only after the layer stays fixed in the workspace while moving the headset.

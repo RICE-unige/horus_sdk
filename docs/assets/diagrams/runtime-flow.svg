@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="660" viewBox="0 0 1120 660" role="img" aria-labelledby="title desc">
+  <title id="title">HORUS runtime flow</title>
+  <desc id="desc">Sequence-style diagram showing SDK object creation, registration, bridge routing, workspace acceptance, visualization, and dashboard feedback.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#1f2937" />
+    </marker>
+    <filter id="shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="7" stdDeviation="9" flood-color="#0f172a" flood-opacity="0.12" />
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #dbe4ee; stroke-width: 1.5; filter: url(#shadow); }
+      .step { fill: #eef2ff; stroke: #a5b4fc; stroke-width: 1.4; }
+      .gate { fill: #fff7ed; stroke: #fdba74; stroke-width: 1.4; }
+      .active { fill: #ecfdf5; stroke: #86efac; stroke-width: 1.4; }
+      .feedback { fill: #f0f9ff; stroke: #7dd3fc; stroke-width: 1.4; }
+      .title { font: 700 25px Inter, Segoe UI, Arial, sans-serif; fill: #0f172a; }
+      .label { font: 700 15px Inter, Segoe UI, Arial, sans-serif; fill: #111827; }
+      .body { font: 500 12.5px Inter, Segoe UI, Arial, sans-serif; fill: #475569; }
+      .small { font: 600 11.5px Inter, Segoe UI, Arial, sans-serif; fill: #64748b; }
+      .line { stroke: #1f2937; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .return { stroke: #0ea5e9; stroke-width: 2; fill: none; stroke-dasharray: 8 8; marker-end: url(#arrow); }
+      .rail { stroke: #cbd5e1; stroke-width: 2; stroke-dasharray: 6 8; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1120" height="660" rx="24" />
+  <text class="title" x="40" y="56">End-to-end registration and runtime flow</text>
+  <text class="body" x="40" y="82">Registration describes intent first. Runtime data only becomes operator-visible after bridge routing and workspace acceptance.</text>
+
+  <rect class="panel" x="54" y="122" width="1012" height="456" rx="22" />
+  <line class="rail" x1="148" y1="178" x2="148" y2="526" />
+  <line class="rail" x1="390" y1="178" x2="390" y2="526" />
+  <line class="rail" x1="632" y1="178" x2="632" y2="526" />
+  <line class="rail" x1="874" y1="178" x2="874" y2="526" />
+
+  <text class="small" x="94" y="154">Python app</text>
+  <text class="small" x="336" y="154">horus_sdk</text>
+  <text class="small" x="578" y="154">horus_ros2</text>
+  <text class="small" x="826" y="154">HORUS MR</text>
+
+  <rect class="step" x="82" y="190" width="196" height="72" rx="14" />
+  <text class="label" x="106" y="218">Build objects</text>
+  <text class="body" x="106" y="241">Robot, sensors, DataViz,</text>
+  <text class="body" x="106" y="258">teleop, tasks</text>
+
+  <path class="line" d="M278 226 H334" />
+  <rect class="step" x="334" y="190" width="196" height="72" rx="14" />
+  <text class="label" x="358" y="218">Serialize payload</text>
+  <text class="body" x="358" y="241">Names, frames, topics,</text>
+  <text class="body" x="358" y="258">visualization options</text>
+
+  <path class="line" d="M530 226 H586" />
+  <rect class="step" x="586" y="190" width="196" height="72" rx="14" />
+  <text class="label" x="610" y="218">Publish registration</text>
+  <text class="body" x="610" y="241">/horus/registration</text>
+  <text class="body" x="610" y="258">plus keep-alive</text>
+
+  <path class="line" d="M782 226 H838" />
+  <rect class="gate" x="838" y="190" width="162" height="72" rx="14" />
+  <text class="label" x="862" y="218">Accept workspace</text>
+  <text class="body" x="862" y="241">Operator anchors</text>
+  <text class="body" x="862" y="258">map in MR</text>
+
+  <path class="line" d="M922 262 V322" />
+  <rect class="active" x="774" y="322" width="226" height="76" rx="14" />
+  <text class="label" x="798" y="350">Activate runtime entities</text>
+  <text class="body" x="798" y="373">Robots, controls, maps,</text>
+  <text class="body" x="798" y="390">overlays, task UI</text>
+
+  <path class="line" d="M586 360 H774" />
+  <rect class="active" x="334" y="322" width="252" height="76" rx="14" />
+  <text class="label" x="358" y="350">Route live ROS data</text>
+  <text class="body" x="358" y="373">TF, camera, lidar, maps,</text>
+  <text class="body" x="358" y="390">teleop responses</text>
+
+  <path class="return" d="M838 444 H586" />
+  <path class="return" d="M586 444 H334" />
+  <rect class="feedback" x="334" y="444" width="252" height="72" rx="14" />
+  <text class="label" x="358" y="472">Dashboard truth</text>
+  <text class="body" x="358" y="495">ACK, app state, publisher</text>
+  <text class="body" x="358" y="512">activity, topic monitors</text>
+
+  <rect class="feedback" x="82" y="444" width="196" height="72" rx="14" />
+  <text class="label" x="106" y="472">Developer feedback</text>
+  <text class="body" x="106" y="495">Connection status and</text>
+  <text class="body" x="106" y="512">registration health</text>
+  <path class="return" d="M334 480 H278" />
+
+  <text class="small" x="72" y="610">Common stop points: bridge not running, workspace not accepted, wrong frame or topic, missing publisher, unsupported runtime transport.</text>
+</svg>

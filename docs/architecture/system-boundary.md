@@ -7,6 +7,10 @@ sidebar_position: 1
 
 HORUS is split across three actively coupled repositories. Understanding that split is the fastest way to avoid putting the wrong responsibility into the SDK.
 
+![HORUS system boundary](../assets/diagrams/system-boundary.svg)
+
+The contract line is deliberate: the SDK describes robot and visualization intent, `horus_ros2` handles runtime routing, and HORUS MR owns placement, rendering, and headset interaction policy.
+
 ## Repository ownership
 
 | Repository | Owns | Does not own |
