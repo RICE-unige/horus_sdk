@@ -27,7 +27,7 @@ fn workspace_scale_serialized_when_valid() {
         config
             .workspace_config
             .as_ref()
-            .map(|cfg| cfg.position_scale as f64),
+            .and_then(|cfg| cfg.position_scale.map(|value| value as f64)),
         expected["workspace_config"]["position_scale"].as_f64()
     );
 }
@@ -67,4 +67,3 @@ fn robot_register_forwards_workspace_scale() {
         .expect("position scale should exist");
     assert!((actual - 0.33).abs() < 1e-6);
 }
-

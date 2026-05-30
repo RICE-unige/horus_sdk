@@ -31,6 +31,15 @@ pub struct Camera {
     pub minimap_streaming_type: String,
     pub teleop_streaming_type: String,
     pub startup_mode: String,
+    pub stereo_layout: String,
+    pub right_topic: String,
+    pub minimap_topic: String,
+    pub teleop_topic: String,
+    pub minimap_image_type: String,
+    pub teleop_image_type: String,
+    pub minimap_max_fps: u32,
+    pub teleop_stereo_layout: String,
+    pub teleop_right_topic: String,
 }
 
 impl Camera {
@@ -50,6 +59,15 @@ impl Camera {
             minimap_streaming_type: "ros".to_string(),
             teleop_streaming_type: "webrtc".to_string(),
             startup_mode: "minimap".to_string(),
+            stereo_layout: "mono".to_string(),
+            right_topic: String::new(),
+            minimap_topic: String::new(),
+            teleop_topic: String::new(),
+            minimap_image_type: String::new(),
+            teleop_image_type: String::new(),
+            minimap_max_fps: 30,
+            teleop_stereo_layout: String::new(),
+            teleop_right_topic: String::new(),
         }
     }
 

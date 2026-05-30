@@ -68,6 +68,149 @@ impl Robot {
         self.metadata.get(key).cloned().or(default)
     }
 
+    pub fn set_metadata(&mut self, key: impl Into<String>, value: Value) {
+        self.add_metadata(key, value);
+    }
+
+    pub fn configure_ros_binding(
+        &mut self,
+        tf_mode: &str,
+        topic_mode: &str,
+        base_frame: Option<&str>,
+    ) {
+        let tf_mode = normalize_binding_mode(tf_mode);
+        let topic_mode = normalize_binding_mode(topic_mode);
+        let base_frame = base_frame
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("base_link");
+        let tf_prefix = if tf_mode == "flat" { "" } else { self.name.as_str() };
+        let topic_prefix = if topic_mode == "flat" {
+            String::new()
+        } else {
+            format!("/{}", self.name)
+        };
+        self.metadata.insert(
+            "ros_binding".to_string(),
+            json!({
+                "logical_name": self.name,
+                "tf_mode": tf_mode,
+                "topic_mode": topic_mode,
+                "base_frame": base_frame,
+                "tf_prefix": tf_prefix,
+                "topic_prefix": topic_prefix,
+            }),
+        );
+    }
+
+    pub fn get_ros_binding(&self) -> Value {
+        self.metadata
+            .get("ros_binding")
+            .and_then(Value::as_object)
+            .cloned()
+            .map(Value::Object)
+            .unwrap_or_else(|| {
+                json!({
+                    "logical_name": self.name,
+                    "tf_mode": "prefixed",
+                    "topic_mode": "prefixed",
+                    "base_frame": "base_link",
+                    "tf_prefix": self.name,
+                    "topic_prefix": format!("/{}", self.name),
+                })
+            })
+    }
+
+    pub fn resolve_topic(&self, topic_name: &str) -> String {
+        let topic = topic_name.trim();
+        if topic.is_empty() {
+            return String::new();
+        }
+        if topic.starts_with('/') {
+            return topic.to_string();
+        }
+        let binding = self.get_ros_binding();
+        let prefix = binding
+            .get("topic_prefix")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if prefix.trim().is_empty() {
+            format!("/{topic}")
+        } else {
+            format!("{}/{}", prefix.trim_end_matches('/'), topic)
+        }
+    }
+
+    pub fn resolve_tf_frame(&self, frame_id: &str) -> String {
+        let frame = frame_id.trim();
+        if frame.is_empty() {
+            return String::new();
+        }
+        if frame.starts_with('/') {
+            return frame.trim_start_matches('/').to_string();
+        }
+        let binding = self.get_ros_binding();
+        let prefix = binding
+            .get("tf_prefix")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if prefix.trim().is_empty() || frame.starts_with(&format!("{}/", prefix)) {
+            frame.to_string()
+        } else {
+            format!("{}/{}", prefix.trim_matches('/'), frame)
+        }
+    }
+
+    pub fn configure_robot_manager(&mut self, status: bool, data_viz: bool, teleop: bool, tasks: bool) {
+        self.metadata.insert(
+            "robot_manager_config".to_string(),
+            json!({
+                "enabled": true,
+                "prefab_asset_path": "Assets/Prefabs/UI/RobotManager.prefab",
+                "prefab_resource_path": "",
+                "sections": {
+                    "status": status,
+                    "data_viz": data_viz,
+                    "teleop": teleop,
+                    "tasks": tasks,
+                }
+            }),
+        );
+    }
+
+    pub fn configure_local_body_model(&mut self, robot_model_id: &str, enabled: bool) {
+        self.metadata.insert(
+            "local_body_model_config".to_string(),
+            json!({
+                "enabled": enabled,
+                "robot_model_id": robot_model_id.trim().to_ascii_lowercase(),
+            }),
+        );
+    }
+
+    pub fn configure_workspace_compass(&mut self, enabled: bool, gateway_port: u16, voice_mode: &str) {
+        self.metadata.insert(
+            "workspace_compass_config".to_string(),
+            json!({
+                "enabled": enabled,
+                "gateway_port": gateway_port,
+                "voice_mode": voice_mode,
+                "autonomy": "approve_actions",
+                "contract_version": "compass.v1",
+            }),
+        );
+    }
+
+    pub fn configure_workspace_tutorial(&mut self, preset_id: &str) {
+        self.metadata.insert(
+            "workspace_tutorial_config".to_string(),
+            json!({
+                "enabled": true,
+                "preset_id": preset_id,
+            }),
+        );
+    }
+
     pub fn add_sensor(&mut self, sensor: Arc<dyn Sensor>) -> Result<(), String> {
         if self.sensors.iter().any(|s| s.name() == sensor.name()) {
             return Err(format!("Sensor with name '{}' already exists", sensor.name()));
@@ -114,7 +257,7 @@ impl Robot {
         for sensor in &self.sensors {
             dataviz.add_sensor_visualization(sensor.as_ref(), &self.name, None);
         }
-        dataviz.add_robot_transform(&self.name, "/tf", &format!("{}_base_link", self.name), None);
+        dataviz.add_robot_transform(&self.name, "/tf", &self.resolve_tf_frame("base_link"), None);
         dataviz
     }
 
@@ -151,6 +294,18 @@ impl Robot {
             trajectory_topic,
         );
         dataviz
+    }
+
+    pub fn add_navigation_safety_to_dataviz(&self, dataviz: &mut DataViz) {
+        let odom_topic = self.resolve_topic("odom");
+        dataviz.add_robot_velocity_data(&self.name, &odom_topic, "map", None);
+        dataviz.add_robot_odometry_trail(&self.name, &odom_topic, "map", None);
+        dataviz.add_robot_collision_risk(
+            &self.name,
+            &self.resolve_topic("collision_risk"),
+            &self.resolve_tf_frame("base_link"),
+            None,
+        );
     }
 
     pub fn register_with_horus(
@@ -246,6 +401,13 @@ impl Robot {
             .get("horus_color")
             .and_then(Value::as_str)
             .map(ToString::to_string)
+    }
+}
+
+fn normalize_binding_mode(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "flat" => "flat",
+        _ => "prefixed",
     }
 }
 

@@ -11,6 +11,8 @@ pub enum RobotType {
     Legged,
     #[serde(rename = "aerial")]
     Aerial,
+    #[serde(rename = "drone")]
+    Drone,
 }
 
 impl RobotType {
@@ -19,6 +21,7 @@ impl RobotType {
             Self::Wheeled => "wheeled",
             Self::Legged => "legged",
             Self::Aerial => "aerial",
+            Self::Drone => "drone",
         }
     }
 }
@@ -131,13 +134,18 @@ pub enum DataSourceType {
     RobotGlobalPath,
     RobotLocalPath,
     RobotTrajectory,
+    RobotVelocityData,
+    RobotOdometryTrail,
+    RobotCollisionRisk,
     OccupancyGrid,
     Costmap,
     Map3D,
+    Octomap,
     GlobalNavigationPath,
     TfTree,
     GlobalMarkers,
     CoordinateFrame,
+    SemanticBox,
 }
 
 impl DataSourceType {
@@ -149,13 +157,18 @@ impl DataSourceType {
             Self::RobotGlobalPath => "robot_global_path",
             Self::RobotLocalPath => "robot_local_path",
             Self::RobotTrajectory => "robot_trajectory",
+            Self::RobotVelocityData => "robot_velocity_data",
+            Self::RobotOdometryTrail => "robot_odometry_trail",
+            Self::RobotCollisionRisk => "robot_collision_risk",
             Self::OccupancyGrid => "occupancy_grid",
             Self::Costmap => "costmap",
             Self::Map3D => "map_3d",
+            Self::Octomap => "octomap",
             Self::GlobalNavigationPath => "global_navigation_path",
             Self::TfTree => "tf_tree",
             Self::GlobalMarkers => "global_markers",
             Self::CoordinateFrame => "coordinate_frame",
+            Self::SemanticBox => "semantic_box",
         }
     }
 }
@@ -172,6 +185,11 @@ pub enum VisualizationType {
     TransformTree,
     CoordinateAxes,
     Mesh,
+    Octomap,
+    SemanticBox,
+    VelocityData,
+    OdometryTrail,
+    CollisionRisk,
     Heatmap,
 }
 
@@ -188,6 +206,11 @@ impl VisualizationType {
             Self::TransformTree => "transform_tree",
             Self::CoordinateAxes => "coordinate_axes",
             Self::Mesh => "mesh",
+            Self::Octomap => "octomap",
+            Self::SemanticBox => "semantic_box",
+            Self::VelocityData => "velocity_data",
+            Self::OdometryTrail => "odometry_trail",
+            Self::CollisionRisk => "collision_risk",
             Self::Heatmap => "heatmap",
         }
     }
