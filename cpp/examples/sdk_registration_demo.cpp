@@ -3,6 +3,8 @@
 #include "horus/utils/branding.hpp"
 #include "horus/utils/logging.hpp"
 
+#include <any>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -52,18 +54,39 @@ int main(int argc, char** argv) {
         };
         robots.emplace_back(name, horus::core::RobotType::WHEELED, dims);
         auto& robot = robots.back();
-        robot.add_metadata(
-            "robot_manager_config",
+        robot.configure_ros_binding("prefixed", "prefixed", "base_link");
+        robot.configure_robot_manager(true, true, true, true);
+        robot.configure_workspace_compass(true, 8088, "auto");
+        robot.configure_workspace_tutorial("multi_robot_intro");
+        if (i == 0) {
+            robot.configure_local_body_model("rosbot", true);
+        }
+        robot.set_metadata(
+            "teleop_config",
             std::map<std::string, std::any>{
                 {"enabled", true},
-                {"prefab_asset_path", std::string("Assets/Prefabs/UI/RobotManager.prefab")},
-                {"prefab_resource_path", std::string("")},
-                {"sections",
+                {"robot_profile", std::string("wheeled")},
+                {"response_mode", std::string("analog")},
+                {"publish_rate_hz", 60.0},
+                {"axes",
                  std::map<std::string, std::any>{
-                     {"status", true},
-                     {"data_viz", true},
-                     {"teleop", true},
-                     {"tasks", true},
+                     {"deadzone", 0.12},
+                     {"linear_xy_max_mps", 1.1 + (0.05 * i)},
+                     {"angular_z_max_rps", 1.4},
+                 }},
+            });
+        robot.set_metadata(
+            "task_config",
+            std::map<std::string, std::any>{
+                {"go_to_point",
+                 std::map<std::string, std::any>{
+                     {"frame_id", std::string("map")},
+                     {"position_tolerance_m", 0.18},
+                 }},
+                {"waypoint",
+                 std::map<std::string, std::any>{
+                     {"frame_id", std::string("map")},
+                     {"position_tolerance_m", 0.25},
                  }},
             });
 
@@ -79,20 +102,65 @@ int main(int argc, char** argv) {
             camera->set_resolution({320, 180});
             camera->set_fps(6);
             camera->set_encoding("jpeg");
+            camera->set_minimap_topic("/" + name + "/camera/minimap/compressed");
+            camera->set_teleop_topic("/" + name + "/camera/image_raw/compressed");
+            camera->set_minimap_image_type("compressed");
+            camera->set_teleop_image_type("compressed");
+            camera->set_minimap_max_fps(12);
             camera->add_metadata("image_type", std::string("compressed"));
             camera->add_metadata("streaming_type", std::string("ros"));
             camera->add_metadata("minimap_streaming_type", std::string("ros"));
             camera->add_metadata("teleop_streaming_type", std::string("webrtc"));
             camera->add_metadata("startup_mode", std::string("minimap"));
+            camera->add_metadata("display_mode", std::string("projected"));
+            camera->add_metadata("projection_target_frame", name + "/camera_link");
+            camera->add_metadata(
+                "projected_scale_multiplier",
+                std::vector<float>{1.0f, 1.0f, 1.0f});
             robot.add_sensor(camera);
         }
 
         auto dataviz = robot.create_dataviz();
+        robot.add_path_planning_to_dataviz(
+            *dataviz,
+            robot.resolve_topic("global_path"),
+            robot.resolve_topic("local_path"),
+            robot.resolve_topic("trajectory"));
+        robot.add_navigation_safety_to_dataviz(*dataviz);
         if (with_occupancy) {
             horus::dataviz::RenderOptions render_options;
             render_options["show_unknown_space"] = true;
             dataviz->add_occupancy_grid("/map", "map", render_options);
         }
+        dataviz->add_3d_map(
+            "/" + name + "/map_points",
+            "map",
+            {
+                {"point_size", 0.01},
+                {"max_points_per_frame", 60000},
+                {"enable_adaptive_quality", true},
+                {"render_mode", std::string("opaque_fast")},
+            });
+        dataviz->add_3d_mesh(
+            "/" + name + "/map_mesh",
+            "map",
+            {
+                {"max_triangles", 200000},
+                {"source_coordinate_space", std::string("enu")},
+            });
+        dataviz->add_3d_octomap(
+            "/" + name + "/octomap_mesh",
+            "map",
+            {
+                {"native_topic", "/" + name + "/octomap_binary"},
+                {"native_frame", std::string("map")},
+                {"render_mode", std::string("surface_mesh")},
+            });
+        dataviz->add_semantic_box(
+            name + "_dock",
+            "Dock",
+            {static_cast<float>(i), 0.0f, 0.0f},
+            {0.6f, 0.4f, 0.3f});
         datavizs.push_back(*dataviz);
         robot_ptrs.push_back(&robot);
     }
@@ -115,4 +183,3 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
-

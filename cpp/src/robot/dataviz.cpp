@@ -210,6 +210,118 @@ void DataViz::add_robot_trajectory(
     add_or_update_visualization(visualization);
 }
 
+void DataViz::add_robot_velocity_data(
+    const std::string& robot_name,
+    const std::string& topic,
+    const std::string& frame_id,
+    RenderOptions render_options) {
+    if (render_options.find("units") == render_options.end()) {
+        render_options["units"] = std::string("m/s");
+    }
+    if (render_options.find("text_back_offset_m") == render_options.end()) {
+        render_options["text_back_offset_m"] = 0.36;
+    }
+    if (render_options.find("floor_offset_m") == render_options.end()) {
+        render_options["floor_offset_m"] = 0.01;
+    }
+    if (render_options.find("update_hz") == render_options.end()) {
+        render_options["update_hz"] = 10.0;
+    }
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::VELOCITY_DATA;
+    visualization.display_name = robot_name + ":velocity";
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = 2;
+    visualization.data_source = DataSource{
+        robot_name + "_velocity",
+        core::DataSourceType::ROBOT_VELOCITY_DATA,
+        topic,
+        frame_id,
+        robot_name,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
+void DataViz::add_robot_odometry_trail(
+    const std::string& robot_name,
+    const std::string& topic,
+    const std::string& frame_id,
+    RenderOptions render_options) {
+    if (render_options.find("color") == render_options.end()) {
+        render_options["color"] = shifted_color_hex(robot_color_hex(robot_name), 32);
+        render_options["alpha"] = 0.65;
+    }
+    if (render_options.find("max_points") == render_options.end()) {
+        render_options["max_points"] = 48;
+    }
+    if (render_options.find("history_seconds") == render_options.end()) {
+        render_options["history_seconds"] = 3.2;
+    }
+    if (render_options.find("min_spacing_m") == render_options.end()) {
+        render_options["min_spacing_m"] = 0.07;
+    }
+    if (render_options.find("line_width_m") == render_options.end()) {
+        render_options["line_width_m"] = 0.0096;
+    }
+    if (render_options.find("trail_back_offset_m") == render_options.end()) {
+        render_options["trail_back_offset_m"] = 0.44;
+    }
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::ODOMETRY_TRAIL;
+    visualization.display_name = robot_name + ":odometry_trail";
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = 1;
+    visualization.data_source = DataSource{
+        robot_name + "_odometry_trail",
+        core::DataSourceType::ROBOT_ODOMETRY_TRAIL,
+        topic,
+        frame_id,
+        robot_name,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
+void DataViz::add_robot_collision_risk(
+    const std::string& robot_name,
+    const std::string& topic,
+    const std::string& frame_id,
+    RenderOptions render_options) {
+    if (render_options.find("threshold_m") == render_options.end()) {
+        render_options["threshold_m"] = 0.45;
+    }
+    if (render_options.find("radius_m") == render_options.end()) {
+        render_options["radius_m"] = 0.45;
+    }
+    if (render_options.find("source") == render_options.end()) {
+        render_options["source"] = std::string("laser_scan");
+    }
+    if (render_options.find("alpha_min") == render_options.end()) {
+        render_options["alpha_min"] = 0.0;
+    }
+    if (render_options.find("alpha_max") == render_options.end()) {
+        render_options["alpha_max"] = 0.55;
+    }
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::COLLISION_RISK;
+    visualization.display_name = robot_name + ":collision_risk";
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = 6;
+    visualization.data_source = DataSource{
+        robot_name + "_collision_risk",
+        core::DataSourceType::ROBOT_COLLISION_RISK,
+        topic,
+        frame_id,
+        robot_name,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
 void DataViz::add_occupancy_grid(
     const std::string& topic,
     const std::string& frame_id,
@@ -242,6 +354,76 @@ void DataViz::add_3d_map(const std::string& topic, const std::string& frame_id, 
         "map_3d",
         core::DataSourceType::MAP_3D,
         topic,
+        frame_id,
+        std::nullopt,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
+void DataViz::add_3d_mesh(const std::string& topic, const std::string& frame_id, RenderOptions render_options) {
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::MESH;
+    visualization.display_name = "map_3d_mesh";
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = -4;
+    visualization.data_source = DataSource{
+        "map_3d_mesh",
+        core::DataSourceType::MAP_3D,
+        topic,
+        frame_id,
+        std::nullopt,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
+void DataViz::add_3d_octomap(const std::string& topic, const std::string& frame_id, RenderOptions render_options) {
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::OCTOMAP;
+    visualization.display_name = "map_3d_octomap";
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = -3;
+    visualization.data_source = DataSource{
+        "map_3d_octomap",
+        core::DataSourceType::OCTOMAP,
+        topic,
+        frame_id,
+        std::nullopt,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
+void DataViz::add_semantic_box(
+    const std::string& semantic_id,
+    const std::string& label,
+    const Vector3PayloadLike& center,
+    const Vector3PayloadLike& size,
+    const std::string& frame_id,
+    const Vector3PayloadLike& rotation_offset_euler) {
+    if (semantic_id.empty() || label.empty()) {
+        return;
+    }
+    RenderOptions render_options;
+    render_options["id"] = semantic_id;
+    render_options["label"] = label;
+    render_options["center"] = center;
+    render_options["size"] = size;
+    render_options["rotation_offset_euler"] = rotation_offset_euler;
+
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::SEMANTIC_BOX;
+    visualization.display_name = "semantic_box:" + semantic_id;
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = 8;
+    visualization.data_source = DataSource{
+        "semantic_box_" + semantic_id,
+        core::DataSourceType::SEMANTIC_BOX,
+        "/horus/semantic_boxes/" + semantic_id,
         frame_id,
         std::nullopt,
         {}
@@ -475,4 +657,3 @@ void DataViz::add_or_update_visualization(const VisualizationConfig& visualizati
 
 } // namespace dataviz
 } // namespace horus
-

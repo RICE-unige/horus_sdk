@@ -8,6 +8,7 @@ std::string robot_type_to_string(RobotType type) {
         case RobotType::WHEELED: return "wheeled";
         case RobotType::LEGGED: return "legged";
         case RobotType::AERIAL: return "aerial";
+        case RobotType::DRONE: return "drone";
         default: return "unknown";
     }
 }
@@ -64,13 +65,18 @@ std::string data_source_type_to_string(DataSourceType type) {
         case DataSourceType::ROBOT_GLOBAL_PATH: return "robot_global_path";
         case DataSourceType::ROBOT_LOCAL_PATH: return "robot_local_path";
         case DataSourceType::ROBOT_TRAJECTORY: return "robot_trajectory";
+        case DataSourceType::ROBOT_VELOCITY_DATA: return "robot_velocity_data";
+        case DataSourceType::ROBOT_ODOMETRY_TRAIL: return "robot_odometry_trail";
+        case DataSourceType::ROBOT_COLLISION_RISK: return "robot_collision_risk";
         case DataSourceType::OCCUPANCY_GRID: return "occupancy_grid";
         case DataSourceType::COSTMAP: return "costmap";
         case DataSourceType::MAP_3D: return "map_3d";
+        case DataSourceType::OCTOMAP: return "octomap";
         case DataSourceType::GLOBAL_NAVIGATION_PATH: return "global_navigation_path";
         case DataSourceType::TF_TREE: return "tf_tree";
         case DataSourceType::GLOBAL_MARKERS: return "global_markers";
         case DataSourceType::COORDINATE_FRAME: return "coordinate_frame";
+        case DataSourceType::SEMANTIC_BOX: return "semantic_box";
         default: return "unknown";
     }
 }
@@ -87,6 +93,11 @@ std::string visualization_type_to_string(VisualizationType type) {
         case VisualizationType::TRANSFORM_TREE: return "transform_tree";
         case VisualizationType::COORDINATE_AXES: return "coordinate_axes";
         case VisualizationType::MESH: return "mesh";
+        case VisualizationType::OCTOMAP: return "octomap";
+        case VisualizationType::SEMANTIC_BOX: return "semantic_box";
+        case VisualizationType::VELOCITY_DATA: return "velocity_data";
+        case VisualizationType::ODOMETRY_TRAIL: return "odometry_trail";
+        case VisualizationType::COLLISION_RISK: return "collision_risk";
         case VisualizationType::HEATMAP: return "heatmap";
         default: return "unknown";
     }

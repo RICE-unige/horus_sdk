@@ -2,6 +2,7 @@
 
 #include "horus/bridge/robot_registry.hpp"
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 namespace horus {
@@ -29,6 +30,23 @@ std::optional<bool> any_to_bool(const std::any& value) {
         return std::any_cast<double>(value) != 0.0;
     }
     return std::nullopt;
+}
+
+std::string normalize_binding_mode(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value == "flat" ? "flat" : "prefixed";
+}
+
+std::string trim_slashes(std::string value) {
+    while (!value.empty() && value.front() == '/') {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && value.back() == '/') {
+        value.pop_back();
+    }
+    return value;
 }
 } // namespace
 
@@ -58,6 +76,116 @@ std::optional<std::any> Robot::get_metadata(const std::string& key) const {
         return std::nullopt;
     }
     return it->second;
+}
+
+void Robot::configure_ros_binding(
+    const std::string& tf_mode,
+    const std::string& topic_mode,
+    const std::string& base_frame) {
+    const auto resolved_tf_mode = normalize_binding_mode(tf_mode);
+    const auto resolved_topic_mode = normalize_binding_mode(topic_mode);
+    const auto resolved_base_frame = base_frame.empty() ? std::string("base_link") : base_frame;
+    metadata_["ros_binding"] = std::map<std::string, std::any>{
+        {"logical_name", name_},
+        {"tf_mode", resolved_tf_mode},
+        {"topic_mode", resolved_topic_mode},
+        {"base_frame", resolved_base_frame},
+        {"tf_prefix", resolved_tf_mode == "flat" ? std::string("") : name_},
+        {"topic_prefix", resolved_topic_mode == "flat" ? std::string("") : "/" + name_},
+    };
+}
+
+std::map<std::string, std::any> Robot::get_ros_binding() const {
+    const auto existing = get_metadata("ros_binding");
+    if (existing && existing->type() == typeid(std::map<std::string, std::any>)) {
+        return std::any_cast<std::map<std::string, std::any>>(*existing);
+    }
+    return {
+        {"logical_name", name_},
+        {"tf_mode", std::string("prefixed")},
+        {"topic_mode", std::string("prefixed")},
+        {"base_frame", std::string("base_link")},
+        {"tf_prefix", name_},
+        {"topic_prefix", "/" + name_},
+    };
+}
+
+std::string Robot::resolve_topic(const std::string& topic_name) const {
+    if (topic_name.empty()) {
+        return "";
+    }
+    if (topic_name.front() == '/') {
+        return topic_name;
+    }
+    const auto binding = get_ros_binding();
+    std::string prefix;
+    const auto it = binding.find("topic_prefix");
+    if (it != binding.end()) {
+        prefix = any_to_string(it->second).value_or("");
+    }
+    if (prefix.empty()) {
+        return "/" + topic_name;
+    }
+    while (!prefix.empty() && prefix.back() == '/') {
+        prefix.pop_back();
+    }
+    return prefix + "/" + topic_name;
+}
+
+std::string Robot::resolve_tf_frame(const std::string& frame_id) const {
+    auto frame = trim_slashes(frame_id);
+    if (frame.empty()) {
+        return "";
+    }
+    const auto binding = get_ros_binding();
+    std::string prefix;
+    const auto it = binding.find("tf_prefix");
+    if (it != binding.end()) {
+        prefix = trim_slashes(any_to_string(it->second).value_or(""));
+    }
+    if (prefix.empty() || frame.rfind(prefix + "/", 0) == 0) {
+        return frame;
+    }
+    return prefix + "/" + frame;
+}
+
+void Robot::configure_robot_manager(bool status, bool data_viz, bool teleop, bool tasks) {
+    metadata_["robot_manager_config"] = std::map<std::string, std::any>{
+        {"enabled", true},
+        {"prefab_asset_path", std::string("Assets/Prefabs/UI/RobotManager.prefab")},
+        {"prefab_resource_path", std::string("")},
+        {"sections",
+         std::map<std::string, std::any>{
+             {"status", status},
+             {"data_viz", data_viz},
+             {"teleop", teleop},
+             {"tasks", tasks},
+         }},
+    };
+}
+
+void Robot::configure_local_body_model(const std::string& robot_model_id, bool enabled) {
+    metadata_["local_body_model_config"] = std::map<std::string, std::any>{
+        {"enabled", enabled},
+        {"robot_model_id", robot_model_id},
+    };
+}
+
+void Robot::configure_workspace_compass(bool enabled, int gateway_port, const std::string& voice_mode) {
+    metadata_["workspace_compass_config"] = std::map<std::string, std::any>{
+        {"enabled", enabled},
+        {"gateway_port", gateway_port},
+        {"voice_mode", voice_mode},
+        {"autonomy", std::string("approve_actions")},
+        {"contract_version", std::string("compass.v1")},
+    };
+}
+
+void Robot::configure_workspace_tutorial(const std::string& preset_id, bool enabled) {
+    metadata_["workspace_tutorial_config"] = std::map<std::string, std::any>{
+        {"enabled", enabled},
+        {"preset_id", preset_id},
+    };
 }
 
 void Robot::add_sensor(const std::shared_ptr<Sensor>& sensor) {
@@ -110,8 +238,18 @@ std::shared_ptr<dataviz::DataViz> Robot::create_dataviz(const std::string& datav
     for (const auto& sensor : sensors_) {
         dataviz->add_sensor_visualization(sensor, name_);
     }
-    dataviz->add_robot_transform(name_, "/tf", name_ + "_base_link");
+    dataviz->add_robot_transform(name_, "/tf", resolve_tf_frame("base_link"));
     return dataviz;
+}
+
+void Robot::add_navigation_safety_to_dataviz(dataviz::DataViz& dataviz) const {
+    const auto odom_topic = resolve_topic("odom");
+    dataviz.add_robot_velocity_data(name_, odom_topic, "map");
+    dataviz.add_robot_odometry_trail(name_, odom_topic, "map");
+    dataviz.add_robot_collision_risk(
+        name_,
+        resolve_topic("collision_risk"),
+        resolve_tf_frame("base_link"));
 }
 
 void Robot::add_path_planning_to_dataviz(
@@ -217,4 +355,3 @@ std::pair<bool, std::map<std::string, std::any>> register_robots(
 
 } // namespace robot
 } // namespace horus
-

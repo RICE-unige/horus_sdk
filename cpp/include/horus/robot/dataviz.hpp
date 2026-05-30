@@ -15,6 +15,12 @@ namespace dataviz {
 
 using RenderOptions = std::map<std::string, std::any>;
 
+struct Vector3PayloadLike {
+    float x{0.0f};
+    float y{0.0f};
+    float z{0.0f};
+};
+
 struct DataSource {
     std::string name;
     core::DataSourceType source_type{core::DataSourceType::SENSOR};
@@ -72,6 +78,24 @@ public:
         const std::string& frame_id = "map",
         RenderOptions render_options = {});
 
+    void add_robot_velocity_data(
+        const std::string& robot_name,
+        const std::string& topic,
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
+
+    void add_robot_odometry_trail(
+        const std::string& robot_name,
+        const std::string& topic,
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
+
+    void add_robot_collision_risk(
+        const std::string& robot_name,
+        const std::string& topic,
+        const std::string& frame_id,
+        RenderOptions render_options = {});
+
     void add_occupancy_grid(
         const std::string& topic,
         const std::string& frame_id = "map",
@@ -81,6 +105,24 @@ public:
         const std::string& topic,
         const std::string& frame_id = "map",
         RenderOptions render_options = {});
+
+    void add_3d_mesh(
+        const std::string& topic,
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
+
+    void add_3d_octomap(
+        const std::string& topic,
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
+
+    void add_semantic_box(
+        const std::string& semantic_id,
+        const std::string& label,
+        const Vector3PayloadLike& center,
+        const Vector3PayloadLike& size,
+        const std::string& frame_id = "map",
+        const Vector3PayloadLike& rotation_offset_euler = {0.0f, 0.0f, 0.0f});
 
     void add_global_navigation_path(
         const std::string& topic,
@@ -134,4 +176,3 @@ using RenderOptions = horus::dataviz::RenderOptions;
 } // namespace horus
 
 #endif // HORUS_ROBOT_DATAVIZ_HPP
-

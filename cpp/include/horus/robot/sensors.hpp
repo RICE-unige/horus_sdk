@@ -68,11 +68,29 @@ public:
     const std::string& get_minimap_streaming_type() const { return minimap_streaming_type_; }
     const std::string& get_teleop_streaming_type() const { return teleop_streaming_type_; }
     const std::string& get_startup_mode() const { return startup_mode_; }
+    const std::string& get_stereo_layout() const { return stereo_layout_; }
+    const std::string& get_right_topic() const { return right_topic_; }
+    const std::string& get_minimap_topic() const { return minimap_topic_; }
+    const std::string& get_teleop_topic() const { return teleop_topic_; }
+    const std::string& get_minimap_image_type() const { return minimap_image_type_; }
+    const std::string& get_teleop_image_type() const { return teleop_image_type_; }
+    int get_minimap_max_fps() const { return minimap_max_fps_; }
+    const std::string& get_teleop_stereo_layout() const { return teleop_stereo_layout_; }
+    const std::string& get_teleop_right_topic() const { return teleop_right_topic_; }
 
     void set_streaming_type(const std::string& value);
     void set_minimap_streaming_type(const std::string& value);
     void set_teleop_streaming_type(const std::string& value);
     void set_startup_mode(const std::string& value);
+    void set_stereo_layout(std::string value) { stereo_layout_ = std::move(value); }
+    void set_right_topic(std::string value) { right_topic_ = std::move(value); }
+    void set_minimap_topic(std::string value) { minimap_topic_ = std::move(value); }
+    void set_teleop_topic(std::string value) { teleop_topic_ = std::move(value); }
+    void set_minimap_image_type(std::string value) { minimap_image_type_ = std::move(value); }
+    void set_teleop_image_type(std::string value) { teleop_image_type_ = std::move(value); }
+    void set_minimap_max_fps(int value) { minimap_max_fps_ = value; }
+    void set_teleop_stereo_layout(std::string value) { teleop_stereo_layout_ = std::move(value); }
+    void set_teleop_right_topic(std::string value) { teleop_right_topic_ = std::move(value); }
     void set_resolution(std::pair<int, int> resolution) { resolution_ = resolution; }
     void set_fps(int fps) { fps_ = fps; }
     void set_fov(float fov) { fov_ = fov; }
@@ -91,6 +109,15 @@ private:
     std::string minimap_streaming_type_{"ros"};
     std::string teleop_streaming_type_{"webrtc"};
     std::string startup_mode_{"minimap"};
+    std::string stereo_layout_{"mono"};
+    std::string right_topic_;
+    std::string minimap_topic_;
+    std::string teleop_topic_;
+    std::string minimap_image_type_;
+    std::string teleop_image_type_;
+    int minimap_max_fps_{30};
+    std::string teleop_stereo_layout_;
+    std::string teleop_right_topic_;
 };
 
 class LaserScan : public Sensor {
@@ -173,4 +200,3 @@ private:
 } // namespace horus
 
 #endif // HORUS_ROBOT_SENSORS_HPP
-

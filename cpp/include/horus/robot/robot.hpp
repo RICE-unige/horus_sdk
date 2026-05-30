@@ -30,8 +30,20 @@ public:
     std::string get_type_str() const;
 
     void add_metadata(const std::string& key, const std::any& value);
+    void set_metadata(const std::string& key, const std::any& value) { add_metadata(key, value); }
     std::optional<std::any> get_metadata(const std::string& key) const;
     const core::Metadata& get_all_metadata() const { return metadata_; }
+    void configure_ros_binding(
+        const std::string& tf_mode = "prefixed",
+        const std::string& topic_mode = "prefixed",
+        const std::string& base_frame = "base_link");
+    std::map<std::string, std::any> get_ros_binding() const;
+    std::string resolve_topic(const std::string& topic_name) const;
+    std::string resolve_tf_frame(const std::string& frame_id) const;
+    void configure_robot_manager(bool status = true, bool data_viz = true, bool teleop = true, bool tasks = true);
+    void configure_local_body_model(const std::string& robot_model_id, bool enabled = true);
+    void configure_workspace_compass(bool enabled, int gateway_port = 8088, const std::string& voice_mode = "auto");
+    void configure_workspace_tutorial(const std::string& preset_id, bool enabled = true);
 
     void add_sensor(const std::shared_ptr<Sensor>& sensor);
     bool remove_sensor(const std::string& sensor_name);
@@ -52,6 +64,7 @@ public:
         const std::optional<std::string>& global_path_topic = std::nullopt,
         const std::optional<std::string>& local_path_topic = std::nullopt,
         const std::optional<std::string>& trajectory_topic = std::nullopt) const;
+    void add_navigation_safety_to_dataviz(dataviz::DataViz& dataviz) const;
 
     std::pair<bool, std::map<std::string, std::any>> register_with_horus(
         std::shared_ptr<dataviz::DataViz> dataviz = nullptr,
@@ -86,4 +99,3 @@ std::pair<bool, std::map<std::string, std::any>> register_robots(
 } // namespace horus
 
 #endif // HORUS_ROBOT_ROBOT_HPP
-
