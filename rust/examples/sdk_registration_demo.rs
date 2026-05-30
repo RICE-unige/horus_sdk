@@ -1,7 +1,8 @@
 use clap::Parser;
 use horus::core::types::RobotType;
-use horus::robot::{Robot, RobotDimensions, register_robots};
+use horus::robot::{register_robots, Robot, RobotDimensions};
 use horus::sensors::Camera;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, Parser)]
@@ -139,17 +140,37 @@ fn main() {
             args.height + (index as f64 * 0.03),
         );
         let mut robot = Robot::with_dimensions(name.clone(), RobotType::Wheeled, dimensions);
-        robot.add_metadata(
-            "robot_manager_config",
+        robot.configure_ros_binding("prefixed", "prefixed", Some("base_link"));
+        robot.configure_robot_manager(true, true, true, true);
+        robot.configure_workspace_compass(true, 8088, "auto");
+        robot.configure_workspace_tutorial("multi_robot_intro");
+        if index == 0 {
+            robot.configure_local_body_model("rosbot", true);
+        }
+        robot.set_metadata(
+            "teleop_config",
             serde_json::json!({
                 "enabled": true,
-                "prefab_asset_path": "Assets/Prefabs/UI/RobotManager.prefab",
-                "prefab_resource_path": "",
-                "sections": {
-                    "status": true,
-                    "data_viz": true,
-                    "teleop": true,
-                    "tasks": true
+                "robot_profile": "wheeled",
+                "response_mode": "analog",
+                "publish_rate_hz": 60.0,
+                "axes": {
+                    "deadzone": 0.12,
+                    "linear_xy_max_mps": 1.1 + (index as f64 * 0.05),
+                    "angular_z_max_rps": 1.4
+                }
+            }),
+        );
+        robot.set_metadata(
+            "task_config",
+            serde_json::json!({
+                "go_to_point": {
+                    "frame_id": "map",
+                    "position_tolerance_m": 0.18
+                },
+                "waypoint": {
+                    "frame_id": "map",
+                    "position_tolerance_m": 0.25
                 }
             }),
         );
@@ -177,13 +198,27 @@ fn main() {
                 &teleop_streaming,
                 &startup_mode,
             )
-            .unwrap_or_else(|_| Camera::new("front_camera", format!("{name}/camera_link"), format!("/{name}/camera/image_raw")));
+            .unwrap_or_else(|_| {
+                Camera::new(
+                    "front_camera",
+                    format!("{name}/camera_link"),
+                    format!("/{name}/camera/image_raw"),
+                )
+            });
 
             camera.resolution = (width, height);
             camera.fps = 6;
             camera.encoding = encoding.to_string();
+            camera.minimap_topic = format!("/{name}/camera/minimap/compressed");
+            camera.teleop_topic = format!("/{name}/camera/image_raw/compressed");
+            camera.minimap_image_type = "compressed".to_string();
+            camera.teleop_image_type = "compressed".to_string();
+            camera.minimap_max_fps = 12;
             camera.add_metadata("image_type", serde_json::json!(image_type));
-            camera.add_metadata("streaming_type", serde_json::json!(legacy_payload_streaming));
+            camera.add_metadata(
+                "streaming_type",
+                serde_json::json!(legacy_payload_streaming),
+            );
             camera.add_metadata(
                 "minimap_streaming_type",
                 serde_json::json!(minimap_streaming.clone()),
@@ -195,6 +230,14 @@ fn main() {
             camera.add_metadata("startup_mode", serde_json::json!(startup_mode.clone()));
             camera.add_metadata("display_mode", serde_json::json!("projected"));
             camera.add_metadata("use_tf", serde_json::json!(true));
+            camera.add_metadata(
+                "projection_target_frame",
+                serde_json::json!(format!("{name}/camera_link")),
+            );
+            camera.add_metadata(
+                "projected_scale_multiplier",
+                serde_json::json!({"x": 1.0, "y": 1.0, "z": 1.0}),
+            );
 
             if robot.add_sensor(Arc::new(camera)).is_err() {
                 eprintln!("failed to add camera sensor for {}", name);
@@ -205,7 +248,10 @@ fn main() {
         if args.with_occupancy_grid {
             let mut render_options = std::collections::HashMap::new();
             if let Some(scale) = args.occupancy_position_scale {
-                render_options.insert("position_scale".to_string(), serde_json::json!(scale.max(0.01)));
+                render_options.insert(
+                    "position_scale".to_string(),
+                    serde_json::json!(scale.max(0.01)),
+                );
             }
             dataviz.add_occupancy_grid(
                 &args.occupancy_topic,
@@ -213,6 +259,55 @@ fn main() {
                 Some(render_options),
             );
         }
+        let global_path = robot.resolve_topic("global_path");
+        let local_path = robot.resolve_topic("local_path");
+        let trajectory = robot.resolve_topic("trajectory");
+        robot.add_path_planning_to_dataviz(
+            &mut dataviz,
+            Some(&global_path),
+            Some(&local_path),
+            Some(&trajectory),
+        );
+        robot.add_navigation_safety_to_dataviz(&mut dataviz);
+
+        let mut point_options = HashMap::new();
+        point_options.insert("point_size".to_string(), serde_json::json!(0.01));
+        point_options.insert("max_points_per_frame".to_string(), serde_json::json!(60000));
+        point_options.insert(
+            "enable_adaptive_quality".to_string(),
+            serde_json::json!(true),
+        );
+        point_options.insert("render_mode".to_string(), serde_json::json!("opaque_fast"));
+        dataviz.add_3d_map(&format!("/{name}/map_points"), "map", Some(point_options));
+
+        let mut mesh_options = HashMap::new();
+        mesh_options.insert("max_triangles".to_string(), serde_json::json!(200000));
+        mesh_options.insert(
+            "source_coordinate_space".to_string(),
+            serde_json::json!("enu"),
+        );
+        dataviz.add_3d_mesh(&format!("/{name}/map_mesh"), "map", Some(mesh_options));
+
+        let mut octomap_options = HashMap::new();
+        octomap_options.insert(
+            "native_topic".to_string(),
+            serde_json::json!(format!("/{name}/octomap_binary")),
+        );
+        octomap_options.insert("native_frame".to_string(), serde_json::json!("map"));
+        octomap_options.insert("render_mode".to_string(), serde_json::json!("surface_mesh"));
+        dataviz.add_3d_octomap(
+            &format!("/{name}/octomap_mesh"),
+            "map",
+            Some(octomap_options),
+        );
+        dataviz.add_semantic_box(
+            &format!("{name}_dock"),
+            "Dock",
+            (index as f32, 0.0, 0.0),
+            (0.6, 0.4, 0.3),
+            "map",
+            None,
+        );
 
         datavizs.push(dataviz);
         robots.push(robot);
@@ -233,4 +328,3 @@ fn main() {
     }
     println!("Registration result: {result}");
 }
-
