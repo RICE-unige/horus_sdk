@@ -25,16 +25,21 @@ Status: **Active validation**
 
 ## C++ track
 
-Status: **Parity in progress**
+Status: **Native registration parity**
 
-- parity work is intentionally secondary to the Python integration track
-- contract fixtures remain shared, but day-to-day onboarding should use Python examples
+- C++ builds typed registration payloads for HORUS MR without the Python runtime
+- camera transport profiles, teleop/task controls, ROS binding, workspace config, local body model metadata, and Robot Manager config are supported
+- robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, and semantic boxes
+- `cpp/examples/sdk_registration_demo.cpp` is the native registration demo
 
 ## Rust track
 
-Status: **Parity in progress**
+Status: **Native registration parity**
 
-- payload and fixture work continues, but the Python SDK remains the reference implementation
+- Rust builds typed registration payloads with `serde_json` while matching the Python payload contract
+- camera transport profiles, teleop/task controls, ROS binding, workspace config, local body model metadata, and Robot Manager config are supported
+- robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, and semantic boxes
+- `rust/examples/sdk_registration_demo.rs` is the native registration demo
 
 ## Current known stub/non-primary areas
 

@@ -21,7 +21,7 @@ sidebar_position: 2
 
 - legacy transport fields still coexist with newer per-view camera transport fields for compatibility
 - Gaussian Splat assets currently target standard 3DGS binary PLY fixtures; compressed SPZ-style paths are not the primary SDK contract yet
-- Python is the reference SDK; C++ and Rust are not the primary onboarding path yet
+- Python remains the primary tutorial track; C++ and Rust now cover native registration payload parity but do not replace every Python operational helper
 
 ## Recommendation
 

@@ -40,6 +40,15 @@ const sidebars = {
     },
     {
       type: "category",
+      label: "Native SDK Reference",
+      items: [
+        "native-sdk/cpp",
+        "native-sdk/rust",
+        "native-sdk/performance"
+      ]
+    },
+    {
+      type: "category",
       label: "Curated Examples",
       items: [
         "examples/registration-flows",

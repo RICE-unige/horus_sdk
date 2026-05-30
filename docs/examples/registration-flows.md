@@ -46,6 +46,13 @@ The paired fake runtimes may still live under `python/examples/legacy/`, but the
 | `carter_registration.py` | you are integrating a live Carter fleet | includes occupancy map, lidar, compressed cameras, plans, and teleop |
 | `unitree_go1_registration.py` | you are integrating a live Unitree Go1 | includes URDF mesh, compressed front camera, LaserScan, collision alert, and stand/sit relay |
 
+## Native SDK demos
+
+| Demo | Use when | Notes |
+| --- | --- | --- |
+| `cpp/examples/sdk_registration_demo.cpp` | your integration is C++ or a native ROS 2 process | covers camera profiles, teleop/tasks, DataViz maps, semantic boxes, workspace metadata, and local body metadata |
+| `rust/examples/sdk_registration_demo.rs` | your integration is Rust or a native service | covers the same registration surface with typed Rust payload generation |
+
 ## Recommended reading order
 
 Start here in order:
