@@ -4,10 +4,10 @@ use horus::{RobotDimensions, RobotType};
 
 fn main() {
     let mut set = common::standard_fleet(
-        &["atlas", "nova", "orion"],
-        RobotType::Wheeled,
-        RobotDimensions::new(0.8, 0.55, 0.45),
-        "wheeled",
+        &["legged_1", "legged_2", "legged_3"],
+        RobotType::Legged,
+        RobotDimensions::new(0.65, 0.32, 0.45),
+        "legged",
     );
     common::register_or_fail(&mut set);
 }

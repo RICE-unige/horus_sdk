@@ -19,7 +19,10 @@ pub use core::{
     topic_map::{TopicMap, TopicInfo, get_topic_map},
 };
 
-pub use robot::{NavigationTaskConfig, Robot, RobotDescriptionConfig, RobotManagerConfig, TeleopConfig};
+pub use robot::{
+    register_robots, NavigationTaskConfig, Robot, RobotDescriptionConfig, RobotDimensions,
+    RobotManagerConfig, TeleopConfig,
+};
 pub use sensors::{
     Camera, ImmersiveViewConfig, LaserScan, Lidar3D, MinimapViewConfig, ProjectedViewConfig, Sensor,
     WebRtcTransportConfig,
