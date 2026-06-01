@@ -417,6 +417,74 @@ impl DataViz {
         });
     }
 
+    pub fn add_gaussian_splat_map(
+        &mut self,
+        manifest_topic: &str,
+        frame_id: &str,
+        mut render_options: Option<RenderOptions>,
+        preview_topic: &str,
+    ) {
+        let options = render_options.get_or_insert_with(HashMap::new);
+        options
+            .entry("manifest_topic".to_string())
+            .or_insert_with(|| serde_json::json!(manifest_topic));
+        options
+            .entry("chunk_begin_topic".to_string())
+            .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_begin"));
+        options
+            .entry("chunk_item_topic".to_string())
+            .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_item"));
+        options
+            .entry("chunk_end_topic".to_string())
+            .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_end"));
+        options.entry("asset_format".to_string()).or_insert_with(|| serde_json::json!("3dgs_ply"));
+        options
+            .entry("source_coordinate_space".to_string())
+            .or_insert_with(|| serde_json::json!("colmap"));
+        options.entry("render_mode".to_string()).or_insert_with(|| serde_json::json!("splats"));
+        options.entry("max_splats".to_string()).or_insert_with(|| serde_json::json!(350000));
+        options.entry("render_scale".to_string()).or_insert_with(|| serde_json::json!(0.5));
+        options.entry("sh_order".to_string()).or_insert_with(|| serde_json::json!(2));
+        options
+            .entry("half_precision_sh".to_string())
+            .or_insert_with(|| serde_json::json!(true));
+        options.entry("adaptive_sort".to_string()).or_insert_with(|| serde_json::json!(true));
+        options.entry("sort_passes".to_string()).or_insert_with(|| serde_json::json!(2));
+        options.entry("opacity_scale".to_string()).or_insert_with(|| serde_json::json!(1.0));
+        options.entry("splat_scale".to_string()).or_insert_with(|| serde_json::json!(1.0));
+        options
+            .entry("contribution_cull_threshold".to_string())
+            .or_insert_with(|| serde_json::json!(0.1));
+        options
+            .entry("high_precision_rt".to_string())
+            .or_insert_with(|| serde_json::json!(false));
+        options
+            .entry("pointcloud_fallback".to_string())
+            .or_insert_with(|| serde_json::json!(true));
+        options
+            .entry("fallback_topic".to_string())
+            .or_insert_with(|| serde_json::json!(preview_topic));
+        options
+            .entry("fallback_frame".to_string())
+            .or_insert_with(|| serde_json::json!(frame_id));
+
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::GaussianSplat,
+            display_name: "gaussian_splat".to_string(),
+            data_source: DataSource {
+                name: "gaussian_splat".to_string(),
+                source_type: DataSourceType::Map3D,
+                topic: manifest_topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: None,
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: -2,
+        });
+    }
+
     pub fn add_semantic_box(
         &mut self,
         semantic_id: &str,

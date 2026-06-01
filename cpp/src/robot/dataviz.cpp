@@ -397,6 +397,49 @@ void DataViz::add_3d_octomap(const std::string& topic, const std::string& frame_
     add_or_update_visualization(visualization);
 }
 
+void DataViz::add_gaussian_splat_map(
+    const std::string& manifest_topic,
+    const std::string& frame_id,
+    RenderOptions render_options,
+    const std::string& preview_topic) {
+    render_options.try_emplace("manifest_topic", manifest_topic);
+    render_options.try_emplace("chunk_begin_topic", std::string("/horus/gaussian_splat/chunk_begin"));
+    render_options.try_emplace("chunk_item_topic", std::string("/horus/gaussian_splat/chunk_item"));
+    render_options.try_emplace("chunk_end_topic", std::string("/horus/gaussian_splat/chunk_end"));
+    render_options.try_emplace("asset_format", std::string("3dgs_ply"));
+    render_options.try_emplace("source_coordinate_space", std::string("colmap"));
+    render_options.try_emplace("render_mode", std::string("splats"));
+    render_options.try_emplace("max_splats", 350000);
+    render_options.try_emplace("render_scale", 0.5);
+    render_options.try_emplace("sh_order", 2);
+    render_options.try_emplace("half_precision_sh", true);
+    render_options.try_emplace("adaptive_sort", true);
+    render_options.try_emplace("sort_passes", 2);
+    render_options.try_emplace("opacity_scale", 1.0);
+    render_options.try_emplace("splat_scale", 1.0);
+    render_options.try_emplace("contribution_cull_threshold", 0.1);
+    render_options.try_emplace("high_precision_rt", false);
+    render_options.try_emplace("pointcloud_fallback", true);
+    render_options.try_emplace("fallback_topic", preview_topic);
+    render_options.try_emplace("fallback_frame", frame_id);
+
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::GAUSSIAN_SPLAT;
+    visualization.display_name = "gaussian_splat";
+    visualization.enabled = true;
+    visualization.render_options = std::move(render_options);
+    visualization.layer_priority = -2;
+    visualization.data_source = DataSource{
+        "gaussian_splat",
+        core::DataSourceType::MAP_3D,
+        manifest_topic,
+        frame_id,
+        std::nullopt,
+        {}
+    };
+    add_or_update_visualization(visualization);
+}
+
 void DataViz::add_semantic_box(
     const std::string& semantic_id,
     const std::string& label,

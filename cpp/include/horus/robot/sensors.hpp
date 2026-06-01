@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace horus {
 namespace robot {
@@ -78,6 +79,40 @@ public:
     const std::string& get_teleop_stereo_layout() const { return teleop_stereo_layout_; }
     const std::string& get_teleop_right_topic() const { return teleop_right_topic_; }
 
+    struct ProjectedViewOptions {
+        std::optional<std::vector<float>> position_offset;
+        std::optional<std::vector<float>> rotation_offset;
+        std::optional<std::vector<float>> scale_multiplier;
+        std::optional<float> image_scale;
+        std::optional<float> focal_length_scale;
+        std::optional<std::string> projection_target_frame;
+        std::optional<bool> show_frustum;
+        std::optional<std::string> frustum_color;
+    };
+
+    struct MinimapViewOptions {
+        std::optional<float> size;
+        std::optional<std::vector<float>> position_offset;
+        std::optional<bool> face_camera;
+        std::optional<std::vector<float>> rotation_offset;
+    };
+
+    struct ImmersiveViewOptions {
+        std::optional<bool> ros_flip_x;
+        std::optional<bool> ros_flip_y;
+    };
+
+    struct WebRtcTransportOptions {
+        std::string client_signal_topic{"/horus/webrtc/client_signal"};
+        std::string server_signal_topic{"/horus/webrtc/server_signal"};
+        std::optional<int> bitrate_kbps;
+        std::optional<int> framerate;
+        std::optional<std::string> stun_server_url;
+        std::optional<std::string> turn_server_url;
+        std::optional<std::string> turn_username;
+        std::optional<std::string> turn_credential;
+    };
+
     void set_streaming_type(const std::string& value);
     void set_minimap_streaming_type(const std::string& value);
     void set_teleop_streaming_type(const std::string& value);
@@ -95,6 +130,10 @@ public:
     void set_fps(int fps) { fps_ = fps; }
     void set_fov(float fov) { fov_ = fov; }
     void set_encoding(std::string encoding) { encoding_ = std::move(encoding); }
+    void configure_projected_view(const ProjectedViewOptions& options);
+    void configure_minimap_view(const MinimapViewOptions& options);
+    void configure_immersive_view(const ImmersiveViewOptions& options);
+    void configure_webrtc_transport(const WebRtcTransportOptions& options);
 
     std::string get_camera_type() const;
     std::string get_resolution_str() const;

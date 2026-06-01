@@ -5,9 +5,12 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <fstream>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <tuple>
 
 namespace horus {
@@ -216,6 +219,26 @@ int clamp_int(int value, int min_value, int max_value) {
     return std::max(min_value, std::min(max_value, value));
 }
 
+std::string read_text_file(const std::string& path) {
+    std::ifstream stream(path);
+    if (!stream) {
+        return "";
+    }
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    return buffer.str();
+}
+
+int count_token(const std::string& text, const std::string& token) {
+    int count = 0;
+    std::size_t pos = 0;
+    while ((pos = text.find(token, pos)) != std::string::npos) {
+        ++count;
+        pos += token.size();
+    }
+    return count;
+}
+
 std::string to_lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -370,6 +393,49 @@ TaskControlPayload build_task_control(const robot::Robot& robot) {
         {"yaw_tolerance_deg", clamp_float(coerce_float(map_get(waypoint, "yaw_tolerance_deg"), 12.0f), 0.1f, 180.0f)},
     };
     return payload;
+}
+
+std::map<std::string, std::any> build_robot_description_manifest(
+    const robot::Robot& robot,
+    const std::map<std::string, std::any>& config) {
+    if (!coerce_bool(map_get(config, "enabled"), true)) {
+        return {};
+    }
+    const auto urdf_path = coerce_text(map_get(config, "urdf_path"), "");
+    if (urdf_path.empty()) {
+        return {};
+    }
+
+    const auto urdf = read_text_file(urdf_path);
+    const int link_count = std::max(0, count_token(urdf, "<link "));
+    const int joint_count = std::max(0, count_token(urdf, "<joint "));
+    const int collision_count = std::max(0, count_token(urdf, "<collision"));
+    const int visual_count = std::max(0, count_token(urdf, "<visual"));
+    const int mesh_count = std::max(0, count_token(urdf, "<mesh"));
+    const bool include_visual_meshes = coerce_bool(map_get(config, "include_visual_meshes"), true);
+    const bool supports_visual_meshes = include_visual_meshes && (visual_count > 0 || mesh_count > 0);
+    const auto base_frame = coerce_text(map_get(config, "base_frame"), "base_link");
+    const auto source = coerce_text(map_get(config, "source"), "ros");
+    const auto chunk_size = clamp_int(coerce_int(map_get(config, "chunk_size_bytes"), 12000), 1024, 64000);
+    const auto description_seed = robot.get_name() + "|" + urdf_path + "|" + base_frame + "|" + std::to_string(urdf.size());
+
+    return {
+        {"version", std::string("v2")},
+        {"description_id", std::string("native:") + std::to_string(std::hash<std::string>{}(description_seed))},
+        {"source", source},
+        {"base_frame", base_frame},
+        {"link_count", link_count},
+        {"joint_count", joint_count},
+        {"collision_count", collision_count},
+        {"supports_collision", collision_count > 0},
+        {"supports_joints", joint_count > 0},
+        {"supports_visual_meshes", supports_visual_meshes},
+        {"mesh_asset_count", mesh_count},
+        {"mesh_asset_encoded_bytes", 0},
+        {"is_transparent", coerce_bool(map_get(config, "is_transparent"), false)},
+        {"encoding", std::string("json+gzip+base64")},
+        {"chunk_size_bytes", chunk_size},
+    };
 }
 
 } // namespace
@@ -930,6 +996,48 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
             };
         }
 
+        if (visualization_payload.type == "gaussian_splat") {
+            auto asset_format = to_lower(coerce_text(map_get(visualization.render_options, "asset_format"), "3dgs_ply"));
+            if (asset_format != "3dgs_ply") {
+                asset_format = "3dgs_ply";
+            }
+            auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "colmap"));
+            if (coordinate_space != "3dgs" && coordinate_space != "opencv" && coordinate_space != "unity") {
+                coordinate_space = "colmap";
+            }
+            auto render_mode = to_lower(coerce_text(map_get(visualization.render_options, "render_mode"), "splats"));
+            if (render_mode != "debug_points" && render_mode != "mono_center_eye" && render_mode != "no_covariance") {
+                render_mode = "splats";
+            }
+            visualization_payload.gaussian_splat = {
+                {"manifest_topic", coerce_text(map_get(visualization.render_options, "manifest_topic"), visualization.data_source.topic)},
+                {"chunk_begin_topic", coerce_text(map_get(visualization.render_options, "chunk_begin_topic"), "/horus/gaussian_splat/chunk_begin")},
+                {"chunk_item_topic", coerce_text(map_get(visualization.render_options, "chunk_item_topic"), "/horus/gaussian_splat/chunk_item")},
+                {"chunk_end_topic", coerce_text(map_get(visualization.render_options, "chunk_end_topic"), "/horus/gaussian_splat/chunk_end")},
+                {"asset_format", asset_format},
+                {"source_coordinate_space", coordinate_space},
+                {"render_mode", render_mode},
+                {"max_splats", std::max(1000, coerce_int(map_get(visualization.render_options, "max_splats"), 350000))},
+                {"render_scale", clamp_float(coerce_float(map_get(visualization.render_options, "render_scale"), 0.5f), 0.25f, 1.0f)},
+                {"sh_order", clamp_int(coerce_int(map_get(visualization.render_options, "sh_order"), 2), 0, 3)},
+                {"half_precision_sh", coerce_bool(map_get(visualization.render_options, "half_precision_sh"), true)},
+                {"adaptive_sort", coerce_bool(map_get(visualization.render_options, "adaptive_sort"), true)},
+                {"sort_passes", clamp_int(coerce_int(map_get(visualization.render_options, "sort_passes"), 2), 2, 4)},
+                {"opacity_scale", clamp_float(coerce_float(map_get(visualization.render_options, "opacity_scale"), 1.0f), 0.05f, 20.0f)},
+                {"splat_scale", clamp_float(coerce_float(map_get(visualization.render_options, "splat_scale"), 1.0f), 0.05f, 4.0f)},
+                {"contribution_cull_threshold", clamp_float(coerce_float(map_get(visualization.render_options, "contribution_cull_threshold"), 0.1f), 0.0f, 1.0f)},
+                {"high_precision_rt", coerce_bool(map_get(visualization.render_options, "high_precision_rt"), false)},
+                {"pointcloud_fallback", coerce_bool(map_get(visualization.render_options, "pointcloud_fallback"), true)},
+                {"fallback_topic", coerce_text(map_get(visualization.render_options, "fallback_topic"), "/map_gaussian_splat_preview")},
+                {"fallback_frame", coerce_text(map_get(visualization.render_options, "fallback_frame"), visualization.data_source.frame_id.empty() ? std::string("map") : visualization.data_source.frame_id)},
+            };
+            if (const auto fallback = map_get(visualization.render_options, "fallback_point_cloud")) {
+                if (const auto fallback_map = any_to_map(*fallback)) {
+                    visualization_payload.gaussian_splat["fallback_point_cloud"] = *fallback_map;
+                }
+            }
+        }
+
         if (visualization_payload.type == "mesh") {
             auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "enu"));
             if (coordinate_space != "optical") {
@@ -1091,6 +1199,17 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
     }
 
+    if (const auto description_value = robot.get_metadata("robot_description_config")) {
+        const auto description_cfg = any_to_map(*description_value).value_or(std::map<std::string, std::any>{});
+        auto manifest = build_robot_description_manifest(robot, description_cfg);
+        if (!manifest.empty()) {
+            payload.robot_description_manifest = std::move(manifest);
+            if (coerce_bool(map_get(description_cfg, "include_visual_meshes"), true)) {
+                payload.has_visual_mesh_model = true;
+            }
+        }
+    }
+
     return payload;
 }
 
@@ -1174,6 +1293,47 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                     {"max_visible_points_budget", max_visible_budget},
                     {"map_static_mode", coerce_bool(map_get(visualization.render_options, "map_static_mode"), true)},
                 };
+            }
+            if (payload.type == "gaussian_splat") {
+                auto asset_format = to_lower(coerce_text(map_get(visualization.render_options, "asset_format"), "3dgs_ply"));
+                if (asset_format != "3dgs_ply") {
+                    asset_format = "3dgs_ply";
+                }
+                auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "colmap"));
+                if (coordinate_space != "3dgs" && coordinate_space != "opencv" && coordinate_space != "unity") {
+                    coordinate_space = "colmap";
+                }
+                auto render_mode = to_lower(coerce_text(map_get(visualization.render_options, "render_mode"), "splats"));
+                if (render_mode != "debug_points" && render_mode != "mono_center_eye" && render_mode != "no_covariance") {
+                    render_mode = "splats";
+                }
+                payload.gaussian_splat = {
+                    {"manifest_topic", coerce_text(map_get(visualization.render_options, "manifest_topic"), visualization.data_source.topic)},
+                    {"chunk_begin_topic", coerce_text(map_get(visualization.render_options, "chunk_begin_topic"), "/horus/gaussian_splat/chunk_begin")},
+                    {"chunk_item_topic", coerce_text(map_get(visualization.render_options, "chunk_item_topic"), "/horus/gaussian_splat/chunk_item")},
+                    {"chunk_end_topic", coerce_text(map_get(visualization.render_options, "chunk_end_topic"), "/horus/gaussian_splat/chunk_end")},
+                    {"asset_format", asset_format},
+                    {"source_coordinate_space", coordinate_space},
+                    {"render_mode", render_mode},
+                    {"max_splats", std::max(1000, coerce_int(map_get(visualization.render_options, "max_splats"), 350000))},
+                    {"render_scale", clamp_float(coerce_float(map_get(visualization.render_options, "render_scale"), 0.5f), 0.25f, 1.0f)},
+                    {"sh_order", clamp_int(coerce_int(map_get(visualization.render_options, "sh_order"), 2), 0, 3)},
+                    {"half_precision_sh", coerce_bool(map_get(visualization.render_options, "half_precision_sh"), true)},
+                    {"adaptive_sort", coerce_bool(map_get(visualization.render_options, "adaptive_sort"), true)},
+                    {"sort_passes", clamp_int(coerce_int(map_get(visualization.render_options, "sort_passes"), 2), 2, 4)},
+                    {"opacity_scale", clamp_float(coerce_float(map_get(visualization.render_options, "opacity_scale"), 1.0f), 0.05f, 20.0f)},
+                    {"splat_scale", clamp_float(coerce_float(map_get(visualization.render_options, "splat_scale"), 1.0f), 0.05f, 4.0f)},
+                    {"contribution_cull_threshold", clamp_float(coerce_float(map_get(visualization.render_options, "contribution_cull_threshold"), 0.1f), 0.0f, 1.0f)},
+                    {"high_precision_rt", coerce_bool(map_get(visualization.render_options, "high_precision_rt"), false)},
+                    {"pointcloud_fallback", coerce_bool(map_get(visualization.render_options, "pointcloud_fallback"), true)},
+                    {"fallback_topic", coerce_text(map_get(visualization.render_options, "fallback_topic"), "/map_gaussian_splat_preview")},
+                    {"fallback_frame", coerce_text(map_get(visualization.render_options, "fallback_frame"), visualization.data_source.frame_id.empty() ? std::string("map") : visualization.data_source.frame_id)},
+                };
+                if (const auto fallback = map_get(visualization.render_options, "fallback_point_cloud")) {
+                    if (const auto fallback_map = any_to_map(*fallback)) {
+                        payload.gaussian_splat["fallback_point_cloud"] = *fallback_map;
+                    }
+                }
             }
             if (payload.type == "mesh") {
                 auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "enu"));

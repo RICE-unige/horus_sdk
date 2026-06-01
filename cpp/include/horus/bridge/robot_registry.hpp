@@ -106,6 +106,7 @@ struct VisualizationPayload {
     std::map<std::string, std::any> trail;
     std::map<std::string, std::any> collision;
     std::map<std::string, std::any> point_cloud;
+    std::map<std::string, std::any> gaussian_splat;
     std::map<std::string, std::any> mesh;
     std::map<std::string, std::any> octomap;
     std::map<std::string, std::any> semantic_box;
@@ -186,6 +187,8 @@ struct RobotRegistrationPayload {
     std::optional<WorkspaceConfigPayload> workspace_config;
     std::optional<std::string> robot_model_id;
     std::optional<bool> has_visual_mesh_model;
+    std::map<std::string, std::any> robot_description_manifest;
+    std::optional<std::string> robot_description_payload_json;
 };
 
 class RobotRegistryClient {

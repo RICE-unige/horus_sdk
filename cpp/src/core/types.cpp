@@ -95,6 +95,7 @@ std::string visualization_type_to_string(VisualizationType type) {
         case VisualizationType::MESH: return "mesh";
         case VisualizationType::OCTOMAP: return "octomap";
         case VisualizationType::SEMANTIC_BOX: return "semantic_box";
+        case VisualizationType::GAUSSIAN_SPLAT: return "gaussian_splat";
         case VisualizationType::VELOCITY_DATA: return "velocity_data";
         case VisualizationType::ODOMETRY_TRAIL: return "odometry_trail";
         case VisualizationType::COLLISION_RISK: return "collision_risk";

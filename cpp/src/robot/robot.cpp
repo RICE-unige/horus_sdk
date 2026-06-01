@@ -48,6 +48,13 @@ std::string trim_slashes(std::string value) {
     }
     return value;
 }
+
+template <typename T>
+void put_optional(std::map<std::string, std::any>& values, const std::string& key, const std::optional<T>& value) {
+    if (value) {
+        values[key] = *value;
+    }
+}
 } // namespace
 
 Robot::Robot(std::string name, core::RobotType robot_type, std::optional<RobotDimensions> dimensions)
@@ -150,17 +157,126 @@ std::string Robot::resolve_tf_frame(const std::string& frame_id) const {
 }
 
 void Robot::configure_robot_manager(bool status, bool data_viz, bool teleop, bool tasks) {
+    configure_robot_manager(RobotManagerOptions{
+        .enabled = true,
+        .status = status,
+        .data_viz = data_viz,
+        .teleop = teleop,
+        .tasks = tasks,
+    });
+}
+
+void Robot::configure_robot_manager(const RobotManagerOptions& options) {
     metadata_["robot_manager_config"] = std::map<std::string, std::any>{
-        {"enabled", true},
+        {"enabled", options.enabled},
         {"prefab_asset_path", std::string("Assets/Prefabs/UI/RobotManager.prefab")},
         {"prefab_resource_path", std::string("")},
         {"sections",
          std::map<std::string, std::any>{
-             {"status", status},
-             {"data_viz", data_viz},
-             {"teleop", teleop},
-             {"tasks", tasks},
+             {"status", options.status},
+             {"data_viz", options.data_viz},
+             {"teleop", options.teleop},
+             {"tasks", options.tasks},
          }},
+    };
+}
+
+void Robot::configure_teleop(const TeleopOptions& options) {
+    std::map<std::string, std::any> payload{{"enabled", options.enabled}};
+    put_optional(payload, "command_topic", options.command_topic);
+    put_optional(payload, "raw_input_topic", options.raw_input_topic);
+    put_optional(payload, "head_pose_topic", options.head_pose_topic);
+    put_optional(payload, "robot_profile", options.robot_profile);
+    put_optional(payload, "response_mode", options.response_mode);
+    put_optional(payload, "publish_rate_hz", options.publish_rate_hz);
+    put_optional(payload, "custom_passthrough_only", options.custom_passthrough_only);
+
+    std::map<std::string, std::any> deadman;
+    put_optional(deadman, "policy", options.deadman_policy);
+    put_optional(deadman, "timeout_ms", options.deadman_timeout_ms);
+    if (!deadman.empty()) {
+        payload["deadman"] = deadman;
+    }
+
+    std::map<std::string, std::any> axes;
+    put_optional(axes, "deadzone", options.deadzone);
+    put_optional(axes, "expo", options.expo);
+    put_optional(axes, "linear_xy_max_mps", options.linear_xy_max_mps);
+    put_optional(axes, "linear_z_max_mps", options.linear_z_max_mps);
+    put_optional(axes, "angular_z_max_rps", options.angular_z_max_rps);
+    put_optional(axes, "invert_linear_x", options.invert_linear_x);
+    put_optional(axes, "invert_linear_y", options.invert_linear_y);
+    put_optional(axes, "invert_linear_z", options.invert_linear_z);
+    put_optional(axes, "invert_angular_z", options.invert_angular_z);
+    if (!axes.empty()) {
+        payload["axes"] = axes;
+    }
+
+    std::map<std::string, std::any> discrete;
+    put_optional(discrete, "threshold", options.discrete_threshold);
+    put_optional(discrete, "linear_xy_step_mps", options.linear_xy_step_mps);
+    put_optional(discrete, "linear_z_step_mps", options.linear_z_step_mps);
+    put_optional(discrete, "angular_z_step_rps", options.angular_z_step_rps);
+    if (!discrete.empty()) {
+        payload["discrete"] = discrete;
+    }
+
+    metadata_["teleop_config"] = payload;
+}
+
+void Robot::configure_navigation_tasks(const NavigationTaskOptions& options) {
+    std::map<std::string, std::any> go_to_point{
+        {"enabled", options.go_to_point_enabled},
+        {"frame_id", options.frame_id},
+    };
+    put_optional(go_to_point, "goal_topic", options.goal_topic);
+    put_optional(go_to_point, "cancel_topic", options.cancel_topic);
+    put_optional(go_to_point, "status_topic", options.goal_status_topic);
+    put_optional(go_to_point, "position_tolerance_m", options.position_tolerance_m);
+    put_optional(go_to_point, "yaw_tolerance_deg", options.yaw_tolerance_deg);
+    put_optional(go_to_point, "min_altitude_m", options.min_altitude_m);
+    put_optional(go_to_point, "max_altitude_m", options.max_altitude_m);
+
+    std::map<std::string, std::any> waypoint{
+        {"enabled", options.waypoint_enabled},
+        {"frame_id", options.frame_id},
+    };
+    put_optional(waypoint, "path_topic", options.waypoint_path_topic);
+    put_optional(waypoint, "status_topic", options.waypoint_status_topic);
+    put_optional(waypoint, "position_tolerance_m", options.position_tolerance_m);
+    put_optional(waypoint, "yaw_tolerance_deg", options.yaw_tolerance_deg);
+
+    metadata_["task_config"] = std::map<std::string, std::any>{
+        {"go_to_point", go_to_point},
+        {"waypoint", waypoint},
+    };
+}
+
+void Robot::configure_robot_description(const RobotDescriptionOptions& options) {
+    std::string body_mesh_mode = options.body_mesh_mode.empty() ? std::string("preview_mesh") : options.body_mesh_mode;
+    std::transform(body_mesh_mode.begin(), body_mesh_mode.end(), body_mesh_mode.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (body_mesh_mode == "max_quality_mesh") {
+        body_mesh_mode = "runtime_high_mesh";
+    }
+    if (body_mesh_mode != "collision_only" && body_mesh_mode != "preview_mesh" && body_mesh_mode != "runtime_high_mesh") {
+        body_mesh_mode = "preview_mesh";
+    }
+
+    const bool include_visual_meshes = body_mesh_mode == "collision_only" ? false : options.include_visual_meshes;
+    metadata_["robot_description_config"] = std::map<std::string, std::any>{
+        {"enabled", options.enabled},
+        {"source", options.source.empty() ? std::string("ros") : options.source},
+        {"urdf_path", options.urdf_path},
+        {"base_frame", options.base_frame.empty() ? std::string("base_link") : options.base_frame},
+        {"ros_param_node", options.ros_param_node},
+        {"ros_param_name", options.ros_param_name.empty() ? std::string("robot_description") : options.ros_param_name},
+        {"chunk_size_bytes", std::clamp(options.chunk_size_bytes, 1024, 64000)},
+        {"is_transparent", options.is_transparent},
+        {"include_visual_meshes", include_visual_meshes},
+        {"visual_mesh_triangle_budget", std::clamp(options.visual_mesh_triangle_budget, 2000, 500000)},
+        {"body_mesh_mode", body_mesh_mode},
     };
 }
 

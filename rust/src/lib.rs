@@ -19,8 +19,11 @@ pub use core::{
     topic_map::{TopicMap, TopicInfo, get_topic_map},
 };
 
-pub use robot::Robot;
-pub use sensors::{Sensor, Camera, LaserScan, Lidar3D};
+pub use robot::{NavigationTaskConfig, Robot, RobotDescriptionConfig, RobotManagerConfig, TeleopConfig};
+pub use sensors::{
+    Camera, ImmersiveViewConfig, LaserScan, Lidar3D, MinimapViewConfig, ProjectedViewConfig, Sensor,
+    WebRtcTransportConfig,
+};
 pub use dataviz::DataViz;
 pub use color::{ColorManager, RGBColor};
 pub use client::Client;

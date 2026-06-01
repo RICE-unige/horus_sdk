@@ -116,6 +116,12 @@ public:
         const std::string& frame_id = "map",
         RenderOptions render_options = {});
 
+    void add_gaussian_splat_map(
+        const std::string& manifest_topic = "/horus/gaussian_splat/manifest",
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {},
+        const std::string& preview_topic = "/map_gaussian_splat_preview");
+
     void add_semantic_box(
         const std::string& semantic_id,
         const std::string& label,

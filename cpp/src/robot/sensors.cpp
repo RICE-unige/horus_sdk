@@ -24,6 +24,13 @@ std::string normalize_lower(std::string value) {
     });
     return value;
 }
+
+template <typename T>
+void put_optional(core::Metadata& values, const std::string& key, const std::optional<T>& value) {
+    if (value) {
+        values[key] = *value;
+    }
+}
 } // namespace
 
 Sensor::Sensor(std::string name, core::SensorType sensor_type, std::string frame_id, std::string topic)
@@ -135,6 +142,41 @@ void Camera::set_startup_mode(const std::string& value) {
         throw std::invalid_argument("Camera startup_mode must be 'minimap' or 'teleop'");
     }
     startup_mode_ = normalized;
+}
+
+void Camera::configure_projected_view(const ProjectedViewOptions& options) {
+    metadata_["display_mode"] = std::string("projected");
+    put_optional(metadata_, "projected_position_offset", options.position_offset);
+    put_optional(metadata_, "view_rotation_offset", options.rotation_offset);
+    put_optional(metadata_, "projected_scale_multiplier", options.scale_multiplier);
+    put_optional(metadata_, "image_scale", options.image_scale);
+    put_optional(metadata_, "focal_length_scale", options.focal_length_scale);
+    put_optional(metadata_, "projection_target_frame", options.projection_target_frame);
+    put_optional(metadata_, "show_frustum", options.show_frustum);
+    put_optional(metadata_, "frustum_color", options.frustum_color);
+}
+
+void Camera::configure_minimap_view(const MinimapViewOptions& options) {
+    put_optional(metadata_, "overhead_size", options.size);
+    put_optional(metadata_, "overhead_position_offset", options.position_offset);
+    put_optional(metadata_, "overhead_face_camera", options.face_camera);
+    put_optional(metadata_, "overhead_rotation_offset", options.rotation_offset);
+}
+
+void Camera::configure_immersive_view(const ImmersiveViewOptions& options) {
+    put_optional(metadata_, "immersive_ros_flip_x", options.ros_flip_x);
+    put_optional(metadata_, "immersive_ros_flip_y", options.ros_flip_y);
+}
+
+void Camera::configure_webrtc_transport(const WebRtcTransportOptions& options) {
+    metadata_["webrtc_client_signal_topic"] = options.client_signal_topic;
+    metadata_["webrtc_server_signal_topic"] = options.server_signal_topic;
+    put_optional(metadata_, "webrtc_bitrate_kbps", options.bitrate_kbps);
+    put_optional(metadata_, "webrtc_framerate", options.framerate);
+    put_optional(metadata_, "webrtc_stun_server_url", options.stun_server_url);
+    put_optional(metadata_, "webrtc_turn_server_url", options.turn_server_url);
+    put_optional(metadata_, "webrtc_turn_username", options.turn_username);
+    put_optional(metadata_, "webrtc_turn_credential", options.turn_credential);
 }
 
 std::string Camera::get_camera_type() const {

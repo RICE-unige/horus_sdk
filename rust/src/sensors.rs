@@ -5,6 +5,59 @@ use std::sync::Arc;
 
 pub type SensorRef = Arc<dyn Sensor>;
 
+#[derive(Debug, Clone, Default)]
+pub struct ProjectedViewConfig {
+    pub position_offset: Option<(f32, f32, f32)>,
+    pub rotation_offset: Option<(f32, f32, f32)>,
+    pub scale_multiplier: Option<(f32, f32, f32)>,
+    pub image_scale: Option<f32>,
+    pub focal_length_scale: Option<f32>,
+    pub projection_target_frame: Option<String>,
+    pub show_frustum: Option<bool>,
+    pub frustum_color: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MinimapViewConfig {
+    pub size: Option<f32>,
+    pub position_offset: Option<(f32, f32, f32)>,
+    pub face_camera: Option<bool>,
+    pub rotation_offset: Option<(f32, f32, f32)>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImmersiveViewConfig {
+    pub ros_flip_x: Option<bool>,
+    pub ros_flip_y: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebRtcTransportConfig {
+    pub client_signal_topic: String,
+    pub server_signal_topic: String,
+    pub bitrate_kbps: Option<i64>,
+    pub framerate: Option<i64>,
+    pub stun_server_url: Option<String>,
+    pub turn_server_url: Option<String>,
+    pub turn_username: Option<String>,
+    pub turn_credential: Option<String>,
+}
+
+impl Default for WebRtcTransportConfig {
+    fn default() -> Self {
+        Self {
+            client_signal_topic: "/horus/webrtc/client_signal".to_string(),
+            server_signal_topic: "/horus/webrtc/server_signal".to_string(),
+            bitrate_kbps: None,
+            framerate: None,
+            stun_server_url: None,
+            turn_server_url: None,
+            turn_username: None,
+            turn_credential: None,
+        }
+    }
+}
+
 pub trait Sensor: Debug + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn name(&self) -> &str;
@@ -113,6 +166,59 @@ impl Camera {
 
     pub fn get_metadata(&self, key: &str, default: serde_json::Value) -> serde_json::Value {
         self.metadata.get(key).cloned().unwrap_or(default)
+    }
+
+    pub fn configure_projected_view(&mut self, config: ProjectedViewConfig) {
+        self.metadata.insert("display_mode".to_string(), serde_json::json!("projected"));
+        put_vec3(&mut self.metadata, "projected_position_offset", config.position_offset);
+        put_vec3(&mut self.metadata, "view_rotation_offset", config.rotation_offset);
+        put_vec3(&mut self.metadata, "projected_scale_multiplier", config.scale_multiplier);
+        put_if_some(&mut self.metadata, "image_scale", config.image_scale);
+        put_if_some(&mut self.metadata, "focal_length_scale", config.focal_length_scale);
+        put_if_some(&mut self.metadata, "projection_target_frame", config.projection_target_frame);
+        put_if_some(&mut self.metadata, "show_frustum", config.show_frustum);
+        put_if_some(&mut self.metadata, "frustum_color", config.frustum_color);
+    }
+
+    pub fn configure_minimap_view(&mut self, config: MinimapViewConfig) {
+        put_if_some(&mut self.metadata, "overhead_size", config.size);
+        put_vec3(&mut self.metadata, "overhead_position_offset", config.position_offset);
+        put_if_some(&mut self.metadata, "overhead_face_camera", config.face_camera);
+        put_vec3(&mut self.metadata, "overhead_rotation_offset", config.rotation_offset);
+    }
+
+    pub fn configure_immersive_view(&mut self, config: ImmersiveViewConfig) {
+        put_if_some(&mut self.metadata, "immersive_ros_flip_x", config.ros_flip_x);
+        put_if_some(&mut self.metadata, "immersive_ros_flip_y", config.ros_flip_y);
+    }
+
+    pub fn configure_webrtc_transport(&mut self, config: WebRtcTransportConfig) {
+        self.metadata.insert(
+            "webrtc_client_signal_topic".to_string(),
+            serde_json::json!(config.client_signal_topic),
+        );
+        self.metadata.insert(
+            "webrtc_server_signal_topic".to_string(),
+            serde_json::json!(config.server_signal_topic),
+        );
+        put_if_some(&mut self.metadata, "webrtc_bitrate_kbps", config.bitrate_kbps);
+        put_if_some(&mut self.metadata, "webrtc_framerate", config.framerate);
+        put_if_some(&mut self.metadata, "webrtc_stun_server_url", config.stun_server_url);
+        put_if_some(&mut self.metadata, "webrtc_turn_server_url", config.turn_server_url);
+        put_if_some(&mut self.metadata, "webrtc_turn_username", config.turn_username);
+        put_if_some(&mut self.metadata, "webrtc_turn_credential", config.turn_credential);
+    }
+}
+
+fn put_if_some<T: serde::Serialize>(metadata: &mut Metadata, key: &str, value: Option<T>) {
+    if let Some(value) = value {
+        metadata.insert(key.to_string(), serde_json::json!(value));
+    }
+}
+
+fn put_vec3(metadata: &mut Metadata, key: &str, value: Option<(f32, f32, f32)>) {
+    if let Some((x, y, z)) = value {
+        metadata.insert(key.to_string(), serde_json::json!({"x": x, "y": y, "z": z}));
     }
 }
 

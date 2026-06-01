@@ -6,6 +6,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -126,6 +127,8 @@ pub struct VisualizationPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub point_cloud: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub gaussian_splat: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub octomap: Option<Value>,
@@ -224,6 +227,10 @@ pub struct RobotRegistrationPayload {
     pub robot_model_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_visual_mesh_model: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub robot_description_manifest: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub robot_description_payload_json: Option<String>,
 }
 
 fn now_sec() -> f64 {
@@ -594,6 +601,7 @@ fn serialize_visualization_payload(
     let mut trail = None;
     let mut collision = None;
     let mut point_cloud = None;
+    let mut gaussian_splat = None;
     let mut mesh = None;
     let mut octomap = None;
     let mut semantic_box = None;
@@ -725,6 +733,60 @@ fn serialize_visualization_payload(
             "map_static_mode": coerce_bool(options.get("map_static_mode"), true),
         }));
     }
+    if visualization.viz_type.as_str() == "gaussian_splat" {
+        let options = &visualization.render_options;
+        let asset_format = match coerce_text(options.get("asset_format"), "3dgs_ply")
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "3dgs_ply" => "3dgs_ply",
+            _ => "3dgs_ply",
+        };
+        let coordinate_space = match coerce_text(options.get("source_coordinate_space"), "colmap")
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "3dgs" => "3dgs",
+            "opencv" => "opencv",
+            "unity" => "unity",
+            _ => "colmap",
+        };
+        let render_mode = match coerce_text(options.get("render_mode"), "splats")
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "debug_points" => "debug_points",
+            "mono_center_eye" => "mono_center_eye",
+            "no_covariance" => "no_covariance",
+            _ => "splats",
+        };
+        let mut payload = json!({
+            "manifest_topic": coerce_text(options.get("manifest_topic"), &data_source.topic),
+            "chunk_begin_topic": coerce_text(options.get("chunk_begin_topic"), "/horus/gaussian_splat/chunk_begin"),
+            "chunk_item_topic": coerce_text(options.get("chunk_item_topic"), "/horus/gaussian_splat/chunk_item"),
+            "chunk_end_topic": coerce_text(options.get("chunk_end_topic"), "/horus/gaussian_splat/chunk_end"),
+            "asset_format": asset_format,
+            "source_coordinate_space": coordinate_space,
+            "render_mode": render_mode,
+            "max_splats": coerce_int(options.get("max_splats"), 350_000).max(1_000),
+            "render_scale": clamp_f32(coerce_float(options.get("render_scale"), 0.5), 0.25, 1.0),
+            "sh_order": clamp_i32(coerce_int(options.get("sh_order"), 2), 0, 3),
+            "half_precision_sh": coerce_bool(options.get("half_precision_sh"), true),
+            "adaptive_sort": coerce_bool(options.get("adaptive_sort"), true),
+            "sort_passes": clamp_i32(coerce_int(options.get("sort_passes"), 2), 2, 4),
+            "opacity_scale": clamp_f32(coerce_float(options.get("opacity_scale"), 1.0), 0.05, 20.0),
+            "splat_scale": clamp_f32(coerce_float(options.get("splat_scale"), 1.0), 0.05, 4.0),
+            "contribution_cull_threshold": clamp_f32(coerce_float(options.get("contribution_cull_threshold"), 0.1), 0.0, 1.0),
+            "high_precision_rt": coerce_bool(options.get("high_precision_rt"), false),
+            "pointcloud_fallback": coerce_bool(options.get("pointcloud_fallback"), true),
+            "fallback_topic": coerce_text(options.get("fallback_topic"), "/map_gaussian_splat_preview"),
+            "fallback_frame": coerce_text(options.get("fallback_frame"), frame.as_deref().unwrap_or("map")),
+        });
+        if let Some(fallback) = options.get("fallback_point_cloud") {
+            payload["fallback_point_cloud"] = fallback.clone();
+        }
+        gaussian_splat = Some(payload);
+    }
     if visualization.viz_type.as_str() == "mesh" {
         let options = &visualization.render_options;
         let coordinate_space = match coerce_text(options.get("source_coordinate_space"), "enu")
@@ -804,6 +866,7 @@ fn serialize_visualization_payload(
         trail,
         collision,
         point_cloud,
+        gaussian_splat,
         mesh,
         octomap,
         semantic_box,
@@ -1024,6 +1087,51 @@ fn build_workspace_config(
             tutorial,
         })
     }
+}
+
+fn build_robot_description_manifest(robot: &Robot) -> Option<Value> {
+    let config = robot
+        .metadata
+        .get("robot_description_config")
+        .and_then(Value::as_object)?;
+    if !coerce_bool(config.get("enabled"), true) {
+        return None;
+    }
+    let urdf_path = coerce_text(config.get("urdf_path"), "");
+    if urdf_path.trim().is_empty() {
+        return None;
+    }
+
+    let urdf = fs::read_to_string(&urdf_path).unwrap_or_default();
+    let link_count = urdf.matches("<link ").count() as i64;
+    let joint_count = urdf.matches("<joint ").count() as i64;
+    let collision_count = urdf.matches("<collision").count() as i64;
+    let visual_count = urdf.matches("<visual").count() as i64;
+    let mesh_count = urdf.matches("<mesh").count() as i64;
+    let include_visual_meshes = coerce_bool(config.get("include_visual_meshes"), true);
+    let supports_visual_meshes = include_visual_meshes && (visual_count > 0 || mesh_count > 0);
+    let base_frame = coerce_text(config.get("base_frame"), "base_link");
+    let source = coerce_text(config.get("source"), "ros");
+    let chunk_size = clamp_i32(coerce_int(config.get("chunk_size_bytes"), 12000), 1024, 64000);
+    let seed = format!("{}|{}|{}|{}", robot.name, urdf_path, base_frame, urdf.len());
+
+    Some(json!({
+        "version": "v2",
+        "description_id": format!("native:{:x}", md5::compute(seed)),
+        "source": source,
+        "base_frame": base_frame,
+        "link_count": link_count,
+        "joint_count": joint_count,
+        "collision_count": collision_count,
+        "supports_collision": collision_count > 0,
+        "supports_joints": joint_count > 0,
+        "supports_visual_meshes": supports_visual_meshes,
+        "mesh_asset_count": mesh_count,
+        "mesh_asset_encoded_bytes": 0,
+        "is_transparent": coerce_bool(config.get("is_transparent"), false),
+        "encoding": "json+gzip+base64",
+        "chunk_size_bytes": chunk_size,
+    }))
 }
 
 #[derive(Default)]
@@ -1249,6 +1357,22 @@ impl RobotRegistryClient {
 
         let teleop_control = build_teleop_control(robot);
         let drive_topic = teleop_control.command_topic.clone();
+        let robot_description_manifest = build_robot_description_manifest(robot);
+        let description_has_visual_mesh = robot_description_manifest
+            .as_ref()
+            .and_then(|manifest| manifest.get("supports_visual_meshes"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let local_has_visual_mesh = robot
+            .metadata
+            .get("local_body_model_config")
+            .and_then(Value::as_object)
+            .map(|config| {
+                let enabled = coerce_bool(config.get("enabled"), false);
+                let id = coerce_text(config.get("robot_model_id"), "");
+                enabled && !id.trim().is_empty()
+            })
+            .unwrap_or(false);
 
         RobotRegistrationPayload {
             action: "register".to_string(),
@@ -1298,15 +1422,13 @@ impl RobotRegistryClient {
                         .to_ascii_lowercase();
                     if id.is_empty() { None } else { Some(id) }
                 }),
-            has_visual_mesh_model: robot
-                .metadata
-                .get("local_body_model_config")
-                .and_then(Value::as_object)
-                .and_then(|config| {
-                    let enabled = coerce_bool(config.get("enabled"), false);
-                    let id = coerce_text(config.get("robot_model_id"), "");
-                    if enabled && !id.trim().is_empty() { Some(true) } else { None }
-                }),
+            has_visual_mesh_model: if local_has_visual_mesh || description_has_visual_mesh {
+                Some(true)
+            } else {
+                None
+            },
+            robot_description_manifest,
+            robot_description_payload_json: None,
         }
     }
 

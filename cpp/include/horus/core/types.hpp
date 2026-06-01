@@ -131,6 +131,7 @@ enum class VisualizationType {
     MESH,
     OCTOMAP,
     SEMANTIC_BOX,
+    GAUSSIAN_SPLAT,
     VELOCITY_DATA,
     ODOMETRY_TRAIL,
     COLLISION_RISK,
