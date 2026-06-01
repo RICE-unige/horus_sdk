@@ -1,5 +1,6 @@
 #pragma once
 
+#include "horus/bridge/robot_registry.hpp"
 #include "horus/robot/robot.hpp"
 #include "horus/robot/sensors.hpp"
 
@@ -191,22 +192,25 @@ inline RegistrationSet robot_description_fleet() {
 }
 
 inline int register_or_fail(RegistrationSet& set, double workspace_scale = 0.1, bool keep_alive = true) {
-    std::vector<Robot*> robot_ptrs;
-    robot_ptrs.reserve(set.robots.size());
-    for (auto& robot : set.robots) {
-        robot_ptrs.push_back(&robot);
-    }
-    auto [ok, result] = horus::robot::register_robots(
-        robot_ptrs,
-        set.datavizs,
-        10.0,
-        keep_alive,
-        true,
-        workspace_scale);
-    if (!ok) {
-        std::cerr << "HORUS registration failed\n";
+    (void)keep_alive;
+    if (set.robots.empty() || set.robots.size() != set.datavizs.size()) {
+        std::cerr << "HORUS native payload validation needs matching robots and DataViz entries\n";
         return 1;
     }
+    horus::bridge::RobotRegistryClient client;
+    auto global_visualizations = client.build_global_visualizations_payload(set.datavizs);
+    for (std::size_t i = 0; i < set.robots.size(); ++i) {
+        auto payload = client.build_robot_config_dict(
+            set.robots[i],
+            set.datavizs[i],
+            global_visualizations,
+            workspace_scale);
+        if (payload.robot_name.empty() || payload.robot_type.empty()) {
+            std::cerr << "HORUS native payload validation failed\n";
+            return 1;
+        }
+    }
+    std::cout << "HORUS native payload validation OK. Live registration transport is Python-only for now.\n";
     return 0;
 }
 

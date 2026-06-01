@@ -1,3 +1,4 @@
+#include "horus/bridge/robot_registry.hpp"
 #include "horus/robot/robot.hpp"
 #include "horus/robot/sensors.hpp"
 #include "horus/utils/logging.hpp"
@@ -36,20 +37,13 @@ int main(int argc, char** argv) {
     robot.add_sensor(lidar);
 
     auto dataviz = robot.create_dataviz();
-    auto [ok, result] = robot.register_with_horus(dataviz, false, false);
-    if (!ok) {
-        horus::utils::print_error("Registration failed");
+    horus::bridge::RobotRegistryClient client;
+    auto payload = client.build_robot_config_dict(robot, *dataviz);
+    if (payload.robot_name.empty() || payload.sensors.empty()) {
+        horus::utils::print_error("Native payload check failed");
         return 1;
     }
-    horus::utils::print_success("Registration OK");
-
-    if (!robot.is_registered_with_horus()) {
-        horus::utils::print_error("Robot registration metadata missing");
-        return 2;
-    }
-
-    const auto robot_id = robot.get_horus_id().value_or("");
-    horus::utils::print_info("Robot ID: " + robot_id);
+    horus::utils::print_success("Native payload check OK");
+    horus::utils::print_info("Live bridge registration is Python-only for now.");
     return 0;
 }
-

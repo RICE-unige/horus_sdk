@@ -5,7 +5,9 @@ sidebar_position: 2
 
 # Rust SDK
 
-The Rust SDK mirrors the Python registration payload with typed structs and `serde_json` serialization. Use it for native robot services that need predictable payload generation, low startup overhead, and build-time checks around the HORUS registration contract.
+The Rust SDK mirrors the Python registration payload with typed structs and `serde_json` serialization. Use it for native robot services that need predictable payload generation, low startup overhead, and build-time checks around the HORUS payload contract.
+
+Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The native Rust `register_*` calls intentionally return an unsupported-transport result instead of reporting fake local success.
 
 ## What it sends
 
@@ -13,7 +15,7 @@ The Rust SDK mirrors the Python registration payload with typed structs and `ser
 
 | Area | Rust support |
 | --- | --- |
-| Robot identity | name, type, dimensions, HORUS color/id metadata |
+| Robot identity | name, type, dimensions |
 | ROS binding | prefixed or flat topics and TF frames |
 | Robot Manager | status, DataViz, teleop, and task panel sections |
 | Controls | teleop defaults/overrides, go-to-point, waypoint topics |
@@ -81,9 +83,9 @@ fn main() {
 }
 ```
 
-## Registration Examples
+## Payload Examples
 
-The curated native examples live in `rust/examples/` and match the Python registration examples by basename: `ops_registration.rs`, `flat_robot_registration.rs`, `drone_registration.rs`, `legged_registration.rs`, `stereo_registration.rs`, the robot-description/map registrations, Carter, Unitree Go1, and UAV sim registration.
+The curated native examples live in `rust/examples/` and match the Python registration examples by basename: `ops_registration.rs`, `flat_robot_registration.rs`, `drone_registration.rs`, `legged_registration.rs`, `stereo_registration.rs`, the robot-description/map scenarios, Carter, Unitree Go1, and UAV sim payload checks.
 
 ```bash
 cd ~/horus_sdk/rust
@@ -92,4 +94,4 @@ cargo run --example robot_description_registration
 cargo run --example gaussian_splat_fixture_registration
 ```
 
-`rust/examples/sdk_registration_demo.rs` remains the short native equivalent of `ops_registration.py`; the larger scenario coverage is split into focused examples so robot registration code stays concise.
+`rust/examples/sdk_registration_demo.rs` remains the short native equivalent of the Python ops scenario at the payload layer; the larger scenario coverage is split into focused examples so payload construction stays concise.

@@ -2,13 +2,17 @@
 
 #include "horus/topics.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <cmath>
 #include <fstream>
 #include <functional>
+#include <iomanip>
 #include <limits>
 #include <mutex>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <tuple>
@@ -246,6 +250,236 @@ std::string to_lower(std::string value) {
     return value;
 }
 
+std::uint32_t right_rotate(std::uint32_t value, std::uint32_t bits) {
+    return (value >> bits) | (value << (32U - bits));
+}
+
+std::string sha256_hex(const std::string& input) {
+    static constexpr std::array<std::uint32_t, 64> k{
+        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
+
+    std::array<std::uint32_t, 8> h{
+        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U};
+
+    std::vector<std::uint8_t> data(input.begin(), input.end());
+    const auto bit_len = static_cast<std::uint64_t>(data.size()) * 8ULL;
+    data.push_back(0x80U);
+    while ((data.size() % 64U) != 56U) {
+        data.push_back(0U);
+    }
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        data.push_back(static_cast<std::uint8_t>((bit_len >> shift) & 0xffU));
+    }
+
+    for (std::size_t chunk = 0; chunk < data.size(); chunk += 64U) {
+        std::array<std::uint32_t, 64> w{};
+        for (std::size_t i = 0; i < 16U; ++i) {
+            const auto offset = chunk + i * 4U;
+            w[i] = (static_cast<std::uint32_t>(data[offset]) << 24U) |
+                   (static_cast<std::uint32_t>(data[offset + 1U]) << 16U) |
+                   (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) |
+                   static_cast<std::uint32_t>(data[offset + 3U]);
+        }
+        for (std::size_t i = 16U; i < 64U; ++i) {
+            const auto s0 = right_rotate(w[i - 15U], 7U) ^ right_rotate(w[i - 15U], 18U) ^ (w[i - 15U] >> 3U);
+            const auto s1 = right_rotate(w[i - 2U], 17U) ^ right_rotate(w[i - 2U], 19U) ^ (w[i - 2U] >> 10U);
+            w[i] = w[i - 16U] + s0 + w[i - 7U] + s1;
+        }
+
+        auto a = h[0];
+        auto b = h[1];
+        auto c = h[2];
+        auto d = h[3];
+        auto e = h[4];
+        auto f = h[5];
+        auto g = h[6];
+        auto hh = h[7];
+        for (std::size_t i = 0; i < 64U; ++i) {
+            const auto s1 = right_rotate(e, 6U) ^ right_rotate(e, 11U) ^ right_rotate(e, 25U);
+            const auto ch = (e & f) ^ ((~e) & g);
+            const auto temp1 = hh + s1 + ch + k[i] + w[i];
+            const auto s0 = right_rotate(a, 2U) ^ right_rotate(a, 13U) ^ right_rotate(a, 22U);
+            const auto maj = (a & b) ^ (a & c) ^ (b & c);
+            const auto temp2 = s0 + maj;
+            hh = g;
+            g = f;
+            f = e;
+            e = d + temp1;
+            d = c;
+            c = b;
+            b = a;
+            a = temp1 + temp2;
+        }
+        h[0] += a;
+        h[1] += b;
+        h[2] += c;
+        h[3] += d;
+        h[4] += e;
+        h[5] += f;
+        h[6] += g;
+        h[7] += hh;
+    }
+
+    std::ostringstream out;
+    for (const auto word : h) {
+        out << std::hex << std::setw(8) << std::setfill('0') << word;
+    }
+    return out.str();
+}
+
+std::string json_escape(const std::string& value) {
+    std::ostringstream out;
+    for (const auto ch : value) {
+        switch (ch) {
+        case '"':
+            out << "\\\"";
+            break;
+        case '\\':
+            out << "\\\\";
+            break;
+        case '\b':
+            out << "\\b";
+            break;
+        case '\f':
+            out << "\\f";
+            break;
+        case '\n':
+            out << "\\n";
+            break;
+        case '\r':
+            out << "\\r";
+            break;
+        case '\t':
+            out << "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(ch) < 0x20U) {
+                out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                    << static_cast<int>(static_cast<unsigned char>(ch));
+            } else {
+                out << ch;
+            }
+        }
+    }
+    return out.str();
+}
+
+std::optional<std::string> extract_xml_attribute(const std::string& tag, const std::string& attribute) {
+    const std::regex pattern("\\b" + attribute + "\\s*=\\s*[\"']([^\"']+)[\"']");
+    std::smatch match;
+    if (std::regex_search(tag, match, pattern) && match.size() > 1U) {
+        return match[1].str();
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> extract_urdf_link_names(const std::string& urdf) {
+    std::vector<std::string> names;
+    const std::regex pattern("<link\\b[^>]*>");
+    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), pattern);
+         it != std::sregex_iterator();
+         ++it) {
+        if (const auto name = extract_xml_attribute(it->str(), "name")) {
+            names.push_back(*name);
+        }
+    }
+    return names;
+}
+
+struct NativeJoint {
+    std::string name;
+    std::string type;
+    std::string parent_link;
+    std::string child_link;
+};
+
+std::vector<NativeJoint> extract_urdf_joints(const std::string& urdf) {
+    std::vector<NativeJoint> joints;
+    const std::regex joint_pattern("<joint\\b[\\s\\S]*?</joint>");
+    const std::regex parent_pattern("<parent\\b[^>]*>");
+    const std::regex child_pattern("<child\\b[^>]*>");
+    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), joint_pattern);
+         it != std::sregex_iterator();
+         ++it) {
+        const auto block = it->str();
+        const auto name = extract_xml_attribute(block, "name").value_or("");
+        if (name.empty()) {
+            continue;
+        }
+        NativeJoint joint;
+        joint.name = name;
+        joint.type = extract_xml_attribute(block, "type").value_or("fixed");
+        std::smatch parent_match;
+        if (std::regex_search(block, parent_match, parent_pattern)) {
+            joint.parent_link = extract_xml_attribute(parent_match.str(), "link").value_or("");
+        }
+        std::smatch child_match;
+        if (std::regex_search(block, child_match, child_pattern)) {
+            joint.child_link = extract_xml_attribute(child_match.str(), "link").value_or("");
+        }
+        joints.push_back(joint);
+    }
+    return joints;
+}
+
+std::string build_native_robot_description_payload_json(
+    const robot::Robot& robot,
+    const std::string& urdf,
+    const std::string& base_frame) {
+    const auto links = extract_urdf_link_names(urdf);
+    const auto joints = extract_urdf_joints(urdf);
+
+    std::ostringstream out;
+    out << "{\"base_frame\":\"" << json_escape(base_frame) << "\",\"joints\":[";
+    for (std::size_t i = 0; i < joints.size(); ++i) {
+        if (i > 0U) {
+            out << ",";
+        }
+        const auto& joint = joints[i];
+        out << "{\"axis_xyz\":[0.0,0.0,1.0],\"child_link\":\"" << json_escape(joint.child_link)
+            << "\",\"name\":\"" << json_escape(joint.name)
+            << "\",\"origin_rpy\":[0.0,0.0,0.0],\"origin_xyz\":[0.0,0.0,0.0],\"parent_link\":\""
+            << json_escape(joint.parent_link) << "\",\"type\":\"" << json_escape(joint.type) << "\"}";
+    }
+    out << "],\"links\":[";
+    for (std::size_t i = 0; i < links.size(); ++i) {
+        if (i > 0U) {
+            out << ",";
+        }
+        out << "{\"collisions\":[],\"name\":\"" << json_escape(links[i]) << "\"}";
+    }
+    out << "],\"robot_name\":\"" << json_escape(robot.get_name()) << "\",\"version\":\"v2\"}";
+    return out.str();
+}
+
+std::string normalize_point_shape(const std::map<std::string, std::any>& render_options) {
+    auto point_shape = to_lower(coerce_text(map_get(render_options, "point_shape"), "square"));
+    if (point_shape == "disc") {
+        point_shape = "circle";
+    }
+    return point_shape == "circle" ? std::string("circle") : std::string("square");
+}
+
+std::string normalize_octomap_render_mode(const std::map<std::string, std::any>& render_options) {
+    auto render_mode = to_lower(coerce_text(map_get(render_options, "render_mode"), "surface_mesh"));
+    return render_mode == "voxel_cubes" ? std::string("voxel_cubes") : std::string("surface_mesh");
+}
+
+std::string normalize_map_coordinate_space(
+    const std::map<std::string, std::any>& render_options,
+    const std::string& default_space) {
+    auto coordinate_space = to_lower(coerce_text(map_get(render_options, "source_coordinate_space"), default_space));
+    return coordinate_space == "optical" ? std::string("optical") : std::string("enu");
+}
+
 double now_sec() {
     using clock = std::chrono::system_clock;
     const auto now = clock::now().time_since_epoch();
@@ -397,7 +631,8 @@ TaskControlPayload build_task_control(const robot::Robot& robot) {
 
 std::map<std::string, std::any> build_robot_description_manifest(
     const robot::Robot& robot,
-    const std::map<std::string, std::any>& config) {
+    const std::map<std::string, std::any>& config,
+    std::optional<std::string>* payload_json = nullptr) {
     if (!coerce_bool(map_get(config, "enabled"), true)) {
         return {};
     }
@@ -407,30 +642,32 @@ std::map<std::string, std::any> build_robot_description_manifest(
     }
 
     const auto urdf = read_text_file(urdf_path);
-    const int link_count = std::max(0, count_token(urdf, "<link "));
-    const int joint_count = std::max(0, count_token(urdf, "<joint "));
-    const int collision_count = std::max(0, count_token(urdf, "<collision"));
-    const int visual_count = std::max(0, count_token(urdf, "<visual"));
-    const int mesh_count = std::max(0, count_token(urdf, "<mesh"));
-    const bool include_visual_meshes = coerce_bool(map_get(config, "include_visual_meshes"), true);
-    const bool supports_visual_meshes = include_visual_meshes && (visual_count > 0 || mesh_count > 0);
+    if (urdf.empty()) {
+        return {};
+    }
     const auto base_frame = coerce_text(map_get(config, "base_frame"), "base_link");
     const auto source = coerce_text(map_get(config, "source"), "ros");
     const auto chunk_size = clamp_int(coerce_int(map_get(config, "chunk_size_bytes"), 12000), 1024, 64000);
-    const auto description_seed = robot.get_name() + "|" + urdf_path + "|" + base_frame + "|" + std::to_string(urdf.size());
+    const auto description_payload = build_native_robot_description_payload_json(robot, urdf, base_frame);
+    const auto links = extract_urdf_link_names(urdf);
+    const auto joints = extract_urdf_joints(urdf);
+
+    if (payload_json != nullptr && description_payload.size() <= 250000U) {
+        *payload_json = description_payload;
+    }
 
     return {
         {"version", std::string("v2")},
-        {"description_id", std::string("native:") + std::to_string(std::hash<std::string>{}(description_seed))},
+        {"description_id", std::string("sha256:") + sha256_hex(description_payload)},
         {"source", source},
         {"base_frame", base_frame},
-        {"link_count", link_count},
-        {"joint_count", joint_count},
-        {"collision_count", collision_count},
-        {"supports_collision", collision_count > 0},
-        {"supports_joints", joint_count > 0},
-        {"supports_visual_meshes", supports_visual_meshes},
-        {"mesh_asset_count", mesh_count},
+        {"link_count", static_cast<int>(links.size())},
+        {"joint_count", static_cast<int>(joints.size())},
+        {"collision_count", 0},
+        {"supports_collision", false},
+        {"supports_joints", !joints.empty()},
+        {"supports_visual_meshes", false},
+        {"mesh_asset_count", 0},
         {"mesh_asset_encoded_bytes", 0},
         {"is_transparent", coerce_bool(map_get(config, "is_transparent"), false)},
         {"encoding", std::string("json+gzip+base64")},
@@ -458,23 +695,19 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_r
     auto payload =
         build_robot_config_dict(robot, dataviz, global_visualizations, workspace_scale);
 
-    std::map<std::string, std::any> ack;
-    ack["success"] = true;
-    ack["robot_name"] = robot.get_name();
-    ack["robot_id"] = robot.get_name();
-    ack["assigned_color"] = std::string("#00FF00");
-    ack["payload"] = payload;
-    ack["timeout_sec"] = timeout_sec;
-    ack["keep_alive"] = keep_alive;
-    ack["show_dashboard"] = show_dashboard;
-
-    robot.add_metadata("horus_robot_id", robot.get_name());
-    robot.add_metadata("horus_color", std::string("#00FF00"));
-    robot.add_metadata("horus_registered", true);
-    robot.add_metadata("horus_topics", collect_topics(dataviz));
-
     registration_in_progress_ = false;
-    return {true, ack};
+    return {
+        false,
+        {
+            {"success", false},
+            {"error", std::string("Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.")},
+            {"unsupported_feature", std::string("bridge_registration")},
+            {"payload", payload},
+            {"timeout_sec", timeout_sec},
+            {"keep_alive", keep_alive},
+            {"show_dashboard", show_dashboard},
+        }
+    };
 }
 
 std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_robots(
@@ -506,8 +739,8 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_r
     }
 
     const auto global_visualizations = build_global_visualizations_payload(datavizs);
-    std::vector<std::map<std::string, std::any>> results;
-    results.reserve(robots.size());
+    std::vector<RobotRegistrationPayload> payloads;
+    payloads.reserve(robots.size());
 
     for (std::size_t i = 0; i < robots.size(); ++i) {
         auto* robot = robots[i];
@@ -517,35 +750,33 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_r
         }
         auto payload =
             build_robot_config_dict(*robot, datavizs[i], global_visualizations, workspace_scale);
-
-        std::map<std::string, std::any> ack;
-        ack["success"] = true;
-        ack["robot_name"] = robot->get_name();
-        ack["robot_id"] = robot->get_name();
-        ack["assigned_color"] = std::string("#00FF00");
-        ack["payload"] = payload;
-        ack["timeout_sec"] = timeout_sec;
-        ack["keep_alive"] = keep_alive;
-        ack["show_dashboard"] = show_dashboard;
-        results.push_back(ack);
-
-        robot->add_metadata("horus_robot_id", robot->get_name());
-        robot->add_metadata("horus_color", std::string("#00FF00"));
-        robot->add_metadata("horus_registered", true);
-        robot->add_metadata("horus_topics", collect_topics(datavizs[i]));
+        payloads.push_back(std::move(payload));
     }
 
     registration_in_progress_ = false;
-    return {true, {{"success", true}, {"results", results}}};
+    return {
+        false,
+        {
+            {"success", false},
+            {"error", std::string("Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.")},
+            {"unsupported_feature", std::string("bridge_registration")},
+            {"payloads", payloads},
+            {"timeout_sec", timeout_sec},
+            {"keep_alive", keep_alive},
+            {"show_dashboard", show_dashboard},
+        }
+    };
 }
 
 std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::unregister_robot(
     const std::string& robot_id,
     double timeout_sec) {
     return {
-        true,
+        false,
         {
-            {"message", std::string("Unregistered (Local cleanup only)")},
+            {"success", false},
+            {"error", std::string("Native HORUS unregister transport is not implemented yet.")},
+            {"unsupported_feature", std::string("bridge_registration")},
             {"robot_id", robot_id},
             {"timeout_sec", timeout_sec},
         }
@@ -553,7 +784,7 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::unregister
 }
 
 bool RobotRegistryClient::check_backend_availability() const {
-    return true;
+    return false;
 }
 
 RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
@@ -961,13 +1192,7 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
             if (render_mode != "transparent_hq") {
                 render_mode = "opaque_fast";
             }
-            auto point_shape = to_lower(coerce_text(map_get(visualization.render_options, "point_shape"), "square"));
-            if (point_shape == "disc") {
-                point_shape = "circle";
-            }
-            if (point_shape != "circle") {
-                point_shape = "square";
-            }
+            auto point_shape = normalize_point_shape(visualization.render_options);
             const auto max_points_raw = coerce_int(map_get(visualization.render_options, "max_points_per_frame"), 0);
             visualization_payload.point_cloud = {
                 {"point_size", std::max(0.001f, coerce_float(map_get(visualization.render_options, "point_size"), 0.05f))},
@@ -1039,10 +1264,7 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
 
         if (visualization_payload.type == "mesh") {
-            auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "enu"));
-            if (coordinate_space != "optical") {
-                coordinate_space = "enu";
-            }
+            auto coordinate_space = normalize_map_coordinate_space(visualization.render_options, "enu");
             visualization_payload.mesh = {
                 {"use_vertex_colors", coerce_bool(map_get(visualization.render_options, "use_vertex_colors"), true)},
                 {"alpha", clamp_float(coerce_float(map_get(visualization.render_options, "alpha"), 1.0f), 0.0f, 1.0f)},
@@ -1053,14 +1275,8 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
 
         if (visualization_payload.type == "octomap") {
-            auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "enu"));
-            if (coordinate_space != "optical") {
-                coordinate_space = "enu";
-            }
-            auto render_mode = to_lower(coerce_text(map_get(visualization.render_options, "render_mode"), "surface_mesh"));
-            if (render_mode != "voxel_cubes") {
-                render_mode = "surface_mesh";
-            }
+            auto coordinate_space = normalize_map_coordinate_space(visualization.render_options, "enu");
+            auto render_mode = normalize_octomap_render_mode(visualization.render_options);
             visualization_payload.octomap = {
                 {"render_mode", render_mode},
                 {"use_vertex_colors", coerce_bool(map_get(visualization.render_options, "use_vertex_colors"), true)},
@@ -1201,10 +1417,12 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
 
     if (const auto description_value = robot.get_metadata("robot_description_config")) {
         const auto description_cfg = any_to_map(*description_value).value_or(std::map<std::string, std::any>{});
-        auto manifest = build_robot_description_manifest(robot, description_cfg);
+        std::optional<std::string> description_payload_json;
+        auto manifest = build_robot_description_manifest(robot, description_cfg, &description_payload_json);
         if (!manifest.empty()) {
             payload.robot_description_manifest = std::move(manifest);
-            if (coerce_bool(map_get(description_cfg, "include_visual_meshes"), true)) {
+            payload.robot_description_payload_json = std::move(description_payload_json);
+            if (coerce_bool(map_get(payload.robot_description_manifest, "supports_visual_meshes"), false)) {
                 payload.has_visual_mesh_model = true;
             }
         }
@@ -1268,6 +1486,7 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                 if (render_mode != "transparent_hq") {
                     render_mode = "opaque_fast";
                 }
+                auto point_shape = normalize_point_shape(visualization.render_options);
                 payload.point_cloud = {
                     {"point_size", std::max(0.001f, coerce_float(map_get(visualization.render_options, "point_size"), 0.05f))},
                     {"max_points_per_frame", std::max(0, coerce_int(map_get(visualization.render_options, "max_points_per_frame"), 0))},
@@ -1284,7 +1503,7 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                     {"min_point_size", min_point_size},
                     {"max_point_size", max_point_size},
                     {"render_mode", render_mode},
-                    {"point_shape", std::string("square")},
+                    {"point_shape", point_shape},
                     {"enable_view_frustum_culling", coerce_bool(map_get(visualization.render_options, "enable_view_frustum_culling"), true)},
                     {"frustum_padding", clamp_float(coerce_float(map_get(visualization.render_options, "frustum_padding"), 0.03f), 0.0f, 0.5f)},
                     {"enable_subpixel_culling", coerce_bool(map_get(visualization.render_options, "enable_subpixel_culling"), true)},
@@ -1336,10 +1555,7 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                 }
             }
             if (payload.type == "mesh") {
-                auto coordinate_space = to_lower(coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "enu"));
-                if (coordinate_space != "optical") {
-                    coordinate_space = "enu";
-                }
+                auto coordinate_space = normalize_map_coordinate_space(visualization.render_options, "enu");
                 payload.mesh = {
                     {"use_vertex_colors", coerce_bool(map_get(visualization.render_options, "use_vertex_colors"), true)},
                     {"alpha", clamp_float(coerce_float(map_get(visualization.render_options, "alpha"), 1.0f), 0.0f, 1.0f)},
@@ -1349,13 +1565,15 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                 };
             }
             if (payload.type == "octomap") {
+                auto render_mode = normalize_octomap_render_mode(visualization.render_options);
+                auto coordinate_space = normalize_map_coordinate_space(visualization.render_options, "enu");
                 payload.octomap = {
-                    {"render_mode", coerce_text(map_get(visualization.render_options, "render_mode"), "surface_mesh")},
+                    {"render_mode", render_mode},
                     {"use_vertex_colors", coerce_bool(map_get(visualization.render_options, "use_vertex_colors"), true)},
                     {"alpha", clamp_float(coerce_float(map_get(visualization.render_options, "alpha"), 1.0f), 0.0f, 1.0f)},
                     {"double_sided", coerce_bool(map_get(visualization.render_options, "double_sided"), false)},
                     {"max_triangles", std::max(1000, coerce_int(map_get(visualization.render_options, "max_triangles"), 60000))},
-                    {"source_coordinate_space", coerce_text(map_get(visualization.render_options, "source_coordinate_space"), "enu")},
+                    {"source_coordinate_space", coordinate_space},
                     {"native_topic", coerce_text(map_get(visualization.render_options, "native_topic"), "/map_3d_octomap")},
                     {"native_frame", coerce_text(map_get(visualization.render_options, "native_frame"), "map")},
                     {"native_binary_only", coerce_bool(map_get(visualization.render_options, "native_binary_only"), true)},

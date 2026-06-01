@@ -23,6 +23,7 @@ Rust track for HORUS SDK parity with the implemented Python behavior.
   - global visualization dedupe
   - workspace scale include/omit rules
   - robot manager config defaults
+  - unsupported native registration transport is reported explicitly instead of synthetic success
 - Utility parity baseline:
   - topic status board
   - topic monitor
@@ -67,12 +68,12 @@ cargo bench --bench registration_scenario
 
 ```bash
 cd rust
-cargo run --example sdk_registration_demo -- --robot-count 4 --with-occupancy-grid true
+cargo run --example sdk_registration_demo
 cargo run --example fake_tf_publisher -- --robot-name test_bot --rate-hz 10 --cycles 20
 cargo run --example e2e_registration_check -- --robot-name SdkBot_E2E
 ```
 
 ## Notes
 
-- ROS 2 runtime integration via `r2r` is feature-gated (`ros2`) and currently scaffolded.
-- Registration/ack/heartbeat transport behavior is modeled for parity tests; full live ROS graph behavior is still evolving.
+- ROS 2 runtime integration is feature-gated (`ros2`) and currently scaffolded without pulling runtime dependencies.
+- Registration/ACK/heartbeat transport behavior is Python-only for now; the Rust track is payload parity until native transport is implemented.

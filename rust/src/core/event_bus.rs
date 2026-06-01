@@ -138,44 +138,44 @@ impl EventBus {
         let subscriptions_for_thread = Arc::clone(&subscriptions);
         let stats_for_thread = Arc::clone(&stats);
         let running_for_thread = Arc::clone(&running);
-        let worker = thread::spawn(move || {
-            loop {
-                let maybe_event = {
-                    let (lock, cvar) = &*queue_for_thread;
-                    let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    while guard.is_empty() {
-                        let res = cvar
-                            .wait_timeout(guard, Duration::from_millis(100))
-                            .unwrap_or_else(|e| e.into_inner());
-                        guard = res.0;
-                        if guard.is_empty() && !running_for_thread.load(Ordering::Relaxed) {
-                            return;
-                        }
+        let worker = thread::spawn(move || loop {
+            let maybe_event = {
+                let (lock, cvar) = &*queue_for_thread;
+                let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                while guard.is_empty() {
+                    let res = cvar
+                        .wait_timeout(guard, Duration::from_millis(100))
+                        .unwrap_or_else(|e| e.into_inner());
+                    guard = res.0;
+                    if guard.is_empty() && !running_for_thread.load(Ordering::Relaxed) {
+                        return;
                     }
-                    guard.sort_by(|a, b| b.priority.cmp(&a.priority));
-                    guard.pop()
-                };
-
-                let Some(event) = maybe_event else {
-                    continue;
-                };
-
-                let callbacks: Vec<EventCallback> = {
-                    let subs = subscriptions_for_thread.read().unwrap_or_else(|e| e.into_inner());
-                    subs.values()
-                        .flat_map(|v| v.iter())
-                        .filter(|s| s.matches(&event))
-                        .map(|s| Arc::clone(&s.callback))
-                        .collect()
-                };
-
-                for cb in callbacks {
-                    cb(event.clone());
                 }
-                stats_for_thread
-                    .events_processed
-                    .fetch_add(1, Ordering::Relaxed);
+                guard.sort_by(|a, b| b.priority.cmp(&a.priority));
+                guard.pop()
+            };
+
+            let Some(event) = maybe_event else {
+                continue;
+            };
+
+            let callbacks: Vec<EventCallback> = {
+                let subs = subscriptions_for_thread
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner());
+                subs.values()
+                    .flat_map(|v| v.iter())
+                    .filter(|s| s.matches(&event))
+                    .map(|s| Arc::clone(&s.callback))
+                    .collect()
+            };
+
+            for cb in callbacks {
+                cb(event.clone());
             }
+            stats_for_thread
+                .events_processed
+                .fetch_add(1, Ordering::Relaxed);
         });
 
         Self {
@@ -200,9 +200,7 @@ impl EventBus {
             self.stats.dropped_events.fetch_add(1, Ordering::Relaxed);
         }
         guard.push(event);
-        self.stats
-            .events_published
-            .fetch_add(1, Ordering::Relaxed);
+        self.stats.events_published.fetch_add(1, Ordering::Relaxed);
         cvar.notify_one();
     }
 
@@ -225,7 +223,10 @@ impl EventBus {
         let topic_filter = topic_filter.into();
         let subscription = EventSubscription::new(callback, topic_filter.clone(), priority_filter);
         let subscription_id = subscription.subscription_id.clone();
-        let mut subs = self.subscriptions.write().unwrap_or_else(|e| e.into_inner());
+        let mut subs = self
+            .subscriptions
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         subs.entry(topic_filter).or_default().push(subscription);
         let active_count: usize = subs.values().map(|v| v.len()).sum();
         self.stats
@@ -235,7 +236,10 @@ impl EventBus {
     }
 
     pub fn unsubscribe(&self, subscription_id: &str) -> bool {
-        let mut subs = self.subscriptions.write().unwrap_or_else(|e| e.into_inner());
+        let mut subs = self
+            .subscriptions
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         let mut found = false;
         let keys: Vec<String> = subs.keys().cloned().collect();
         for key in keys {
@@ -259,7 +263,10 @@ impl EventBus {
     }
 
     pub fn unsubscribe_all(&self, topic_filter: Option<&str>) {
-        let mut subs = self.subscriptions.write().unwrap_or_else(|e| e.into_inner());
+        let mut subs = self
+            .subscriptions
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         match topic_filter {
             Some(filter) => {
                 subs.remove(filter);
@@ -273,12 +280,7 @@ impl EventBus {
     }
 
     pub fn get_stats(&self) -> HashMap<String, usize> {
-        let queue_size = self
-            .queue
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len();
+        let queue_size = self.queue.0.lock().unwrap_or_else(|e| e.into_inner()).len();
         HashMap::from([
             (
                 "events_published".to_string(),

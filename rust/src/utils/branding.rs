@@ -60,11 +60,7 @@ pub fn show_ascii_art() {
     for (h, o, r, u, s) in rows {
         println!(
             "    {}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
-            c_h, h, c_reset,
-            c_o, o, c_reset,
-            c_r, r, c_reset,
-            c_u, u, c_reset,
-            c_s, s, c_reset,
+            c_h, h, c_reset, c_o, o, c_reset, c_r, r, c_reset, c_u, u, c_reset, c_s, s, c_reset,
         );
     }
 
@@ -72,7 +68,10 @@ pub fn show_ascii_art() {
     println!("    {}        Holistic Operational Reality{}", c_o, c_reset);
     println!("    {}            for Unified Systems{}", c_r, c_reset);
     println!();
-    println!("    {}\u{1F916} Mixed Reality Robot Management Platform{}", c_dim, c_reset);
+    println!(
+        "    {}\u{1F916} Mixed Reality Robot Management Platform{}",
+        c_dim, c_reset
+    );
     println!(
         "    {}\u{1F3D7}\u{FE0F} Developed at RICE Lab, University of Genoa{}",
         c_dim, c_reset

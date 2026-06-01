@@ -120,4 +120,3 @@ static ROSOUT_MONITOR: Lazy<RosoutSubscriptionMonitor> = Lazy::new(RosoutSubscri
 pub fn get_rosout_monitor() -> &'static RosoutSubscriptionMonitor {
     &ROSOUT_MONITOR
 }
-

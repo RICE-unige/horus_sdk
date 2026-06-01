@@ -227,7 +227,9 @@ impl DataViz {
         mut render_options: Option<RenderOptions>,
     ) {
         let options = render_options.get_or_insert_with(HashMap::new);
-        options.entry("units".to_string()).or_insert_with(|| serde_json::json!("m/s"));
+        options
+            .entry("units".to_string())
+            .or_insert_with(|| serde_json::json!("m/s"));
         options
             .entry("text_back_offset_m".to_string())
             .or_insert_with(|| serde_json::json!(0.36));
@@ -264,11 +266,15 @@ impl DataViz {
     ) {
         let options = render_options.get_or_insert_with(HashMap::new);
         if !options.contains_key("color") {
-            let color = self.color_manager.get_path_color(robot_name, "trajectory", 0.65);
+            let color = self
+                .color_manager
+                .get_path_color(robot_name, "trajectory", 0.65);
             options.insert("color".to_string(), serde_json::json!(color.to_hex()));
             options.insert("alpha".to_string(), serde_json::json!(color.a));
         }
-        options.entry("max_points".to_string()).or_insert_with(|| serde_json::json!(48));
+        options
+            .entry("max_points".to_string())
+            .or_insert_with(|| serde_json::json!(48));
         options
             .entry("history_seconds".to_string())
             .or_insert_with(|| serde_json::json!(3.2));
@@ -363,7 +369,12 @@ impl DataViz {
         });
     }
 
-    pub fn add_3d_map(&mut self, topic: &str, frame_id: &str, render_options: Option<RenderOptions>) {
+    pub fn add_3d_map(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
         self.add_or_update_visualization(VisualizationConfig {
             viz_type: VisualizationType::PointCloud,
             display_name: "map_3d".to_string(),
@@ -381,7 +392,12 @@ impl DataViz {
         });
     }
 
-    pub fn add_3d_mesh(&mut self, topic: &str, frame_id: &str, render_options: Option<RenderOptions>) {
+    pub fn add_3d_mesh(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
         self.add_or_update_visualization(VisualizationConfig {
             viz_type: VisualizationType::Mesh,
             display_name: "map_3d_mesh".to_string(),
@@ -399,7 +415,12 @@ impl DataViz {
         });
     }
 
-    pub fn add_3d_octomap(&mut self, topic: &str, frame_id: &str, render_options: Option<RenderOptions>) {
+    pub fn add_3d_octomap(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
         self.add_or_update_visualization(VisualizationConfig {
             viz_type: VisualizationType::Octomap,
             display_name: "map_3d_octomap".to_string(),
@@ -437,21 +458,39 @@ impl DataViz {
         options
             .entry("chunk_end_topic".to_string())
             .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_end"));
-        options.entry("asset_format".to_string()).or_insert_with(|| serde_json::json!("3dgs_ply"));
+        options
+            .entry("asset_format".to_string())
+            .or_insert_with(|| serde_json::json!("3dgs_ply"));
         options
             .entry("source_coordinate_space".to_string())
             .or_insert_with(|| serde_json::json!("colmap"));
-        options.entry("render_mode".to_string()).or_insert_with(|| serde_json::json!("splats"));
-        options.entry("max_splats".to_string()).or_insert_with(|| serde_json::json!(350000));
-        options.entry("render_scale".to_string()).or_insert_with(|| serde_json::json!(0.5));
-        options.entry("sh_order".to_string()).or_insert_with(|| serde_json::json!(2));
+        options
+            .entry("render_mode".to_string())
+            .or_insert_with(|| serde_json::json!("splats"));
+        options
+            .entry("max_splats".to_string())
+            .or_insert_with(|| serde_json::json!(350000));
+        options
+            .entry("render_scale".to_string())
+            .or_insert_with(|| serde_json::json!(0.5));
+        options
+            .entry("sh_order".to_string())
+            .or_insert_with(|| serde_json::json!(2));
         options
             .entry("half_precision_sh".to_string())
             .or_insert_with(|| serde_json::json!(true));
-        options.entry("adaptive_sort".to_string()).or_insert_with(|| serde_json::json!(true));
-        options.entry("sort_passes".to_string()).or_insert_with(|| serde_json::json!(2));
-        options.entry("opacity_scale".to_string()).or_insert_with(|| serde_json::json!(1.0));
-        options.entry("splat_scale".to_string()).or_insert_with(|| serde_json::json!(1.0));
+        options
+            .entry("adaptive_sort".to_string())
+            .or_insert_with(|| serde_json::json!(true));
+        options
+            .entry("sort_passes".to_string())
+            .or_insert_with(|| serde_json::json!(2));
+        options
+            .entry("opacity_scale".to_string())
+            .or_insert_with(|| serde_json::json!(1.0));
+        options
+            .entry("splat_scale".to_string())
+            .or_insert_with(|| serde_json::json!(1.0));
         options
             .entry("contribution_cull_threshold".to_string())
             .or_insert_with(|| serde_json::json!(0.1));
@@ -577,7 +616,12 @@ impl DataViz {
         self.add_global_navigation_path(topic, frame_id, render_options);
     }
 
-    pub fn add_tf_tree(&mut self, topic: &str, frame_id: &str, render_options: Option<RenderOptions>) {
+    pub fn add_tf_tree(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
         self.add_or_update_visualization(VisualizationConfig {
             viz_type: VisualizationType::TransformTree,
             display_name: "tf_tree".to_string(),
@@ -611,7 +655,10 @@ impl DataViz {
             .collect()
     }
 
-    pub fn get_visualizations_by_type(&self, viz_type: VisualizationType) -> Vec<VisualizationConfig> {
+    pub fn get_visualizations_by_type(
+        &self,
+        viz_type: VisualizationType,
+    ) -> Vec<VisualizationConfig> {
         self.visualizations
             .iter()
             .filter(|viz| viz.viz_type == viz_type)
@@ -662,7 +709,9 @@ impl DataViz {
             if let Some(robot_name) = &viz.data_source.robot_name {
                 *by_robot.entry(robot_name.clone()).or_insert(0) += 1;
             }
-            *by_type.entry(viz.viz_type.as_str().to_string()).or_insert(0) += 1;
+            *by_type
+                .entry(viz.viz_type.as_str().to_string())
+                .or_insert(0) += 1;
             *by_data_source
                 .entry(viz.data_source.source_type.as_str().to_string())
                 .or_insert(0) += 1;

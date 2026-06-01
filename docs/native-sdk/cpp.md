@@ -5,7 +5,9 @@ sidebar_position: 1
 
 # C++ SDK
 
-The C++ SDK builds the same MR registration contract as the Python SDK without depending on the Python runtime. Use it when your robot process is already C++, when registration is part of a ROS 2 node, or when startup and payload generation overhead need to stay low.
+The C++ SDK builds the same MR registration payload contract as the Python SDK without depending on the Python runtime. Use it when your robot process is already C++ or when payload generation overhead needs to stay low.
+
+Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The native C++ `register_*` calls intentionally return an unsupported-transport result instead of reporting fake local success.
 
 ## What it sends
 
@@ -13,7 +15,7 @@ The C++ SDK builds the same MR registration contract as the Python SDK without d
 
 | Area | C++ support |
 | --- | --- |
-| Robot identity | name, type, dimensions, HORUS color/id metadata |
+| Robot identity | name, type, dimensions |
 | ROS binding | prefixed or flat topics and TF frames |
 | Robot Manager | status, DataViz, teleop, and task panel sections |
 | Controls | teleop defaults/overrides, go-to-point, waypoint topics |
@@ -79,9 +81,9 @@ int main() {
 }
 ```
 
-## Registration Examples
+## Payload Examples
 
-The curated native examples live in `cpp/examples/` and match the Python registration examples by basename: `ops_registration.cpp`, `flat_robot_registration.cpp`, `drone_registration.cpp`, `legged_registration.cpp`, `stereo_registration.cpp`, the robot-description/map registrations, Carter, Unitree Go1, and UAV sim registration.
+The curated native examples live in `cpp/examples/` and match the Python registration examples by basename: `ops_registration.cpp`, `flat_robot_registration.cpp`, `drone_registration.cpp`, `legged_registration.cpp`, `stereo_registration.cpp`, the robot-description/map scenarios, Carter, Unitree Go1, and UAV sim payload checks.
 
 ```bash
 cd ~/horus_sdk/cpp
@@ -90,4 +92,4 @@ cd ~/horus_sdk/cpp
 ./build_no_ros/examples/gaussian_splat_fixture_registration
 ```
 
-`cpp/examples/sdk_registration_demo.cpp` remains the short native equivalent of `ops_registration.py`; the larger scenario coverage is split into focused examples so robot registration code stays concise.
+`cpp/examples/sdk_registration_demo.cpp` remains the short native equivalent of the Python ops scenario at the payload layer; the larger scenario coverage is split into focused examples so payload construction stays concise.

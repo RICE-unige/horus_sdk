@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 
 use horus::{
-    register_robots, Camera, DataViz, LaserScan, MinimapViewConfig, NavigationTaskConfig,
-    ProjectedViewConfig, Robot, RobotDescriptionConfig, RobotDimensions, RobotManagerConfig,
-    RobotType, TeleopConfig,
+    bridge::RobotRegistryClient, Camera, DataViz, LaserScan, MinimapViewConfig,
+    NavigationTaskConfig, ProjectedViewConfig, Robot, RobotDescriptionConfig, RobotDimensions,
+    RobotManagerConfig, RobotType, TeleopConfig,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -315,18 +315,26 @@ pub fn register_or_fail(set: &mut RegistrationSet) {
 }
 
 pub fn register_with(set: &mut RegistrationSet, workspace_scale: f64, keep_alive: bool) {
-    let datavizs = std::mem::take(&mut set.datavizs);
-    let (ok, result) = register_robots(
-        &mut set.robots,
-        Some(datavizs),
-        keep_alive,
-        true,
-        10.0,
-        Some(workspace_scale),
-    );
-    if !ok {
-        panic!("HORUS registration failed: {result}");
+    let _ = keep_alive;
+    if set.robots.is_empty() || set.robots.len() != set.datavizs.len() {
+        panic!("HORUS native payload validation needs matching robots and DataViz entries");
     }
+    let client = RobotRegistryClient::new();
+    let global_visualizations = client.build_global_visualizations_payload(&set.datavizs);
+    for (robot, dataviz) in set.robots.iter().zip(set.datavizs.iter()) {
+        let payload = client.build_robot_config_dict(
+            robot,
+            dataviz,
+            Some(global_visualizations.clone()),
+            Some(workspace_scale),
+        );
+        if payload.robot_name.is_empty() || payload.robot_type.is_empty() {
+            panic!("HORUS native payload validation failed");
+        }
+    }
+    println!(
+        "HORUS native payload validation OK. Live registration transport is Python-only for now."
+    );
 }
 
 pub fn robot_manager_without_controls() -> RobotManagerConfig {

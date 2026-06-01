@@ -242,7 +242,11 @@ impl Robot {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .unwrap_or("base_link");
-        let tf_prefix = if tf_mode == "flat" { "" } else { self.name.as_str() };
+        let tf_prefix = if tf_mode == "flat" {
+            ""
+        } else {
+            self.name.as_str()
+        };
         let topic_prefix = if topic_mode == "flat" {
             String::new()
         } else {
@@ -319,7 +323,13 @@ impl Robot {
         }
     }
 
-    pub fn configure_robot_manager(&mut self, status: bool, data_viz: bool, teleop: bool, tasks: bool) {
+    pub fn configure_robot_manager(
+        &mut self,
+        status: bool,
+        data_viz: bool,
+        teleop: bool,
+        tasks: bool,
+    ) {
         self.configure_robot_manager_with(RobotManagerConfig {
             enabled: true,
             status,
@@ -355,7 +365,11 @@ impl Robot {
         put_if_some(&mut payload, "robot_profile", config.robot_profile);
         put_if_some(&mut payload, "response_mode", config.response_mode);
         put_if_some(&mut payload, "publish_rate_hz", config.publish_rate_hz);
-        put_if_some(&mut payload, "custom_passthrough_only", config.custom_passthrough_only);
+        put_if_some(
+            &mut payload,
+            "custom_passthrough_only",
+            config.custom_passthrough_only,
+        );
 
         let mut deadman = serde_json::Map::new();
         put_if_some(&mut deadman, "policy", config.deadman_policy);
@@ -380,14 +394,23 @@ impl Robot {
 
         let mut discrete = serde_json::Map::new();
         put_if_some(&mut discrete, "threshold", config.discrete_threshold);
-        put_if_some(&mut discrete, "linear_xy_step_mps", config.linear_xy_step_mps);
+        put_if_some(
+            &mut discrete,
+            "linear_xy_step_mps",
+            config.linear_xy_step_mps,
+        );
         put_if_some(&mut discrete, "linear_z_step_mps", config.linear_z_step_mps);
-        put_if_some(&mut discrete, "angular_z_step_rps", config.angular_z_step_rps);
+        put_if_some(
+            &mut discrete,
+            "angular_z_step_rps",
+            config.angular_z_step_rps,
+        );
         if !discrete.is_empty() {
             payload.insert("discrete".to_string(), Value::Object(discrete));
         }
 
-        self.metadata.insert("teleop_config".to_string(), Value::Object(payload));
+        self.metadata
+            .insert("teleop_config".to_string(), Value::Object(payload));
     }
 
     pub fn configure_navigation_tasks(&mut self, config: NavigationTaskConfig) {
@@ -422,10 +445,13 @@ impl Robot {
         if body_mesh_mode == "max_quality_mesh" {
             body_mesh_mode = "runtime_high_mesh".to_string();
         }
-        if !["collision_only", "preview_mesh", "runtime_high_mesh"].contains(&body_mesh_mode.as_str()) {
+        if !["collision_only", "preview_mesh", "runtime_high_mesh"]
+            .contains(&body_mesh_mode.as_str())
+        {
             body_mesh_mode = "preview_mesh".to_string();
         }
-        let include_visual_meshes = config.include_visual_meshes && body_mesh_mode != "collision_only";
+        let include_visual_meshes =
+            config.include_visual_meshes && body_mesh_mode != "collision_only";
         self.metadata.insert(
             "robot_description_config".to_string(),
             json!({
@@ -454,7 +480,12 @@ impl Robot {
         );
     }
 
-    pub fn configure_workspace_compass(&mut self, enabled: bool, gateway_port: u16, voice_mode: &str) {
+    pub fn configure_workspace_compass(
+        &mut self,
+        enabled: bool,
+        gateway_port: u16,
+        voice_mode: &str,
+    ) {
         self.metadata.insert(
             "workspace_compass_config".to_string(),
             json!({
@@ -479,7 +510,10 @@ impl Robot {
 
     pub fn add_sensor(&mut self, sensor: Arc<dyn Sensor>) -> Result<(), String> {
         if self.sensors.iter().any(|s| s.name() == sensor.name()) {
-            return Err(format!("Sensor with name '{}' already exists", sensor.name()));
+            return Err(format!(
+                "Sensor with name '{}' already exists",
+                sensor.name()
+            ));
         }
         self.sensors.push(sensor);
         Ok(())
@@ -677,7 +711,11 @@ fn normalize_binding_mode(value: &str) -> &'static str {
     }
 }
 
-fn put_if_some<T: serde::Serialize>(values: &mut serde_json::Map<String, Value>, key: &str, value: Option<T>) {
+fn put_if_some<T: serde::Serialize>(
+    values: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<T>,
+) {
     if let Some(value) = value {
         values.insert(key.to_string(), json!(value));
     }

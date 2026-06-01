@@ -96,7 +96,11 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub fn new(name: impl Into<String>, frame_id: impl Into<String>, topic: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        frame_id: impl Into<String>,
+        topic: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             frame_id: frame_id.into(),
@@ -169,27 +173,68 @@ impl Camera {
     }
 
     pub fn configure_projected_view(&mut self, config: ProjectedViewConfig) {
-        self.metadata.insert("display_mode".to_string(), serde_json::json!("projected"));
-        put_vec3(&mut self.metadata, "projected_position_offset", config.position_offset);
-        put_vec3(&mut self.metadata, "view_rotation_offset", config.rotation_offset);
-        put_vec3(&mut self.metadata, "projected_scale_multiplier", config.scale_multiplier);
+        self.metadata
+            .insert("display_mode".to_string(), serde_json::json!("projected"));
+        put_vec3(
+            &mut self.metadata,
+            "projected_position_offset",
+            config.position_offset,
+        );
+        put_vec3(
+            &mut self.metadata,
+            "view_rotation_offset",
+            config.rotation_offset,
+        );
+        put_vec3(
+            &mut self.metadata,
+            "projected_scale_multiplier",
+            config.scale_multiplier,
+        );
         put_if_some(&mut self.metadata, "image_scale", config.image_scale);
-        put_if_some(&mut self.metadata, "focal_length_scale", config.focal_length_scale);
-        put_if_some(&mut self.metadata, "projection_target_frame", config.projection_target_frame);
+        put_if_some(
+            &mut self.metadata,
+            "focal_length_scale",
+            config.focal_length_scale,
+        );
+        put_if_some(
+            &mut self.metadata,
+            "projection_target_frame",
+            config.projection_target_frame,
+        );
         put_if_some(&mut self.metadata, "show_frustum", config.show_frustum);
         put_if_some(&mut self.metadata, "frustum_color", config.frustum_color);
     }
 
     pub fn configure_minimap_view(&mut self, config: MinimapViewConfig) {
         put_if_some(&mut self.metadata, "overhead_size", config.size);
-        put_vec3(&mut self.metadata, "overhead_position_offset", config.position_offset);
-        put_if_some(&mut self.metadata, "overhead_face_camera", config.face_camera);
-        put_vec3(&mut self.metadata, "overhead_rotation_offset", config.rotation_offset);
+        put_vec3(
+            &mut self.metadata,
+            "overhead_position_offset",
+            config.position_offset,
+        );
+        put_if_some(
+            &mut self.metadata,
+            "overhead_face_camera",
+            config.face_camera,
+        );
+        put_vec3(
+            &mut self.metadata,
+            "overhead_rotation_offset",
+            config.rotation_offset,
+        );
     }
 
     pub fn configure_immersive_view(&mut self, config: ImmersiveViewConfig) {
-        put_if_some(&mut self.metadata, "immersive_ros_flip_x", config.ros_flip_x);
-        put_if_some(&mut self.metadata, "immersive_ros_flip_y", config.ros_flip_y);
+        put_if_some(
+            &mut self.metadata,
+            "immersive_ros_flip_x",
+            config.ros_flip_x,
+        );
+        put_if_some(
+            &mut self.metadata,
+            "immersive_ros_flip_y",
+            config.ros_flip_y,
+        );
     }
 
     pub fn configure_webrtc_transport(&mut self, config: WebRtcTransportConfig) {
@@ -201,12 +246,32 @@ impl Camera {
             "webrtc_server_signal_topic".to_string(),
             serde_json::json!(config.server_signal_topic),
         );
-        put_if_some(&mut self.metadata, "webrtc_bitrate_kbps", config.bitrate_kbps);
+        put_if_some(
+            &mut self.metadata,
+            "webrtc_bitrate_kbps",
+            config.bitrate_kbps,
+        );
         put_if_some(&mut self.metadata, "webrtc_framerate", config.framerate);
-        put_if_some(&mut self.metadata, "webrtc_stun_server_url", config.stun_server_url);
-        put_if_some(&mut self.metadata, "webrtc_turn_server_url", config.turn_server_url);
-        put_if_some(&mut self.metadata, "webrtc_turn_username", config.turn_username);
-        put_if_some(&mut self.metadata, "webrtc_turn_credential", config.turn_credential);
+        put_if_some(
+            &mut self.metadata,
+            "webrtc_stun_server_url",
+            config.stun_server_url,
+        );
+        put_if_some(
+            &mut self.metadata,
+            "webrtc_turn_server_url",
+            config.turn_server_url,
+        );
+        put_if_some(
+            &mut self.metadata,
+            "webrtc_turn_username",
+            config.turn_username,
+        );
+        put_if_some(
+            &mut self.metadata,
+            "webrtc_turn_credential",
+            config.turn_credential,
+        );
     }
 }
 
@@ -279,7 +344,11 @@ pub struct LaserScan {
 }
 
 impl LaserScan {
-    pub fn new(name: impl Into<String>, frame_id: impl Into<String>, topic: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        frame_id: impl Into<String>,
+        topic: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             frame_id: frame_id.into(),
@@ -358,7 +427,11 @@ pub struct Lidar3D {
 }
 
 impl Lidar3D {
-    pub fn new(name: impl Into<String>, frame_id: impl Into<String>, topic: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        frame_id: impl Into<String>,
+        topic: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             frame_id: frame_id.into(),

@@ -1,7 +1,7 @@
 use horus::bridge::RobotRegistryClient;
 use horus::core::types::RobotType;
 use horus::robot::Robot;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 
@@ -41,24 +41,27 @@ fn occupancy_grid_serialized_as_global_visualization() {
     assert_eq!(occupancy_entry.topic, "/map");
     assert_eq!(occupancy_entry.frame.as_deref(), Some("map"));
 
-    let occupancy = occupancy_entry.occupancy.clone().expect("occupancy payload");
+    let occupancy = occupancy_entry
+        .occupancy
+        .clone()
+        .expect("occupancy payload");
     assert!(!occupancy.show_unknown_space);
     assert_eq!(occupancy.position_scale, Some(0.15));
     assert_eq!(
-        serde_json::to_value(occupancy.position_offset.expect("position offset")).expect("serialize"),
+        serde_json::to_value(occupancy.position_offset.expect("position offset"))
+            .expect("serialize"),
         json!({"x": 1.0, "y": 2.0, "z": 3.0})
     );
     assert_eq!(
-        serde_json::to_value(occupancy.rotation_offset_euler.expect("rotation")).expect("serialize"),
+        serde_json::to_value(occupancy.rotation_offset_euler.expect("rotation"))
+            .expect("serialize"),
         json!({"x": 0.0, "y": 90.0, "z": 0.0})
     );
 
-    assert!(
-        config
-            .visualizations
-            .iter()
-            .all(|entry| entry.viz_type != "occupancy_grid")
-    );
+    assert!(config
+        .visualizations
+        .iter()
+        .all(|entry| entry.viz_type != "occupancy_grid"));
 }
 
 #[test]
@@ -80,9 +83,11 @@ fn global_visualization_dedupes_across_multiple_robots() {
     assert_eq!(occupancy_entries.len(), 1);
 
     let expected = fixture("global_occupancy_dedupe.json");
-    assert_eq!(payload.len(), expected["count"].as_u64().unwrap_or_default() as usize);
+    assert_eq!(
+        payload.len(),
+        expected["count"].as_u64().unwrap_or_default() as usize
+    );
     let entry = occupancy_entries[0];
     assert_eq!(entry.topic, expected["global_visualizations"][0]["topic"]);
     assert_eq!(entry.scope, expected["global_visualizations"][0]["scope"]);
 }
-

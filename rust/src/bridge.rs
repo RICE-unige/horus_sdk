@@ -1,10 +1,11 @@
 use crate::dataviz::{DataSource, DataViz, VisualizationConfig};
 use crate::robot::Robot;
 use crate::sensors::{Camera, LaserScan};
-use crate::utils::{get_topic_monitor, get_topic_status_board};
 use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -354,7 +355,11 @@ fn coerce_int(value: Option<&Value>, default: i32) -> i32 {
 fn coerce_vec3(value: Option<&Value>, default_xyz: (f32, f32, f32)) -> Vector3Payload {
     let (dx, dy, dz) = default_xyz;
     let Some(value) = value else {
-        return Vector3Payload { x: dx, y: dy, z: dz };
+        return Vector3Payload {
+            x: dx,
+            y: dy,
+            z: dz,
+        };
     };
     if let Some(obj) = value.as_object() {
         return Vector3Payload {
@@ -372,7 +377,11 @@ fn coerce_vec3(value: Option<&Value>, default_xyz: (f32, f32, f32)) -> Vector3Pa
             };
         }
     }
-    Vector3Payload { x: dx, y: dy, z: dz }
+    Vector3Payload {
+        x: dx,
+        y: dy,
+        z: dz,
+    }
 }
 
 fn build_camera_config(sensor: &Camera) -> CameraConfigPayload {
@@ -438,7 +447,8 @@ fn build_camera_config(sensor: &Camera) -> CameraConfigPayload {
     } else {
         teleop_topic
     };
-    let image_type = normalize_image_type(metadata.get("image_type").and_then(Value::as_str), "raw");
+    let image_type =
+        normalize_image_type(metadata.get("image_type").and_then(Value::as_str), "raw");
     let minimap_image_type = normalize_image_type(
         metadata
             .get("minimap_image_type")
@@ -454,7 +464,10 @@ fn build_camera_config(sensor: &Camera) -> CameraConfigPayload {
         &image_type,
     );
     let minimap_max_fps = clamp_i32(
-        coerce_int(metadata.get("minimap_max_fps"), sensor.minimap_max_fps as i32),
+        coerce_int(
+            metadata.get("minimap_max_fps"),
+            sensor.minimap_max_fps as i32,
+        ),
         1,
         30,
     );
@@ -585,9 +598,14 @@ fn serialize_visualization_payload(
         return None;
     }
 
-    let scope = scope_override
-        .map(str::to_string)
-        .unwrap_or_else(|| if visualization.is_robot_specific() { "robot" } else { "global" }.to_string());
+    let scope = scope_override.map(str::to_string).unwrap_or_else(|| {
+        if visualization.is_robot_specific() {
+            "robot"
+        } else {
+            "global"
+        }
+        .to_string()
+    });
 
     let frame = if data_source.frame_id.trim().is_empty() {
         None
@@ -620,9 +638,16 @@ fn serialize_visualization_payload(
             _ => {}
         }
         if let Some(value) = visualization.render_options.get("line_width") {
-            payload.insert("line_width".to_string(), json!(coerce_float(Some(value), 1.0)));
+            payload.insert(
+                "line_width".to_string(),
+                json!(coerce_float(Some(value), 1.0)),
+            );
         }
-        if let Some(value) = visualization.render_options.get("line_style").and_then(Value::as_str) {
+        if let Some(value) = visualization
+            .render_options
+            .get("line_style")
+            .and_then(Value::as_str)
+        {
             if !value.trim().is_empty() {
                 payload.insert("line_style".to_string(), json!(value));
             }
@@ -670,12 +695,15 @@ fn serialize_visualization_payload(
             any = true;
         }
         if options.contains_key("position_offset") {
-            occ.position_offset = Some(coerce_vec3(options.get("position_offset"), (0.0, 0.0, 0.0)));
+            occ.position_offset =
+                Some(coerce_vec3(options.get("position_offset"), (0.0, 0.0, 0.0)));
             any = true;
         }
         if options.contains_key("rotation_offset_euler") {
-            occ.rotation_offset_euler =
-                Some(coerce_vec3(options.get("rotation_offset_euler"), (0.0, 0.0, 0.0)));
+            occ.rotation_offset_euler = Some(coerce_vec3(
+                options.get("rotation_offset_euler"),
+                (0.0, 0.0, 0.0),
+            ));
             any = true;
         }
         if any {
@@ -938,7 +966,10 @@ fn build_teleop_control(robot: &Robot) -> TeleopControlPayload {
         .to_ascii_lowercase();
     if !matches!(
         policy.as_str(),
-        "either_index_trigger" | "left_index_trigger" | "right_index_trigger" | "either_grip_trigger"
+        "either_index_trigger"
+            | "left_index_trigger"
+            | "right_index_trigger"
+            | "either_grip_trigger"
     ) {
         policy = "either_grip_trigger".to_string();
     }
@@ -991,7 +1022,11 @@ fn build_task_control(robot: &Robot) -> TaskControlPayload {
         .and_then(|m| m.get("waypoint"))
         .and_then(Value::as_object);
 
-    let min_altitude = clamp_f64(coerce_f64(go.and_then(|m| m.get("min_altitude_m")), 0.0), 0.0, 100.0);
+    let min_altitude = clamp_f64(
+        coerce_f64(go.and_then(|m| m.get("min_altitude_m")), 0.0),
+        0.0,
+        100.0,
+    );
     let max_altitude_raw = coerce_f64(go.and_then(|m| m.get("max_altitude_m")), 10.0).min(100.0);
     let max_altitude = max_altitude_raw.max(min_altitude + 0.1);
 
@@ -1023,44 +1058,46 @@ fn build_workspace_config(
     workspace_scale: Option<f64>,
     compass_enabled: Option<bool>,
 ) -> Option<WorkspaceConfigPayload> {
-    let position_scale = workspace_scale
-        .and_then(|v| if v.is_finite() && v > 0.0 { Some(v as f32) } else { None });
+    let position_scale = workspace_scale.and_then(|v| {
+        if v.is_finite() && v > 0.0 {
+            Some(v as f32)
+        } else {
+            None
+        }
+    });
 
     let compass_metadata = robot
         .metadata
         .get("workspace_compass_config")
         .and_then(Value::as_object);
-    let compass = if compass_enabled.is_some()
-        || compass_metadata.and_then(|m| m.get("enabled")).is_some()
-    {
-        let mut voice_mode = coerce_text(
-            compass_metadata.and_then(|m| m.get("voice_mode")),
-            "auto",
-        )
-        .to_ascii_lowercase();
-        if !matches!(voice_mode.as_str(), "auto" | "batch" | "realtime") {
-            voice_mode = "auto".to_string();
-        }
-        let mut gateway_port =
-            coerce_int(compass_metadata.and_then(|m| m.get("gateway_port")), 8088);
-        if gateway_port <= 0 || gateway_port > 65535 {
-            gateway_port = 8088;
-        }
-        Some(json!({
-            "enabled": compass_enabled.unwrap_or_else(|| {
-                coerce_bool(compass_metadata.and_then(|m| m.get("enabled")), false)
-            }),
-            "gateway_port": gateway_port,
-            "voice_mode": voice_mode,
-            "autonomy": "approve_actions",
-            "contract_version": coerce_text(
-                compass_metadata.and_then(|m| m.get("contract_version")),
-                "compass.v1",
-            ),
-        }))
-    } else {
-        None
-    };
+    let compass =
+        if compass_enabled.is_some() || compass_metadata.and_then(|m| m.get("enabled")).is_some() {
+            let mut voice_mode =
+                coerce_text(compass_metadata.and_then(|m| m.get("voice_mode")), "auto")
+                    .to_ascii_lowercase();
+            if !matches!(voice_mode.as_str(), "auto" | "batch" | "realtime") {
+                voice_mode = "auto".to_string();
+            }
+            let mut gateway_port =
+                coerce_int(compass_metadata.and_then(|m| m.get("gateway_port")), 8088);
+            if gateway_port <= 0 || gateway_port > 65535 {
+                gateway_port = 8088;
+            }
+            Some(json!({
+                "enabled": compass_enabled.unwrap_or_else(|| {
+                    coerce_bool(compass_metadata.and_then(|m| m.get("enabled")), false)
+                }),
+                "gateway_port": gateway_port,
+                "voice_mode": voice_mode,
+                "autonomy": "approve_actions",
+                "contract_version": coerce_text(
+                    compass_metadata.and_then(|m| m.get("contract_version")),
+                    "compass.v1",
+                ),
+            }))
+        } else {
+            None
+        };
 
     let tutorial_metadata = robot
         .metadata
@@ -1089,7 +1126,72 @@ fn build_workspace_config(
     }
 }
 
-fn build_robot_description_manifest(robot: &Robot) -> Option<Value> {
+#[derive(Debug, Clone)]
+struct NativeJointDescription {
+    name: String,
+    joint_type: String,
+    parent_link: String,
+    child_link: String,
+}
+
+fn capture_xml_attribute(text: &str, attribute: &str) -> Option<String> {
+    let pattern = Regex::new(&format!(
+        r#"\b{}\s*=\s*["']([^"']+)["']"#,
+        regex::escape(attribute)
+    ))
+    .ok()?;
+    pattern
+        .captures(text)
+        .and_then(|captures| captures.get(1))
+        .map(|match_| match_.as_str().to_string())
+}
+
+fn extract_urdf_link_names(urdf: &str) -> Vec<String> {
+    let Ok(pattern) = Regex::new(r#"<link\b[^>]*>"#) else {
+        return Vec::new();
+    };
+    pattern
+        .find_iter(urdf)
+        .filter_map(|match_| capture_xml_attribute(match_.as_str(), "name"))
+        .collect()
+}
+
+fn extract_urdf_joints(urdf: &str) -> Vec<NativeJointDescription> {
+    let Ok(joint_pattern) = Regex::new(r#"<joint\b[\s\S]*?</joint>"#) else {
+        return Vec::new();
+    };
+    let Ok(parent_pattern) = Regex::new(r#"<parent\b[^>]*>"#) else {
+        return Vec::new();
+    };
+    let Ok(child_pattern) = Regex::new(r#"<child\b[^>]*>"#) else {
+        return Vec::new();
+    };
+
+    joint_pattern
+        .find_iter(urdf)
+        .filter_map(|match_| {
+            let block = match_.as_str();
+            let name = capture_xml_attribute(block, "name")?;
+            let parent_link = parent_pattern
+                .find(block)
+                .and_then(|parent| capture_xml_attribute(parent.as_str(), "link"))
+                .unwrap_or_default();
+            let child_link = child_pattern
+                .find(block)
+                .and_then(|child| capture_xml_attribute(child.as_str(), "link"))
+                .unwrap_or_default();
+            Some(NativeJointDescription {
+                name,
+                joint_type: capture_xml_attribute(block, "type")
+                    .unwrap_or_else(|| "fixed".to_string()),
+                parent_link,
+                child_link,
+            })
+        })
+        .collect()
+}
+
+fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
     let config = robot
         .metadata
         .get("robot_description_config")
@@ -1102,36 +1204,58 @@ fn build_robot_description_manifest(robot: &Robot) -> Option<Value> {
         return None;
     }
 
-    let urdf = fs::read_to_string(&urdf_path).unwrap_or_default();
-    let link_count = urdf.matches("<link ").count() as i64;
-    let joint_count = urdf.matches("<joint ").count() as i64;
-    let collision_count = urdf.matches("<collision").count() as i64;
-    let visual_count = urdf.matches("<visual").count() as i64;
-    let mesh_count = urdf.matches("<mesh").count() as i64;
-    let include_visual_meshes = coerce_bool(config.get("include_visual_meshes"), true);
-    let supports_visual_meshes = include_visual_meshes && (visual_count > 0 || mesh_count > 0);
+    let urdf = fs::read_to_string(&urdf_path).ok()?;
+    if urdf.trim().is_empty() {
+        return None;
+    }
+    let links = extract_urdf_link_names(&urdf);
+    let joints = extract_urdf_joints(&urdf);
     let base_frame = coerce_text(config.get("base_frame"), "base_link");
     let source = coerce_text(config.get("source"), "ros");
-    let chunk_size = clamp_i32(coerce_int(config.get("chunk_size_bytes"), 12000), 1024, 64000);
-    let seed = format!("{}|{}|{}|{}", robot.name, urdf_path, base_frame, urdf.len());
-
-    Some(json!({
+    let chunk_size = clamp_i32(
+        coerce_int(config.get("chunk_size_bytes"), 12000),
+        1024,
+        64000,
+    );
+    let payload = json!({
+        "base_frame": base_frame.clone(),
+        "joints": joints.iter().map(|joint| json!({
+            "axis_xyz": [0.0, 0.0, 1.0],
+            "child_link": joint.child_link.clone(),
+            "name": joint.name.clone(),
+            "origin_rpy": [0.0, 0.0, 0.0],
+            "origin_xyz": [0.0, 0.0, 0.0],
+            "parent_link": joint.parent_link.clone(),
+            "type": joint.joint_type.clone(),
+        })).collect::<Vec<_>>(),
+        "links": links.iter().map(|name| json!({
+            "collisions": [],
+            "name": name,
+        })).collect::<Vec<_>>(),
+        "robot_name": robot.name.clone(),
         "version": "v2",
-        "description_id": format!("native:{:x}", md5::compute(seed)),
+    });
+    let payload_json = serde_json::to_string(&payload).ok()?;
+    let description_hash = Sha256::digest(payload_json.as_bytes());
+
+    let manifest = json!({
+        "version": "v2",
+        "description_id": format!("sha256:{description_hash:x}"),
         "source": source,
         "base_frame": base_frame,
-        "link_count": link_count,
-        "joint_count": joint_count,
-        "collision_count": collision_count,
-        "supports_collision": collision_count > 0,
-        "supports_joints": joint_count > 0,
-        "supports_visual_meshes": supports_visual_meshes,
-        "mesh_asset_count": mesh_count,
+        "link_count": links.len() as i64,
+        "joint_count": joints.len() as i64,
+        "collision_count": 0,
+        "supports_collision": false,
+        "supports_joints": !joints.is_empty(),
+        "supports_visual_meshes": false,
+        "mesh_asset_count": 0,
         "mesh_asset_encoded_bytes": 0,
         "is_transparent": coerce_bool(config.get("is_transparent"), false),
         "encoding": "json+gzip+base64",
         "chunk_size_bytes": chunk_size,
-    }))
+    });
+    Some((manifest, payload_json))
 }
 
 #[derive(Default)]
@@ -1162,20 +1286,22 @@ impl RobotRegistryClient {
         {
             return (false, json!({"error": "Registration already in progress"}));
         }
-        let global_payload = self.build_global_visualizations_payload(std::slice::from_ref(dataviz));
+        let global_payload =
+            self.build_global_visualizations_payload(std::slice::from_ref(dataviz));
         let payload =
             self.build_robot_config_dict(robot, dataviz, Some(global_payload), workspace_scale);
         self.registration_lock.store(false, Ordering::SeqCst);
 
-        let ack = json!({
-            "success": true,
-            "robot_name": robot.name,
-            "robot_id": robot.name,
-            "assigned_color": "#00FF00",
+        let result = json!({
+            "success": false,
+            "error": "Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.",
+            "unsupported_feature": "bridge_registration",
             "payload": payload,
+            "timeout_sec": _timeout_sec,
+            "keep_alive": _keep_alive,
+            "show_dashboard": _show_dashboard,
         });
-        self.apply_registration_metadata(robot, dataviz, &ack);
-        (true, ack)
+        (false, result)
     }
 
     pub fn register_robots(
@@ -1195,12 +1321,13 @@ impl RobotRegistryClient {
             return (false, json!({"error": "Registration already in progress"}));
         }
 
-        let datavizs = datavizs.unwrap_or_else(|| robots.iter().map(|r| r.create_dataviz(None)).collect());
+        let datavizs =
+            datavizs.unwrap_or_else(|| robots.iter().map(|r| r.create_dataviz(None)).collect());
         if datavizs.len() != robots.len() {
             self.registration_lock.store(false, Ordering::SeqCst);
             return (false, json!({"error": "Robot/dataviz length mismatch"}));
         }
-        let mut results = Vec::with_capacity(robots.len());
+        let mut payloads = Vec::with_capacity(robots.len());
         let global_payload = self.build_global_visualizations_payload(&datavizs);
         for (robot, dataviz) in robots.iter_mut().zip(datavizs.iter()) {
             let payload = self.build_robot_config_dict(
@@ -1209,33 +1336,44 @@ impl RobotRegistryClient {
                 Some(global_payload.clone()),
                 workspace_scale,
             );
-            let (ok, ack) = self.register_robot_payload(
-                robot,
-                dataviz,
-                payload,
-                timeout_sec,
-                keep_alive,
-                show_dashboard,
-            );
-            if !ok {
-                self.registration_lock.store(false, Ordering::SeqCst);
-                return (false, ack);
-            }
-            results.push(ack);
+            payloads.push(payload);
         }
         self.registration_lock.store(false, Ordering::SeqCst);
-        (true, json!({"success": true, "results": results}))
+        (
+            false,
+            json!({
+                "success": false,
+                "error": "Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.",
+                "unsupported_feature": "bridge_registration",
+                "payloads": payloads,
+                "timeout_sec": timeout_sec,
+                "keep_alive": keep_alive,
+                "show_dashboard": show_dashboard,
+            }),
+        )
     }
 
-    pub fn unregister_robot(&self, _robot_id: &str, _timeout_sec: f64) -> (bool, Value) {
-        (true, json!({"message": "Unregistered (Local cleanup only)"}))
+    pub fn unregister_robot(&self, robot_id: &str, timeout_sec: f64) -> (bool, Value) {
+        (
+            false,
+            json!({
+                "success": false,
+                "error": "Native HORUS unregister transport is not implemented yet.",
+                "unsupported_feature": "bridge_registration",
+                "robot_id": robot_id,
+                "timeout_sec": timeout_sec,
+            }),
+        )
     }
 
     pub fn check_backend_availability(&self) -> bool {
-        cfg!(feature = "ros2")
+        false
     }
 
-    pub fn build_global_visualizations_payload(&self, datavizs: &[DataViz]) -> Vec<VisualizationPayload> {
+    pub fn build_global_visualizations_payload(
+        &self,
+        datavizs: &[DataViz],
+    ) -> Vec<VisualizationPayload> {
         let mut deduped: HashMap<(String, String, String), VisualizationPayload> = HashMap::new();
         let mut ordered = Vec::new();
         for dataviz in datavizs {
@@ -1243,7 +1381,8 @@ impl RobotRegistryClient {
                 if visualization.is_robot_specific() {
                     continue;
                 }
-                let Some(payload) = serialize_visualization_payload(&visualization, Some("global")) else {
+                let Some(payload) = serialize_visualization_payload(&visualization, Some("global"))
+                else {
                     continue;
                 };
                 let key = dedupe_key(&payload);
@@ -1357,7 +1496,20 @@ impl RobotRegistryClient {
 
         let teleop_control = build_teleop_control(robot);
         let drive_topic = teleop_control.command_topic.clone();
-        let robot_description_manifest = build_robot_description_manifest(robot);
+        let robot_description_artifact = build_robot_description_artifact(robot);
+        let robot_description_manifest = robot_description_artifact
+            .as_ref()
+            .map(|(manifest, _)| manifest.clone());
+        let robot_description_payload_json =
+            robot_description_artifact
+                .as_ref()
+                .and_then(|(_, payload_json)| {
+                    if payload_json.len() <= 250_000 {
+                        Some(payload_json.clone())
+                    } else {
+                        None
+                    }
+                });
         let description_has_visual_mesh = robot_description_manifest
             .as_ref()
             .and_then(|manifest| manifest.get("supports_visual_meshes"))
@@ -1420,7 +1572,11 @@ impl RobotRegistryClient {
                     let id = coerce_text(config.get("robot_model_id"), "")
                         .trim()
                         .to_ascii_lowercase();
-                    if id.is_empty() { None } else { Some(id) }
+                    if id.is_empty() {
+                        None
+                    } else {
+                        Some(id)
+                    }
                 }),
             has_visual_mesh_model: if local_has_visual_mesh || description_has_visual_mesh {
                 Some(true)
@@ -1428,7 +1584,7 @@ impl RobotRegistryClient {
                 None
             },
             robot_description_manifest,
-            robot_description_payload_json: None,
+            robot_description_payload_json,
         }
     }
 
@@ -1457,6 +1613,14 @@ impl RobotRegistryClient {
             for (topic, source_mode) in [(minimap_topic, "minimap"), (teleop_topic, "teleop")] {
                 profiles
                     .entry(topic)
+                    .and_modify(|profile: &mut HashMap<String, String>| {
+                        if profile
+                            .get("source_mode")
+                            .is_some_and(|existing| existing != source_mode)
+                        {
+                            profile.insert("source_mode".to_string(), "both".to_string());
+                        }
+                    })
                     .or_insert_with(|| {
                         HashMap::from([
                             ("minimap".to_string(), cfg.minimap_streaming_type.clone()),
@@ -1469,60 +1633,6 @@ impl RobotRegistryClient {
         }
         profiles
     }
-
-    fn register_robot_payload(
-        &self,
-        robot: &mut Robot,
-        dataviz: &DataViz,
-        payload: RobotRegistrationPayload,
-        _timeout_sec: f64,
-        _keep_alive: bool,
-        _show_dashboard: bool,
-    ) -> (bool, Value) {
-        let ack = json!({
-            "success": true,
-            "robot_name": robot.name,
-            "robot_id": robot.name,
-            "assigned_color": "#00FF00",
-            "payload": payload,
-        });
-        self.apply_registration_metadata(robot, dataviz, &ack);
-        (true, ack)
-    }
-
-    fn apply_registration_metadata(&self, robot: &mut Robot, dataviz: &DataViz, ack: &Value) {
-        let robot_id = ack
-            .get("robot_id")
-            .and_then(Value::as_str)
-            .unwrap_or(&robot.name)
-            .to_string();
-        let color = ack
-            .get("assigned_color")
-            .or_else(|| ack.get("color"))
-            .and_then(Value::as_str)
-            .unwrap_or("#00FF00")
-            .to_string();
-
-        robot.add_metadata("horus_robot_id", json!(robot_id));
-        robot.add_metadata("horus_color", json!(color));
-        robot.add_metadata("horus_registered", json!(true));
-
-        let topics = collect_topics(dataviz);
-        robot.add_metadata(
-            "horus_topics",
-            Value::Array(topics.iter().map(|topic| json!(topic)).collect()),
-        );
-
-        if !topics.is_empty() {
-            let monitor = get_topic_monitor();
-            monitor.watch_topics(&topics, None);
-            monitor.start();
-            let board = get_topic_status_board();
-            for topic in &topics {
-                board.on_subscribe(topic);
-            }
-        }
-    }
 }
 
 static REGISTRY_CLIENT: Lazy<Mutex<RobotRegistryClient>> =
@@ -1530,20 +1640,6 @@ static REGISTRY_CLIENT: Lazy<Mutex<RobotRegistryClient>> =
 
 pub fn get_robot_registry_client() -> std::sync::MutexGuard<'static, RobotRegistryClient> {
     REGISTRY_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn collect_topics(dataviz: &DataViz) -> Vec<String> {
-    let mut topics = Vec::new();
-    for viz in dataviz.get_enabled_visualizations() {
-        let topic = viz.data_source.topic.trim();
-        if topic.is_empty() {
-            continue;
-        }
-        if !topics.iter().any(|existing| existing == topic) {
-            topics.push(topic.to_string());
-        }
-    }
-    topics
 }
 
 pub fn build_global_visualizations_payload(datavizs: &[DataViz]) -> Vec<VisualizationPayload> {

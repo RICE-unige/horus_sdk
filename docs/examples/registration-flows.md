@@ -48,7 +48,7 @@ The paired fake runtimes may still live under `python/examples/legacy/`, but the
 
 ## Native SDK demos
 
-The C++ and Rust SDKs mirror the curated registration examples above by basename. These are native examples, not copies of the legacy fake runtimes.
+The C++ and Rust SDKs mirror the curated registration examples above by basename at the payload layer. These are native payload examples, not copies of the legacy fake runtimes or replacements for Python live bridge registration.
 
 | Python script | C++ example | Rust example |
 | --- | --- | --- |
@@ -70,7 +70,7 @@ The C++ and Rust SDKs mirror the curated registration examples above by basename
 | `unitree_go1_registration.py` | `cpp/examples/unitree_go1_registration.cpp` | `rust/examples/unitree_go1_registration.rs` |
 | `uav_sim_horus_registration.py` | `cpp/examples/uav_sim_horus_registration.cpp` | `rust/examples/uav_sim_horus_registration.rs` |
 
-`cpp/examples/sdk_registration_demo.cpp` and `rust/examples/sdk_registration_demo.rs` remain the short native equivalent of `ops_registration.py`.
+`cpp/examples/sdk_registration_demo.cpp` and `rust/examples/sdk_registration_demo.rs` remain the short native equivalent of `ops_registration.py` for payload construction.
 
 ## Recommended reading order
 

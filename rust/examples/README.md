@@ -9,7 +9,7 @@
 - `fake_tf_publisher.rs`
   - Fake TF publisher parity scaffold for local validation loops.
 - `e2e_registration_check.rs`
-  - Minimal register + metadata verification flow.
+  - Minimal native payload verification flow.
 
 ## Run
 

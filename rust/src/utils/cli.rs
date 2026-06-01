@@ -99,4 +99,3 @@ pub fn print_error(message: impl AsRef<str>) {
 pub fn print_info(message: impl AsRef<str>) {
     println!("{}", message.as_ref());
 }
-

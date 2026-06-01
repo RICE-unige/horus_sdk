@@ -9,7 +9,7 @@
 - `fake_tf_publisher.cpp`
   - Fake TF loop scaffold.
 - `e2e_registration_check.cpp`
-  - Minimal register + metadata verification flow.
+  - Minimal native payload verification flow.
 
 ## Build and run
 

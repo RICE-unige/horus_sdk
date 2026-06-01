@@ -165,4 +165,3 @@ static TOPIC_MONITOR: Lazy<TopicSubscriptionMonitor> = Lazy::new(TopicSubscripti
 pub fn get_topic_monitor() -> &'static TopicSubscriptionMonitor {
     &TOPIC_MONITOR
 }
-

@@ -1,6 +1,8 @@
-use horus::bridge::{RobotRegistryClient, build_global_visualizations_payload, build_robot_config_dict};
+use horus::bridge::{
+    build_global_visualizations_payload, build_robot_config_dict, RobotRegistryClient,
+};
 use horus::core::types::RobotType;
-use horus::robot::{Robot, RobotDimensions};
+use horus::robot::{Robot, RobotDescriptionConfig, RobotDimensions};
 use horus::sensors::Camera;
 use serde_json::Value;
 use std::fs;
@@ -32,8 +34,13 @@ fn single_robot_registration_snapshot() {
     let expected_dims = &expected["dimensions"];
     for key in ["length", "width", "height"] {
         let a = actual_dims[key].as_f64().expect("actual dimension float");
-        let e = expected_dims[key].as_f64().expect("expected dimension float");
-        assert!((a - e).abs() < 1e-5, "{key} mismatch: actual={a} expected={e}");
+        let e = expected_dims[key]
+            .as_f64()
+            .expect("expected dimension float");
+        assert!(
+            (a - e).abs() < 1e-5,
+            "{key} mismatch: actual={a} expected={e}"
+        );
     }
 }
 
@@ -111,4 +118,47 @@ fn camera_webrtc_fields_snapshot() {
         expected["webrtc_bitrate_kbps"]
     );
     assert_eq!(camera_cfg["webrtc_framerate"], expected["webrtc_framerate"]);
+}
+
+#[test]
+fn native_registration_transport_is_explicitly_unsupported() {
+    let mut robot = Robot::new("transport_bot", RobotType::Wheeled);
+    let dataviz = robot.create_dataviz(None);
+    let client = RobotRegistryClient::new();
+
+    let (ok, result) = client.register_robot(&mut robot, &dataviz, 1.0, false, false, None);
+
+    assert!(!ok);
+    assert_eq!(result["success"], false);
+    assert_eq!(result["unsupported_feature"], "bridge_registration");
+    assert!(!robot.is_registered_with_horus());
+}
+
+#[test]
+fn robot_description_manifest_uses_stable_payload_hash() {
+    let urdf_path = std::env::temp_dir().join("horus_rust_parity_robot.urdf");
+    fs::write(
+        &urdf_path,
+        r#"<robot name="sample"><link name="base_link"/><link name="camera_link"/><joint name="camera_joint" type="fixed"><parent link="base_link"/><child link="camera_link"/></joint></robot>"#,
+    )
+    .expect("write urdf fixture");
+
+    let mut robot = Robot::new("description_bot", RobotType::Wheeled);
+    robot.configure_robot_description(RobotDescriptionConfig::new(
+        urdf_path.display().to_string(),
+        "base_link",
+    ));
+    let dataviz = robot.create_dataviz(None);
+    let client = RobotRegistryClient::new();
+    let payload = client.build_robot_config_dict(&robot, &dataviz, None, None);
+    let manifest = payload
+        .robot_description_manifest
+        .expect("description manifest");
+
+    assert!(manifest["description_id"]
+        .as_str()
+        .expect("description id")
+        .starts_with("sha256:"));
+    assert_eq!(manifest["supports_visual_meshes"], false);
+    assert!(payload.robot_description_payload_json.is_some());
 }

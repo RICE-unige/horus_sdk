@@ -3,8 +3,16 @@
 #include "horus/robot/sensors.hpp"
 
 #include <any>
+#ifdef NDEBUG
+#undef NDEBUG
+#define HORUS_PARITY_TEST_RESTORE_NDEBUG
+#endif
 #include <cassert>
+#ifdef HORUS_PARITY_TEST_RESTORE_NDEBUG
+#define NDEBUG
+#endif
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -236,6 +244,40 @@ static void test_workspace_scale() {
     assert(!without_scale.workspace_config.has_value());
 }
 
+static void test_registration_transport_is_explicitly_unsupported() {
+    horus::robot::Robot robot("transport_bot", horus::core::RobotType::WHEELED);
+    auto dataviz = robot.create_dataviz();
+    horus::bridge::RobotRegistryClient client;
+    auto [ok, result] = client.register_robot(robot, *dataviz, 1.0, false, false);
+
+    assert(!ok);
+    assert(any_value<bool>(result, "success") == false);
+    assert(any_value<std::string>(result, "unsupported_feature") == "bridge_registration");
+    assert(!robot.is_registered_with_horus());
+}
+
+static void test_robot_description_manifest_uses_stable_payload_hash() {
+    const std::string urdf_path = "/tmp/horus_cpp_parity_robot.urdf";
+    std::ofstream urdf(urdf_path);
+    urdf << R"(<robot name="sample"><link name="base_link"/><link name="camera_link"/><joint name="camera_joint" type="fixed"><parent link="base_link"/><child link="camera_link"/></joint></robot>)";
+    urdf.close();
+
+    horus::robot::Robot robot("description_bot", horus::core::RobotType::WHEELED);
+    robot.configure_robot_description({
+        .urdf_path = urdf_path,
+        .base_frame = "base_link",
+    });
+    auto dataviz = robot.create_dataviz();
+    horus::bridge::RobotRegistryClient client;
+    auto payload = client.build_robot_config_dict(robot, *dataviz);
+
+    assert(!payload.robot_description_manifest.empty());
+    const auto description_id = any_value<std::string>(payload.robot_description_manifest, "description_id");
+    assert(description_id.rfind("sha256:", 0) == 0);
+    assert(any_value<bool>(payload.robot_description_manifest, "supports_visual_meshes") == false);
+    assert(payload.robot_description_payload_json.has_value());
+}
+
 static void test_visualization_payloads() {
     horus::robot::Robot robot("viz_bot", horus::core::RobotType::WHEELED);
     auto dataviz = robot.create_dataviz();
@@ -303,6 +345,8 @@ int main() {
     test_camera_topic_profiles();
     test_control_overrides_and_ros_binding();
     test_workspace_scale();
+    test_registration_transport_is_explicitly_unsupported();
+    test_robot_description_manifest_uses_stable_payload_hash();
     test_visualization_payloads();
     std::cout << "cpp_parity_tests passed" << std::endl;
     return 0;
