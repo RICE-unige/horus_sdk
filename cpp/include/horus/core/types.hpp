@@ -15,7 +15,8 @@ namespace core {
 enum class RobotType {
     WHEELED,
     LEGGED,
-    AERIAL
+    AERIAL,
+    DRONE
 };
 
 /**
@@ -96,17 +97,22 @@ enum class DataSourceType {
     ROBOT_GLOBAL_PATH,
     ROBOT_LOCAL_PATH,
     ROBOT_TRAJECTORY,
+    ROBOT_VELOCITY_DATA,
+    ROBOT_ODOMETRY_TRAIL,
+    ROBOT_COLLISION_RISK,
     
     // Environmental/World data (robot-independent)
     OCCUPANCY_GRID,
     COSTMAP,
     MAP_3D,
+    OCTOMAP,
     GLOBAL_NAVIGATION_PATH,
     
     // Shared/Global data
     TF_TREE,
     GLOBAL_MARKERS,
-    COORDINATE_FRAME
+    COORDINATE_FRAME,
+    SEMANTIC_BOX
 };
 
 /**
@@ -123,6 +129,12 @@ enum class VisualizationType {
     TRANSFORM_TREE,
     COORDINATE_AXES,
     MESH,
+    OCTOMAP,
+    SEMANTIC_BOX,
+    GAUSSIAN_SPLAT,
+    VELOCITY_DATA,
+    ODOMETRY_TRAIL,
+    COLLISION_RISK,
     HEATMAP
 };
 

@@ -22,4 +22,3 @@ fn queued_reason_normalization() {
         );
     }
 }
-

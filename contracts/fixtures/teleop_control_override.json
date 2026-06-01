@@ -18,7 +18,11 @@
       "expo": 2.0,
       "linear_xy_max_mps": 1.8,
       "linear_z_max_mps": 1.2,
-      "angular_z_max_rps": 1.5
+      "angular_z_max_rps": 1.5,
+      "invert_linear_x": true,
+      "invert_linear_y": false,
+      "invert_linear_z": true,
+      "invert_angular_z": true
     },
     "discrete": {
       "threshold": 0.55,

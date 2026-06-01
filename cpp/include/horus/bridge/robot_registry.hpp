@@ -28,7 +28,17 @@ struct CameraConfigPayload {
     std::string streaming_type{"ros"};
     std::string minimap_streaming_type{"ros"};
     std::string teleop_streaming_type{"webrtc"};
+    std::string minimap_topic;
+    std::string teleop_topic;
+    std::string minimap_image_type{"raw"};
+    std::string teleop_image_type{"raw"};
+    int minimap_max_fps{30};
+    std::string teleop_stereo_layout{"mono"};
+    std::string teleop_right_topic;
     std::string startup_mode{"minimap"};
+    bool is_stereo{false};
+    std::string stereo_layout{"mono"};
+    std::string right_topic;
     std::string image_type{"raw"};
     std::string display_mode{"projected"};
     bool use_tf{true};
@@ -43,8 +53,12 @@ struct CameraConfigPayload {
     std::string webrtc_turn_credential;
     float image_scale{1.0f};
     float focal_length_scale{0.5f};
+    bool immersive_ros_flip_x{false};
+    bool immersive_ros_flip_y{false};
     Vector3Payload view_position_offset;
     Vector3Payload view_rotation_offset;
+    Vector3Payload projected_position_offset;
+    Vector3Payload projected_scale_multiplier{1.0f, 1.0f, 1.0f};
     bool show_frustum{true};
     std::string frustum_color{"#FFFF00"};
     float overhead_size{1.0f};
@@ -87,6 +101,15 @@ struct VisualizationPayload {
     std::optional<std::string> frame;
     std::optional<std::string> color;
     std::optional<OccupancyPayload> occupancy;
+    std::map<std::string, std::any> path;
+    std::map<std::string, std::any> velocity;
+    std::map<std::string, std::any> trail;
+    std::map<std::string, std::any> collision;
+    std::map<std::string, std::any> point_cloud;
+    std::map<std::string, std::any> gaussian_splat;
+    std::map<std::string, std::any> mesh;
+    std::map<std::string, std::any> octomap;
+    std::map<std::string, std::any> semantic_box;
 };
 
 struct RobotManagerSectionsPayload {
@@ -110,17 +133,50 @@ struct DimensionsPayload {
 };
 
 struct WorkspaceConfigPayload {
-    float position_scale{1.0f};
+    std::optional<float> position_scale;
+    std::map<std::string, std::any> compass;
+    std::map<std::string, std::any> tutorial;
+};
+
+struct TeleopControlPayload {
+    bool enabled{true};
+    std::string command_topic;
+    std::string raw_input_topic;
+    std::string head_pose_topic;
+    std::string robot_profile{"wheeled"};
+    std::string response_mode{"analog"};
+    double publish_rate_hz{30.0};
+    bool custom_passthrough_only{false};
+    std::map<std::string, std::any> deadman;
+    std::map<std::string, std::any> axes;
+    std::map<std::string, std::any> discrete;
+};
+
+struct TaskControlPayload {
+    std::map<std::string, std::any> go_to_point;
+    std::map<std::string, std::any> waypoint;
 };
 
 struct ControlPayload {
     std::string drive_topic;
+    TeleopControlPayload teleop;
+    TaskControlPayload tasks;
+};
+
+struct RosBindingPayload {
+    std::string logical_name;
+    std::string tf_mode{"prefixed"};
+    std::string topic_mode{"prefixed"};
+    std::string base_frame{"base_link"};
+    std::string tf_prefix;
+    std::string topic_prefix;
 };
 
 struct RobotRegistrationPayload {
     std::string action{"register"};
     std::string robot_name;
     std::string robot_type;
+    RosBindingPayload ros_binding;
     std::vector<SensorPayload> sensors;
     std::vector<VisualizationPayload> visualizations;
     std::vector<VisualizationPayload> global_visualizations;
@@ -129,6 +185,10 @@ struct RobotRegistrationPayload {
     double timestamp{0.0};
     std::optional<DimensionsPayload> dimensions;
     std::optional<WorkspaceConfigPayload> workspace_config;
+    std::optional<std::string> robot_model_id;
+    std::optional<bool> has_visual_mesh_model;
+    std::map<std::string, std::any> robot_description_manifest;
+    std::optional<std::string> robot_description_payload_json;
 };
 
 class RobotRegistryClient {
@@ -189,4 +249,3 @@ std::optional<std::string> queued_reason_from_ack(const std::map<std::string, st
 } // namespace horus
 
 #endif // HORUS_BRIDGE_ROBOT_REGISTRY_HPP
-

@@ -150,4 +150,3 @@ fn is_port_open(port: u16) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
-

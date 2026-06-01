@@ -30,4 +30,3 @@ async fn main() {
         tokio::time::sleep(period).await;
     }
 }
-

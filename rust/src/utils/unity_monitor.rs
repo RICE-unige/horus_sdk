@@ -1,7 +1,7 @@
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 type Callback = Arc<dyn Fn(String, bool) + Send + Sync>;
@@ -109,4 +109,3 @@ impl UnityConnectionMonitor {
         }
     }
 }
-

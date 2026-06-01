@@ -46,6 +46,32 @@ The paired fake runtimes may still live under `python/examples/legacy/`, but the
 | `carter_registration.py` | you are integrating a live Carter fleet | includes occupancy map, lidar, compressed cameras, plans, and teleop |
 | `unitree_go1_registration.py` | you are integrating a live Unitree Go1 | includes URDF mesh, compressed front camera, LaserScan, collision alert, and stand/sit relay |
 
+## Native SDK demos
+
+The C++ and Rust SDKs mirror the curated registration examples above by basename at the payload layer. These are native payload examples, not copies of the legacy fake runtimes or replacements for Python live bridge registration.
+
+| Python script | C++ example | Rust example |
+| --- | --- | --- |
+| `ops_registration.py` | `cpp/examples/ops_registration.cpp` | `rust/examples/ops_registration.rs` |
+| `flat_robot_registration.py` | `cpp/examples/flat_robot_registration.cpp` | `rust/examples/flat_robot_registration.rs` |
+| `drone_registration.py` | `cpp/examples/drone_registration.cpp` | `rust/examples/drone_registration.rs` |
+| `legged_registration.py` | `cpp/examples/legged_registration.cpp` | `rust/examples/legged_registration.rs` |
+| `stereo_registration.py` | `cpp/examples/stereo_registration.cpp` | `rust/examples/stereo_registration.rs` |
+| `semantic_perception_registration.py` | `cpp/examples/semantic_perception_registration.cpp` | `rust/examples/semantic_perception_registration.rs` |
+| `robot_description_registration.py` | `cpp/examples/robot_description_registration.cpp` | `rust/examples/robot_description_registration.rs` |
+| `robot_description_compass_registration.py` | `cpp/examples/robot_description_compass_registration.cpp` | `rust/examples/robot_description_compass_registration.rs` |
+| `occupancy_map_registration.py` | `cpp/examples/occupancy_map_registration.cpp` | `rust/examples/occupancy_map_registration.rs` |
+| `pointcloud_map_registration.py` | `cpp/examples/pointcloud_map_registration.cpp` | `rust/examples/pointcloud_map_registration.rs` |
+| `mesh_map_registration.py` | `cpp/examples/mesh_map_registration.cpp` | `rust/examples/mesh_map_registration.rs` |
+| `octomap_registration.py` | `cpp/examples/octomap_registration.cpp` | `rust/examples/octomap_registration.rs` |
+| `global_maps_registration.py` | `cpp/examples/global_maps_registration.cpp` | `rust/examples/global_maps_registration.rs` |
+| `gaussian_splat_fixture_registration.py` | `cpp/examples/gaussian_splat_fixture_registration.cpp` | `rust/examples/gaussian_splat_fixture_registration.rs` |
+| `carter_registration.py` | `cpp/examples/carter_registration.cpp` | `rust/examples/carter_registration.rs` |
+| `unitree_go1_registration.py` | `cpp/examples/unitree_go1_registration.cpp` | `rust/examples/unitree_go1_registration.rs` |
+| `uav_sim_horus_registration.py` | `cpp/examples/uav_sim_horus_registration.cpp` | `rust/examples/uav_sim_horus_registration.rs` |
+
+`cpp/examples/sdk_registration_demo.cpp` and `rust/examples/sdk_registration_demo.rs` remain the short native equivalent of `ops_registration.py` for payload construction.
+
 ## Recommended reading order
 
 Start here in order:

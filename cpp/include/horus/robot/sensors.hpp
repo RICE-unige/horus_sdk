@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace horus {
 namespace robot {
@@ -68,15 +69,71 @@ public:
     const std::string& get_minimap_streaming_type() const { return minimap_streaming_type_; }
     const std::string& get_teleop_streaming_type() const { return teleop_streaming_type_; }
     const std::string& get_startup_mode() const { return startup_mode_; }
+    const std::string& get_stereo_layout() const { return stereo_layout_; }
+    const std::string& get_right_topic() const { return right_topic_; }
+    const std::string& get_minimap_topic() const { return minimap_topic_; }
+    const std::string& get_teleop_topic() const { return teleop_topic_; }
+    const std::string& get_minimap_image_type() const { return minimap_image_type_; }
+    const std::string& get_teleop_image_type() const { return teleop_image_type_; }
+    int get_minimap_max_fps() const { return minimap_max_fps_; }
+    const std::string& get_teleop_stereo_layout() const { return teleop_stereo_layout_; }
+    const std::string& get_teleop_right_topic() const { return teleop_right_topic_; }
+
+    struct ProjectedViewOptions {
+        std::optional<std::vector<float>> position_offset;
+        std::optional<std::vector<float>> rotation_offset;
+        std::optional<std::vector<float>> scale_multiplier;
+        std::optional<float> image_scale;
+        std::optional<float> focal_length_scale;
+        std::optional<std::string> projection_target_frame;
+        std::optional<bool> show_frustum;
+        std::optional<std::string> frustum_color;
+    };
+
+    struct MinimapViewOptions {
+        std::optional<float> size;
+        std::optional<std::vector<float>> position_offset;
+        std::optional<bool> face_camera;
+        std::optional<std::vector<float>> rotation_offset;
+    };
+
+    struct ImmersiveViewOptions {
+        std::optional<bool> ros_flip_x;
+        std::optional<bool> ros_flip_y;
+    };
+
+    struct WebRtcTransportOptions {
+        std::string client_signal_topic{"/horus/webrtc/client_signal"};
+        std::string server_signal_topic{"/horus/webrtc/server_signal"};
+        std::optional<int> bitrate_kbps;
+        std::optional<int> framerate;
+        std::optional<std::string> stun_server_url;
+        std::optional<std::string> turn_server_url;
+        std::optional<std::string> turn_username;
+        std::optional<std::string> turn_credential;
+    };
 
     void set_streaming_type(const std::string& value);
     void set_minimap_streaming_type(const std::string& value);
     void set_teleop_streaming_type(const std::string& value);
     void set_startup_mode(const std::string& value);
+    void set_stereo_layout(std::string value) { stereo_layout_ = std::move(value); }
+    void set_right_topic(std::string value) { right_topic_ = std::move(value); }
+    void set_minimap_topic(std::string value) { minimap_topic_ = std::move(value); }
+    void set_teleop_topic(std::string value) { teleop_topic_ = std::move(value); }
+    void set_minimap_image_type(std::string value) { minimap_image_type_ = std::move(value); }
+    void set_teleop_image_type(std::string value) { teleop_image_type_ = std::move(value); }
+    void set_minimap_max_fps(int value) { minimap_max_fps_ = value; }
+    void set_teleop_stereo_layout(std::string value) { teleop_stereo_layout_ = std::move(value); }
+    void set_teleop_right_topic(std::string value) { teleop_right_topic_ = std::move(value); }
     void set_resolution(std::pair<int, int> resolution) { resolution_ = resolution; }
     void set_fps(int fps) { fps_ = fps; }
     void set_fov(float fov) { fov_ = fov; }
     void set_encoding(std::string encoding) { encoding_ = std::move(encoding); }
+    void configure_projected_view(const ProjectedViewOptions& options);
+    void configure_minimap_view(const MinimapViewOptions& options);
+    void configure_immersive_view(const ImmersiveViewOptions& options);
+    void configure_webrtc_transport(const WebRtcTransportOptions& options);
 
     std::string get_camera_type() const;
     std::string get_resolution_str() const;
@@ -91,6 +148,15 @@ private:
     std::string minimap_streaming_type_{"ros"};
     std::string teleop_streaming_type_{"webrtc"};
     std::string startup_mode_{"minimap"};
+    std::string stereo_layout_{"mono"};
+    std::string right_topic_;
+    std::string minimap_topic_;
+    std::string teleop_topic_;
+    std::string minimap_image_type_;
+    std::string teleop_image_type_;
+    int minimap_max_fps_{30};
+    std::string teleop_stereo_layout_;
+    std::string teleop_right_topic_;
 };
 
 class LaserScan : public Sensor {
@@ -173,4 +239,3 @@ private:
 } // namespace horus
 
 #endif // HORUS_ROBOT_SENSORS_HPP
-

@@ -219,6 +219,133 @@ impl DataViz {
         });
     }
 
+    pub fn add_robot_velocity_data(
+        &mut self,
+        robot_name: &str,
+        topic: &str,
+        frame_id: &str,
+        mut render_options: Option<RenderOptions>,
+    ) {
+        let options = render_options.get_or_insert_with(HashMap::new);
+        options
+            .entry("units".to_string())
+            .or_insert_with(|| serde_json::json!("m/s"));
+        options
+            .entry("text_back_offset_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.36));
+        options
+            .entry("floor_offset_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.01));
+        options
+            .entry("update_hz".to_string())
+            .or_insert_with(|| serde_json::json!(10.0));
+
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::VelocityData,
+            display_name: format!("{robot_name}:velocity"),
+            data_source: DataSource {
+                name: format!("{robot_name}_velocity"),
+                source_type: DataSourceType::RobotVelocityData,
+                topic: topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: Some(robot_name.to_string()),
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: 2,
+        });
+    }
+
+    pub fn add_robot_odometry_trail(
+        &mut self,
+        robot_name: &str,
+        topic: &str,
+        frame_id: &str,
+        mut render_options: Option<RenderOptions>,
+    ) {
+        let options = render_options.get_or_insert_with(HashMap::new);
+        if !options.contains_key("color") {
+            let color = self
+                .color_manager
+                .get_path_color(robot_name, "trajectory", 0.65);
+            options.insert("color".to_string(), serde_json::json!(color.to_hex()));
+            options.insert("alpha".to_string(), serde_json::json!(color.a));
+        }
+        options
+            .entry("max_points".to_string())
+            .or_insert_with(|| serde_json::json!(48));
+        options
+            .entry("history_seconds".to_string())
+            .or_insert_with(|| serde_json::json!(3.2));
+        options
+            .entry("min_spacing_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.07));
+        options
+            .entry("line_width_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.0096));
+        options
+            .entry("trail_back_offset_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.44));
+
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::OdometryTrail,
+            display_name: format!("{robot_name}:odometry_trail"),
+            data_source: DataSource {
+                name: format!("{robot_name}_odometry_trail"),
+                source_type: DataSourceType::RobotOdometryTrail,
+                topic: topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: Some(robot_name.to_string()),
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: 1,
+        });
+    }
+
+    pub fn add_robot_collision_risk(
+        &mut self,
+        robot_name: &str,
+        topic: &str,
+        frame_id: &str,
+        mut render_options: Option<RenderOptions>,
+    ) {
+        let options = render_options.get_or_insert_with(HashMap::new);
+        options
+            .entry("threshold_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.45));
+        options
+            .entry("radius_m".to_string())
+            .or_insert_with(|| serde_json::json!(0.45));
+        options
+            .entry("source".to_string())
+            .or_insert_with(|| serde_json::json!("laser_scan"));
+        options
+            .entry("alpha_min".to_string())
+            .or_insert_with(|| serde_json::json!(0.0));
+        options
+            .entry("alpha_max".to_string())
+            .or_insert_with(|| serde_json::json!(0.55));
+
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::CollisionRisk,
+            display_name: format!("{robot_name}:collision_risk"),
+            data_source: DataSource {
+                name: format!("{robot_name}_collision_risk"),
+                source_type: DataSourceType::RobotCollisionRisk,
+                topic: topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: Some(robot_name.to_string()),
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: 6,
+        });
+    }
+
     pub fn add_occupancy_grid(
         &mut self,
         topic: &str,
@@ -242,7 +369,12 @@ impl DataViz {
         });
     }
 
-    pub fn add_3d_map(&mut self, topic: &str, frame_id: &str, render_options: Option<RenderOptions>) {
+    pub fn add_3d_map(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
         self.add_or_update_visualization(VisualizationConfig {
             viz_type: VisualizationType::PointCloud,
             display_name: "map_3d".to_string(),
@@ -257,6 +389,187 @@ impl DataViz {
             enabled: true,
             render_options: render_options.unwrap_or_default(),
             layer_priority: -5,
+        });
+    }
+
+    pub fn add_3d_mesh(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::Mesh,
+            display_name: "map_3d_mesh".to_string(),
+            data_source: DataSource {
+                name: "map_3d_mesh".to_string(),
+                source_type: DataSourceType::Map3D,
+                topic: topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: None,
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: -4,
+        });
+    }
+
+    pub fn add_3d_octomap(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::Octomap,
+            display_name: "map_3d_octomap".to_string(),
+            data_source: DataSource {
+                name: "map_3d_octomap".to_string(),
+                source_type: DataSourceType::Octomap,
+                topic: topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: None,
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: -3,
+        });
+    }
+
+    pub fn add_gaussian_splat_map(
+        &mut self,
+        manifest_topic: &str,
+        frame_id: &str,
+        mut render_options: Option<RenderOptions>,
+        preview_topic: &str,
+    ) {
+        let options = render_options.get_or_insert_with(HashMap::new);
+        options
+            .entry("manifest_topic".to_string())
+            .or_insert_with(|| serde_json::json!(manifest_topic));
+        options
+            .entry("chunk_begin_topic".to_string())
+            .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_begin"));
+        options
+            .entry("chunk_item_topic".to_string())
+            .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_item"));
+        options
+            .entry("chunk_end_topic".to_string())
+            .or_insert_with(|| serde_json::json!("/horus/gaussian_splat/chunk_end"));
+        options
+            .entry("asset_format".to_string())
+            .or_insert_with(|| serde_json::json!("3dgs_ply"));
+        options
+            .entry("source_coordinate_space".to_string())
+            .or_insert_with(|| serde_json::json!("colmap"));
+        options
+            .entry("render_mode".to_string())
+            .or_insert_with(|| serde_json::json!("splats"));
+        options
+            .entry("max_splats".to_string())
+            .or_insert_with(|| serde_json::json!(350000));
+        options
+            .entry("render_scale".to_string())
+            .or_insert_with(|| serde_json::json!(0.5));
+        options
+            .entry("sh_order".to_string())
+            .or_insert_with(|| serde_json::json!(2));
+        options
+            .entry("half_precision_sh".to_string())
+            .or_insert_with(|| serde_json::json!(true));
+        options
+            .entry("adaptive_sort".to_string())
+            .or_insert_with(|| serde_json::json!(true));
+        options
+            .entry("sort_passes".to_string())
+            .or_insert_with(|| serde_json::json!(2));
+        options
+            .entry("opacity_scale".to_string())
+            .or_insert_with(|| serde_json::json!(1.0));
+        options
+            .entry("splat_scale".to_string())
+            .or_insert_with(|| serde_json::json!(1.0));
+        options
+            .entry("contribution_cull_threshold".to_string())
+            .or_insert_with(|| serde_json::json!(0.1));
+        options
+            .entry("high_precision_rt".to_string())
+            .or_insert_with(|| serde_json::json!(false));
+        options
+            .entry("pointcloud_fallback".to_string())
+            .or_insert_with(|| serde_json::json!(true));
+        options
+            .entry("fallback_topic".to_string())
+            .or_insert_with(|| serde_json::json!(preview_topic));
+        options
+            .entry("fallback_frame".to_string())
+            .or_insert_with(|| serde_json::json!(frame_id));
+
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::GaussianSplat,
+            display_name: "gaussian_splat".to_string(),
+            data_source: DataSource {
+                name: "gaussian_splat".to_string(),
+                source_type: DataSourceType::Map3D,
+                topic: manifest_topic.to_string(),
+                frame_id: frame_id.to_string(),
+                robot_name: None,
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options: render_options.unwrap_or_default(),
+            layer_priority: -2,
+        });
+    }
+
+    pub fn add_semantic_box(
+        &mut self,
+        semantic_id: &str,
+        label: &str,
+        center: (f32, f32, f32),
+        size: (f32, f32, f32),
+        frame_id: &str,
+        rotation_offset_euler: Option<(f32, f32, f32)>,
+    ) {
+        let semantic_id = semantic_id.trim();
+        let label = label.trim();
+        if semantic_id.is_empty() || label.is_empty() {
+            return;
+        }
+
+        let mut render_options = HashMap::new();
+        render_options.insert("id".to_string(), serde_json::json!(semantic_id));
+        render_options.insert("label".to_string(), serde_json::json!(label));
+        render_options.insert(
+            "center".to_string(),
+            serde_json::json!({"x": center.0, "y": center.1, "z": center.2}),
+        );
+        render_options.insert(
+            "size".to_string(),
+            serde_json::json!({"x": size.0, "y": size.1, "z": size.2}),
+        );
+        let rot = rotation_offset_euler.unwrap_or((0.0, 0.0, 0.0));
+        render_options.insert(
+            "rotation_offset_euler".to_string(),
+            serde_json::json!({"x": rot.0, "y": rot.1, "z": rot.2}),
+        );
+
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::SemanticBox,
+            display_name: format!("semantic_box:{semantic_id}"),
+            data_source: DataSource {
+                name: format!("semantic_box_{semantic_id}"),
+                source_type: DataSourceType::SemanticBox,
+                topic: format!("/horus/semantic_boxes/{semantic_id}"),
+                frame_id: frame_id.to_string(),
+                robot_name: None,
+                metadata: HashMap::new(),
+            },
+            enabled: true,
+            render_options,
+            layer_priority: 8,
         });
     }
 
@@ -303,7 +616,12 @@ impl DataViz {
         self.add_global_navigation_path(topic, frame_id, render_options);
     }
 
-    pub fn add_tf_tree(&mut self, topic: &str, frame_id: &str, render_options: Option<RenderOptions>) {
+    pub fn add_tf_tree(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
         self.add_or_update_visualization(VisualizationConfig {
             viz_type: VisualizationType::TransformTree,
             display_name: "tf_tree".to_string(),
@@ -337,7 +655,10 @@ impl DataViz {
             .collect()
     }
 
-    pub fn get_visualizations_by_type(&self, viz_type: VisualizationType) -> Vec<VisualizationConfig> {
+    pub fn get_visualizations_by_type(
+        &self,
+        viz_type: VisualizationType,
+    ) -> Vec<VisualizationConfig> {
         self.visualizations
             .iter()
             .filter(|viz| viz.viz_type == viz_type)
@@ -388,7 +709,9 @@ impl DataViz {
             if let Some(robot_name) = &viz.data_source.robot_name {
                 *by_robot.entry(robot_name.clone()).or_insert(0) += 1;
             }
-            *by_type.entry(viz.viz_type.as_str().to_string()).or_insert(0) += 1;
+            *by_type
+                .entry(viz.viz_type.as_str().to_string())
+                .or_insert(0) += 1;
             *by_data_source
                 .entry(viz.data_source.source_type.as_str().to_string())
                 .or_insert(0) += 1;

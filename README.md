@@ -59,8 +59,8 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | `python/examples/legacy/` | Full legacy fake-runtime and SDK demo catalog preserved for validation and advanced variants |
 | `python/examples/tools/` | Support utilities for legacy demos (for example asset fetchers) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
-| `cpp/` | C++ SDK parity track (paused) |
-| `rust/` | Rust SDK parity track (paused) |
+| `cpp/` | C++ SDK native registration parity track |
+| `rust/` | Rust SDK native registration parity track |
 
 > [!NOTE]
 > Python remains the most complete and actively used track for current experiments.
@@ -70,8 +70,8 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 - Canonical parity contract and fixtures remain in:
   - `contracts/sdk_payload_contract.md`
   - `contracts/fixtures/*.json`
-- C++ and Rust parity tracks are intentionally paused while Python SDK reaches full teleoperation feature depth.
-- CI coverage for C++/Rust SDK test jobs is temporarily disabled in this phase and will be restored during parity bring-up.
+- C++ and Rust now build native registration payloads for the same MR-facing contract.
+- Native SDK docs live in the website docs under `docs/native-sdk/`.
 
 ## Requirements
 

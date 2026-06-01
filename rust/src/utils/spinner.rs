@@ -34,7 +34,11 @@ impl Spinner {
         self.handle = Some(thread::spawn(move || {
             let mut idx = 0usize;
             while running.load(Ordering::Relaxed) {
-                print!("\r  \x1b[96m{}\x1b[0m {}...", style[idx % style.len()], message);
+                print!(
+                    "\r  \x1b[96m{}\x1b[0m {}...",
+                    style[idx % style.len()],
+                    message
+                );
                 let _ = std::io::stdout().flush();
                 idx = idx.wrapping_add(1);
                 thread::sleep(delay);

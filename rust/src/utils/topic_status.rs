@@ -115,4 +115,3 @@ static TOPIC_STATUS_BOARD: Lazy<TopicStatusBoard> = Lazy::new(TopicStatusBoard::
 pub fn get_topic_status_board() -> &'static TopicStatusBoard {
     &TOPIC_STATUS_BOARD
 }
-

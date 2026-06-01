@@ -1,4 +1,5 @@
 use clap::Parser;
+use horus::bridge::RobotRegistryClient;
 use horus::core::types::RobotType;
 use horus::robot::Robot;
 use horus::sensors::LaserScan;
@@ -26,19 +27,12 @@ fn main() {
     }
 
     let dataviz = robot.create_dataviz(None);
-    let (ok, result) = robot.register_with_horus(Some(dataviz), false, false, None);
-    if !ok {
-        eprintln!("Registration failed: {result}");
+    let client = RobotRegistryClient::new();
+    let payload = client.build_robot_config_dict(&robot, &dataviz, None, None);
+    if payload.robot_name.is_empty() || payload.sensors.is_empty() {
+        eprintln!("Native payload check failed");
         std::process::exit(1);
     }
-    println!("Registration OK: {result}");
-
-    if robot.is_registered_with_horus() {
-        println!("Metadata check OK (registered)");
-        std::process::exit(0);
-    }
-
-    eprintln!("Metadata check failed");
-    std::process::exit(2);
+    println!("Native payload check OK");
+    println!("Live bridge registration is Python-only for now.");
 }
-

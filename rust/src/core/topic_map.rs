@@ -77,7 +77,11 @@ fn extract_sensor_name(topic: &str) -> Option<String> {
     topic
         .trim_start_matches('/')
         .split('/')
-        .find(|part| markers.iter().any(|m| part.to_ascii_lowercase().contains(m)))
+        .find(|part| {
+            markers
+                .iter()
+                .any(|m| part.to_ascii_lowercase().contains(m))
+        })
         .map(ToString::to_string)
 }
 

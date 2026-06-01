@@ -25,48 +25,45 @@ fn camera_transport_profile_defaults() {
         camera.minimap_streaming_type,
         expected["minimap_streaming_type"]
     );
-    assert_eq!(camera.teleop_streaming_type, expected["teleop_streaming_type"]);
+    assert_eq!(
+        camera.teleop_streaming_type,
+        expected["teleop_streaming_type"]
+    );
     assert_eq!(camera.startup_mode, expected["startup_mode"]);
 }
 
 #[test]
 fn camera_transport_profile_validation() {
-    assert!(
-        Camera::try_new_with_profiles(
-            "front_camera",
-            "test_bot/camera_link",
-            "/test_bot/camera/image_raw",
-            "ros",
-            "invalid",
-            "webrtc",
-            "minimap",
-        )
-        .is_err()
-    );
-    assert!(
-        Camera::try_new_with_profiles(
-            "front_camera",
-            "test_bot/camera_link",
-            "/test_bot/camera/image_raw",
-            "ros",
-            "ros",
-            "invalid",
-            "minimap",
-        )
-        .is_err()
-    );
-    assert!(
-        Camera::try_new_with_profiles(
-            "front_camera",
-            "test_bot/camera_link",
-            "/test_bot/camera/image_raw",
-            "ros",
-            "ros",
-            "webrtc",
-            "invalid",
-        )
-        .is_err()
-    );
+    assert!(Camera::try_new_with_profiles(
+        "front_camera",
+        "test_bot/camera_link",
+        "/test_bot/camera/image_raw",
+        "ros",
+        "invalid",
+        "webrtc",
+        "minimap",
+    )
+    .is_err());
+    assert!(Camera::try_new_with_profiles(
+        "front_camera",
+        "test_bot/camera_link",
+        "/test_bot/camera/image_raw",
+        "ros",
+        "ros",
+        "invalid",
+        "minimap",
+    )
+    .is_err());
+    assert!(Camera::try_new_with_profiles(
+        "front_camera",
+        "test_bot/camera_link",
+        "/test_bot/camera/image_raw",
+        "ros",
+        "ros",
+        "webrtc",
+        "invalid",
+    )
+    .is_err());
 }
 
 #[test]
@@ -96,6 +93,34 @@ fn registration_payload_includes_profile_fields() {
     assert_eq!(camera_config.minimap_streaming_type, "ros");
     assert_eq!(camera_config.teleop_streaming_type, "webrtc");
     assert_eq!(camera_config.startup_mode, "minimap");
+}
+
+#[test]
+fn camera_topic_profiles_merge_same_topic_as_both() {
+    let mut robot = Robot::new("profile_bot", RobotType::Wheeled);
+    let mut camera = Camera::try_new_with_profiles(
+        "front_camera",
+        "profile_bot/camera_link",
+        "/profile_bot/camera/image_raw/compressed",
+        "ros",
+        "ros",
+        "webrtc",
+        "minimap",
+    )
+    .expect("camera config should be valid");
+    camera.minimap_topic = "/profile_bot/camera/image_raw/compressed".to_string();
+    camera.teleop_topic = "/profile_bot/camera/image_raw/compressed".to_string();
+    robot.add_sensor(Arc::new(camera)).expect("sensor add");
+
+    let dataviz = robot.create_dataviz(None);
+    let client = RobotRegistryClient::new();
+    let config = client.build_robot_config_dict(&robot, &dataviz, None, None);
+    let profiles = client.extract_camera_topic_profiles(&config);
+
+    assert_eq!(
+        profiles["/profile_bot/camera/image_raw/compressed"]["source_mode"],
+        "both"
+    );
 }
 
 #[test]
@@ -143,4 +168,3 @@ fn robot_manager_defaults_snapshot() {
     let expected = fixture("robot_manager_config_defaults.json");
     assert_eq!(actual, expected);
 }
-

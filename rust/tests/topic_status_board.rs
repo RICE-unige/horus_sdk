@@ -1,6 +1,4 @@
-use horus::core::types::RobotType;
-use horus::robot::Robot;
-use horus::utils::{TopicStatusBoard, get_topic_status_board};
+use horus::utils::{get_topic_status_board, TopicStatusBoard};
 use uuid::Uuid;
 
 #[test]
@@ -26,20 +24,15 @@ fn robot_tf_topic_status_flow() {
 
     let board = get_topic_status_board();
     board.set_silent(true);
+    board.on_subscribe(&topic);
+    assert_eq!(
+        board.state_for(&topic).map(|s| s.as_str()),
+        Some("SUBSCRIBED")
+    );
 
-    let mut robot = Robot::new(robot_name.clone(), RobotType::Aerial);
-    let mut dataviz = horus::DataViz::new("dv");
-    dataviz.add_robot_transform(&robot_name, &topic, "world", None);
-
-    let (ok, _) = robot.register_with_horus(Some(dataviz), false, false, None);
-    assert!(ok);
-    assert_eq!(board.state_for(&topic).map(|s| s.as_str()), Some("SUBSCRIBED"));
-
-    let (ok2, _) = robot.unregister_from_horus();
-    assert!(ok2);
+    board.on_unsubscribe(&topic);
     assert_eq!(
         board.state_for(&topic).map(|s| s.as_str()),
         Some("UNSUBSCRIBED")
     );
 }
-
