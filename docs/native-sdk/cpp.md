@@ -18,7 +18,7 @@ The C++ SDK builds the same MR registration contract as the Python SDK without d
 | Robot Manager | status, DataViz, teleop, and task panel sections |
 | Controls | teleop defaults/overrides, go-to-point, waypoint topics |
 | Cameras | minimap/teleop transport profiles, WebRTC settings, stereo fields, view/projection offsets |
-| DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, semantic boxes |
+| DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, semantic boxes |
 | Workspace | position scale, compass metadata, tutorial preset, local body model id |
 
 ## Build and test
@@ -79,13 +79,15 @@ int main() {
 }
 ```
 
-## Full demo
+## Registration Examples
 
-The native parity demo lives at `cpp/examples/sdk_registration_demo.cpp`.
+The curated native examples live in `cpp/examples/` and match the Python registration examples by basename: `ops_registration.cpp`, `flat_robot_registration.cpp`, `drone_registration.cpp`, `legged_registration.cpp`, `stereo_registration.cpp`, the robot-description/map registrations, Carter, Unitree Go1, and UAV sim registration.
 
 ```bash
 cd ~/horus_sdk/cpp
-./build_no_ros/examples/sdk_registration_demo --robot-count 4 --workspace-scale 0.25
+./build_no_ros/examples/ops_registration
+./build_no_ros/examples/robot_description_registration
+./build_no_ros/examples/gaussian_splat_fixture_registration
 ```
 
-The demo configures camera view profiles, teleop/task payloads, Robot Manager metadata, navigation safety visualizations, global 3D map payloads, semantic boxes, workspace compass/tutorial metadata, and an optional local body model id.
+`cpp/examples/sdk_registration_demo.cpp` remains the short native equivalent of `ops_registration.py`; the larger scenario coverage is split into focused examples so robot registration code stays concise.

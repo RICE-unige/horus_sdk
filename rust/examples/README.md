@@ -3,7 +3,9 @@
 ## Available examples
 
 - `sdk_registration_demo.rs`
-  - Multi-robot registration parity demo with camera/occupancy options.
+  - Short ops-style native registration demo.
+- `*_registration.rs`
+  - Curated native registration examples that mirror the Python example basenames.
 - `fake_tf_publisher.rs`
   - Fake TF publisher parity scaffold for local validation loops.
 - `e2e_registration_check.rs`
@@ -13,7 +15,7 @@
 
 ```bash
 cd rust
-cargo run --example sdk_registration_demo -- --robot-count 4 --with-occupancy-grid true
+cargo run --example sdk_registration_demo
 ```
 
 ```bash

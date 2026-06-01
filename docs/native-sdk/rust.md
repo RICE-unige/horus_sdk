@@ -18,7 +18,7 @@ The Rust SDK mirrors the Python registration payload with typed structs and `ser
 | Robot Manager | status, DataViz, teleop, and task panel sections |
 | Controls | teleop defaults/overrides, go-to-point, waypoint topics |
 | Cameras | minimap/teleop transport profiles, WebRTC settings, stereo fields, view/projection offsets |
-| DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, semantic boxes |
+| DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, semantic boxes |
 | Workspace | position scale, compass metadata, tutorial preset, local body model id |
 
 ## Build and test
@@ -81,13 +81,15 @@ fn main() {
 }
 ```
 
-## Full demo
+## Registration Examples
 
-The native parity demo lives at `rust/examples/sdk_registration_demo.rs`.
+The curated native examples live in `rust/examples/` and match the Python registration examples by basename: `ops_registration.rs`, `flat_robot_registration.rs`, `drone_registration.rs`, `legged_registration.rs`, `stereo_registration.rs`, the robot-description/map registrations, Carter, Unitree Go1, and UAV sim registration.
 
 ```bash
 cd ~/horus_sdk/rust
-cargo run --example sdk_registration_demo -- --robot-count 4 --workspace-scale 0.25
+cargo run --example ops_registration
+cargo run --example robot_description_registration
+cargo run --example gaussian_splat_fixture_registration
 ```
 
-The demo configures camera view profiles, teleop/task payloads, Robot Manager metadata, navigation safety visualizations, global 3D map payloads, semantic boxes, workspace compass/tutorial metadata, and an optional local body model id.
+`rust/examples/sdk_registration_demo.rs` remains the short native equivalent of `ops_registration.py`; the larger scenario coverage is split into focused examples so robot registration code stays concise.

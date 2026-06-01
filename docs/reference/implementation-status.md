@@ -29,8 +29,8 @@ Status: **Native registration parity**
 
 - C++ builds typed registration payloads for HORUS MR without the Python runtime
 - camera transport profiles, teleop/task controls, ROS binding, workspace config, local body model metadata, and Robot Manager config are supported
-- robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, and semantic boxes
-- `cpp/examples/sdk_registration_demo.cpp` is the native registration demo
+- robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, and semantic boxes
+- `cpp/examples/` mirrors the curated Python registration examples by basename, with `sdk_registration_demo.cpp` kept as the short ops-style demo
 
 ## Rust track
 
@@ -38,8 +38,8 @@ Status: **Native registration parity**
 
 - Rust builds typed registration payloads with `serde_json` while matching the Python payload contract
 - camera transport profiles, teleop/task controls, ROS binding, workspace config, local body model metadata, and Robot Manager config are supported
-- robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, and semantic boxes
-- `rust/examples/sdk_registration_demo.rs` is the native registration demo
+- robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, and semantic boxes
+- `rust/examples/` mirrors the curated Python registration examples by basename, with `sdk_registration_demo.rs` kept as the short ops-style demo
 
 ## Current known stub/non-primary areas
 
