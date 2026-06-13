@@ -43,6 +43,9 @@ class _UavSimRelayRuntime:
         max_octomap_triangles: int,
         octomap_voxel_scale: float,
         octomap_marker_style: str,
+        octomap_min_update_interval_sec: float,
+        octomap_chunk_publish_period_ms: int,
+        octomap_chunks_per_tick: int,
     ) -> None:
         self.robot_name = robot_name
         self.command_topic = command_topic
@@ -57,6 +60,9 @@ class _UavSimRelayRuntime:
         self.max_octomap_triangles = max_octomap_triangles
         self.octomap_voxel_scale = octomap_voxel_scale
         self.octomap_marker_style = octomap_marker_style
+        self.octomap_min_update_interval_sec = octomap_min_update_interval_sec
+        self.octomap_chunk_publish_period_ms = octomap_chunk_publish_period_ms
+        self.octomap_chunks_per_tick = octomap_chunks_per_tick
         self._executor = None
         self._nodes = []
         self._octomap_process: Optional[subprocess.Popen] = None
@@ -103,6 +109,12 @@ class _UavSimRelayRuntime:
                     str(self.octomap_voxel_scale),
                     "--style",
                     self.octomap_marker_style,
+                    "--min-update-interval-sec",
+                    str(self.octomap_min_update_interval_sec),
+                    "--chunk-publish-period-ms",
+                    str(self.octomap_chunk_publish_period_ms),
+                    "--chunks-per-tick",
+                    str(self.octomap_chunks_per_tick),
                 ]
             )
 
@@ -157,6 +169,9 @@ def _maybe_action_relay(
     max_octomap_triangles: int,
     octomap_voxel_scale: float,
     octomap_marker_style: str,
+    octomap_min_update_interval_sec: float,
+    octomap_chunk_publish_period_ms: int,
+    octomap_chunks_per_tick: int,
 ) -> Iterator[None]:
     relay: Optional[_UavSimRelayRuntime] = None
     if enabled:
@@ -174,6 +189,9 @@ def _maybe_action_relay(
             max_octomap_triangles=max_octomap_triangles,
             octomap_voxel_scale=octomap_voxel_scale,
             octomap_marker_style=octomap_marker_style,
+            octomap_min_update_interval_sec=octomap_min_update_interval_sec,
+            octomap_chunk_publish_period_ms=octomap_chunk_publish_period_ms,
+            octomap_chunks_per_tick=octomap_chunks_per_tick,
         )
         relay.start()
     try:
@@ -188,7 +206,7 @@ def build_registration(
     goal_topic: str = DEFAULT_GOAL_RELAY_TOPIC,
     octomap_mesh_topic: str = DEFAULT_OCTOMAP_MESH_TOPIC,
     native_octomap_topic: str = DEFAULT_NATIVE_OCTOMAP_TOPIC,
-    max_octomap_triangles: int = 120000,
+    max_octomap_triangles: int = 3000,
 ) -> tuple[Robot, object]:
     robot = Robot(
         name="arancino_uav",
@@ -260,13 +278,16 @@ def main() -> None:
     )
     parser.add_argument("--native-octomap-topic", default=DEFAULT_NATIVE_OCTOMAP_TOPIC)
     parser.add_argument("--octomap-mesh-topic", default=DEFAULT_OCTOMAP_MESH_TOPIC)
-    parser.add_argument("--max-octomap-triangles", type=int, default=120000)
+    parser.add_argument("--max-octomap-triangles", type=int, default=3000)
     parser.add_argument("--octomap-voxel-scale", type=float, default=2.0)
     parser.add_argument(
         "--octomap-marker-style",
         choices=("rviz_voxels", "surface_mesh"),
         default="surface_mesh",
     )
+    parser.add_argument("--octomap-min-update-interval-sec", type=float, default=1.0)
+    parser.add_argument("--octomap-chunk-publish-period-ms", type=int, default=50)
+    parser.add_argument("--octomap-chunks-per-tick", type=int, default=1)
     parser.add_argument("--no-runtime-relays", action="store_true")
     parser.add_argument("--no-action-relay", action="store_true")
     parser.add_argument("--no-goal-relay", action="store_true")
@@ -308,6 +329,9 @@ def main() -> None:
                     "max_octomap_triangles": args.max_octomap_triangles,
                     "octomap_voxel_scale": args.octomap_voxel_scale,
                     "octomap_marker_style": args.octomap_marker_style,
+                    "octomap_min_update_interval_sec": args.octomap_min_update_interval_sec,
+                    "octomap_chunk_publish_period_ms": args.octomap_chunk_publish_period_ms,
+                    "octomap_chunks_per_tick": args.octomap_chunks_per_tick,
                     "visualizations": len(dataviz.visualizations),
                 },
                 indent=2,
@@ -330,11 +354,14 @@ def main() -> None:
         max_octomap_triangles=args.max_octomap_triangles,
         octomap_voxel_scale=args.octomap_voxel_scale,
         octomap_marker_style=args.octomap_marker_style,
+        octomap_min_update_interval_sec=args.octomap_min_update_interval_sec,
+        octomap_chunk_publish_period_ms=args.octomap_chunk_publish_period_ms,
+        octomap_chunks_per_tick=args.octomap_chunks_per_tick,
     ):
         success, result = register_robots(
             [robot],
             datavizs=[dataviz],
-            workspace_scale=0.05,
+            workspace_scale=0.1,
             compass_enabled=False,
             keep_alive=not args.once,
             timeout_sec=args.timeout,
