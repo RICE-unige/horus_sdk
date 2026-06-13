@@ -1,0 +1,24 @@
+{
+  "experiment": "E9_failure_recovery",
+  "condition": "bridge_restart_stream_recovery_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "mixed",
+  "topology": "lan",
+  "robot_profile": "navigation_perception",
+  "map_profile": "none",
+  "camera": {
+    "streams": 1,
+    "resolution": "640x480",
+    "fps": 15,
+    "encoding": "h264",
+    "bitrate_mbps": 3.0
+  },
+  "extra": {
+    "failure_type": "bridge_restart",
+    "failure_at_s": 45
+  }
+}

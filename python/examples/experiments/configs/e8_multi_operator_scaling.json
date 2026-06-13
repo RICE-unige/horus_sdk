@@ -1,0 +1,20 @@
+{
+  "experiment": "E8_multi_operator_scaling",
+  "condition": "4operators_4robots_shared_private_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 4,
+  "operator_count": 4,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "navigation",
+  "map_profile": "none",
+  "camera": {
+    "streams": 2,
+    "resolution": "640x480",
+    "fps": 15,
+    "encoding": "compressed",
+    "bitrate_mbps": 0.0
+  }
+}

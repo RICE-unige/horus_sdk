@@ -1,0 +1,19 @@
+{
+  "experiment": "E3_pointcloud_capacity",
+  "condition": "250k_points_5hz_1robot_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "perception",
+  "map_profile": "none",
+  "pointcloud": {
+    "points": 250000,
+    "hz": 5,
+    "point_step": 16,
+    "xyzrgb": true
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "experiment": "E0_smoke",
+  "condition": "one_robot_camera_pointcloud_mesh",
+  "duration_s": 30,
+  "warmup_s": 5,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "mixed_smoke",
+  "map_profile": "triangle_shell",
+  "camera": {
+    "streams": 1,
+    "resolution": "640x480",
+    "fps": 15,
+    "encoding": "compressed",
+    "bitrate_mbps": 2.0
+  },
+  "pointcloud": {
+    "points": 25000,
+    "hz": 5,
+    "point_step": 16,
+    "xyzrgb": true
+  },
+  "map": {
+    "representation": "triangle_shell_mesh",
+    "chunks": 8,
+    "vertices": 16000,
+    "triangles": 24000,
+    "hz": 1
+  }
+}

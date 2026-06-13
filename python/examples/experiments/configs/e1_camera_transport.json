@@ -1,0 +1,20 @@
+{
+  "experiment": "E1_camera_transport",
+  "condition": "ros_compressed_1280x720_30fps_4streams_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 4,
+  "operator_count": 1,
+  "transport": "ros2_compressed",
+  "topology": "lan",
+  "robot_profile": "perception",
+  "map_profile": "none",
+  "camera": {
+    "streams": 4,
+    "resolution": "1280x720",
+    "fps": 30,
+    "encoding": "compressed",
+    "bitrate_mbps": 0.0
+  }
+}

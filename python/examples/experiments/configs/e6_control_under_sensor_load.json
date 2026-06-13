@@ -1,0 +1,33 @@
+{
+  "experiment": "E6_control_under_sensor_load",
+  "condition": "camera_pointcloud_mesh_goal_load_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "mixed",
+  "topology": "lan",
+  "robot_profile": "navigation_perception",
+  "map_profile": "triangle_shell",
+  "camera": {
+    "streams": 1,
+    "resolution": "1280x720",
+    "fps": 30,
+    "encoding": "h264",
+    "bitrate_mbps": 6.0
+  },
+  "pointcloud": {
+    "points": 100000,
+    "hz": 5,
+    "point_step": 16,
+    "xyzrgb": true
+  },
+  "map": {
+    "representation": "triangle_shell_mesh",
+    "chunks": 16,
+    "vertices": 32000,
+    "triangles": 48000,
+    "hz": 1
+  }
+}

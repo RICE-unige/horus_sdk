@@ -1,0 +1,20 @@
+{
+  "experiment": "E5_map_update_behavior",
+  "condition": "incremental_triangle_shell_64chunks_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "mapping",
+  "map_profile": "incremental_triangle_shell",
+  "map": {
+    "representation": "triangle_shell_mesh",
+    "chunks": 64,
+    "vertices": 128000,
+    "triangles": 192000,
+    "hz": 1
+  }
+}

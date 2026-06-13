@@ -1,0 +1,26 @@
+{
+  "experiment": "E4_mesh_vs_pointcloud_map",
+  "condition": "triangle_shell_mesh_24k_triangles_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "mapping",
+  "map_profile": "triangle_shell",
+  "map": {
+    "representation": "triangle_shell_mesh",
+    "chunks": 8,
+    "vertices": 16000,
+    "triangles": 24000,
+    "hz": 1
+  },
+  "pointcloud": {
+    "points": 250000,
+    "hz": 1,
+    "point_step": 16,
+    "xyzrgb": true
+  }
+}

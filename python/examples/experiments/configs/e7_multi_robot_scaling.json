@@ -1,0 +1,26 @@
+{
+  "experiment": "E7_multi_robot_scaling",
+  "condition": "8robots_mixed_state_sensor_lan",
+  "duration_s": 120,
+  "warmup_s": 10,
+  "repetition": 1,
+  "robot_count": 8,
+  "operator_count": 1,
+  "transport": "mixed",
+  "topology": "lan",
+  "robot_profile": "mixed_fleet",
+  "map_profile": "none",
+  "camera": {
+    "streams": 4,
+    "resolution": "640x480",
+    "fps": 15,
+    "encoding": "h264",
+    "bitrate_mbps": 4.0
+  },
+  "pointcloud": {
+    "points": 50000,
+    "hz": 3,
+    "point_step": 16,
+    "xyzrgb": true
+  }
+}
