@@ -1,5 +1,6 @@
 """Tests for bridge auto-start strategy selection and diagnostics."""
 
+import horus.bridge.robot_registry as robot_registry
 from horus.bridge.robot_registry import RobotRegistryClient
 from horus.utils import cli
 
@@ -27,7 +28,11 @@ def test_ensure_bridge_running_prefers_ros2_launch_in_auto_mode(monkeypatch):
 
     monkeypatch.setenv("HORUS_SDK_BRIDGE_AUTOSTART_MODE", "auto")
     monkeypatch.setattr(client, "_is_port_open", lambda port: False)
-    monkeypatch.setattr(client, "_get_ros2_pkg_prefix_current_shell", lambda pkg: "/home/omotoye/horus_ws/install/horus_unity_bridge")
+    monkeypatch.setattr(
+        client,
+        "_get_ros2_pkg_prefix_current_shell",
+        lambda pkg: "/home/omotoye/horus_ws/install/horus_unity_bridge",
+    )
     monkeypatch.setattr(client, "_get_first_helper_bridge_prefix", lambda: "/home/omotoye/horus/ros2/install/horus_unity_bridge")
 
     def ros2_start():
@@ -109,3 +114,33 @@ def test_ensure_bridge_running_logs_prefix_mismatch_warning(monkeypatch):
     assert any("differs from helper workspace" in msg for msg in info_messages)
     assert any("Current shell prefix:" in msg for msg in info_messages)
     assert any("Helper workspace prefix:" in msg for msg in info_messages)
+
+
+def test_ros2_launch_accepts_priority_scheduling_env(monkeypatch):
+    client = _build_client()
+    _capture_cli(monkeypatch)
+    popen_args = []
+
+    class FakeProcess:
+        def __init__(self, args, **kwargs):
+            popen_args.append(args)
+
+        def poll(self):
+            return None
+
+    monkeypatch.setenv("HORUS_BRIDGE_ENABLE_PRIORITY_SCHEDULING", "1")
+    monkeypatch.setattr(robot_registry.shutil, "which", lambda name: "/usr/bin/ros2")
+    monkeypatch.setattr(client, "_get_ros2_pkg_prefix_current_shell", lambda pkg: "/home/omotoye/horus_ws/install/horus_unity_bridge")
+    monkeypatch.setattr(client, "_is_port_open", lambda port: True)
+    monkeypatch.setattr(client, "_sleep_after_bridge_startup_settle", lambda: None)
+    monkeypatch.setattr(robot_registry.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(robot_registry.atexit, "register", lambda callback: None)
+
+    assert client._auto_start_bridge_with_ros2_launch() is True
+    assert popen_args == [[
+        "ros2",
+        "launch",
+        "horus_unity_bridge",
+        "unity_bridge.launch.py",
+        "enable_priority_scheduling:=true",
+    ]]

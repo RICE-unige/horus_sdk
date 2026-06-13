@@ -380,6 +380,19 @@ class RobotRegistryClient:
                 return prefix
         return None
 
+    def _bridge_priority_scheduling_launch_arg(self) -> Optional[str]:
+        """Return a ros2 launch argument when bridge priority scheduling is explicitly configured."""
+        raw_value = os.getenv("HORUS_BRIDGE_ENABLE_PRIORITY_SCHEDULING")
+        if raw_value is None:
+            return None
+
+        value = raw_value.strip().lower()
+        if value in ("1", "true", "yes", "on"):
+            return "enable_priority_scheduling:=true"
+        if value in ("0", "false", "no", "off"):
+            return "enable_priority_scheduling:=false"
+        return None
+
     def _auto_start_bridge_with_horus_helper(self) -> bool:
         """Try bridge startup using installer-generated horus-start helper."""
         from horus.utils import cli
@@ -432,9 +445,14 @@ class RobotRegistryClient:
                 return False
 
             cli.print_info(f"Using horus_unity_bridge from current shell: {bridge_prefix}")
+            launch_command = ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"]
+            priority_scheduling_arg = self._bridge_priority_scheduling_launch_arg()
+            if priority_scheduling_arg:
+                launch_command.append(priority_scheduling_arg)
+                cli.print_info(f"Bridge launch option: {priority_scheduling_arg}")
 
             self.bridge_process = subprocess.Popen(
-                ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"],
+                launch_command,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
