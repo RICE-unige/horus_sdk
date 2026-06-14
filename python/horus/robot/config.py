@@ -438,6 +438,33 @@ class WorkspaceCompassConfig:
 
 
 @dataclass(frozen=True)
+class WorkspaceExperimentConfig:
+    enabled: bool = False
+    contract_version: str = "experiment.v1"
+
+    @classmethod
+    def from_values(
+        cls,
+        enabled: Any = False,
+        contract_version: Any = "experiment.v1",
+    ) -> "WorkspaceExperimentConfig":
+        normalized_contract = str(contract_version or "experiment.v1").strip()
+        if not normalized_contract:
+            normalized_contract = "experiment.v1"
+
+        return cls(
+            enabled=bool(enabled),
+            contract_version=normalized_contract,
+        )
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "contract_version": self.contract_version,
+        }
+
+
+@dataclass(frozen=True)
 class RobotDescriptionConfig:
     urdf_path: str
     base_frame: str = "base_link"

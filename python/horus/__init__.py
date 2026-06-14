@@ -19,10 +19,13 @@ from .core import (
 from .dataviz import DataSourceType, DataViz, VisualizationType
 from .robot import Robot, RobotDimensions, RobotType, register_robots
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
+import os
+
 from .utils.branding import __version__, show_ascii_art
 
 # HORUS intentionally shows its project branding when the SDK is imported.
-show_ascii_art()
+if os.getenv("HORUS_SDK_NO_BANNER", "").strip().lower() not in {"1", "true", "yes", "on"}:
+    show_ascii_art()
 
 __all__ = [
     "Client",

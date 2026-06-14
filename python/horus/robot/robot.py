@@ -18,6 +18,7 @@ from .config import (
     TeleopConfig,
     WaypointTaskConfig,
     WorkspaceCompassConfig,
+    WorkspaceExperimentConfig,
     WorkspaceTutorialConfig,
     normalize_binding_mode,
     normalize_frame_token,
@@ -71,6 +72,7 @@ class Robot:
     _LOCAL_BODY_MODEL_METADATA_KEY = "local_body_model_config"
     _WORKSPACE_TUTORIAL_METADATA_KEY = "workspace_tutorial_config"
     _WORKSPACE_COMPASS_METADATA_KEY = "workspace_compass_config"
+    _WORKSPACE_EXPERIMENT_METADATA_KEY = "workspace_experiment_config"
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -297,6 +299,21 @@ class Robot:
                 gateway_port=gateway_port,
                 voice_mode=voice_mode,
                 autonomy="approve_actions",
+                contract_version=contract_version,
+            ).to_payload(),
+        )
+
+    def configure_workspace_experiment(
+        self,
+        *,
+        enabled: bool = True,
+        contract_version: str = "experiment.v1",
+    ) -> None:
+        """Enable HORUS MR experiment instrumentation for this workspace."""
+        self.add_metadata(
+            self._WORKSPACE_EXPERIMENT_METADATA_KEY,
+            WorkspaceExperimentConfig.from_values(
+                enabled=enabled,
                 contract_version=contract_version,
             ).to_payload(),
         )

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+ROS_DISTRO="${ROS_DISTRO:-jazzy}"
+if [[ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
+  # shellcheck source=/dev/null
+  source "/opt/ros/${ROS_DISTRO}/setup.bash"
+fi
+
+export PYTHONPATH="${SCRIPT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}"
+export HORUS_SDK_NO_BANNER="${HORUS_SDK_NO_BANNER:-1}"
+
+case "${1:-}" in
+  10|camera_capacity|camera-capacity)
+    shift
+    exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_sweep.py" camera_capacity "$@"
+    ;;
+esac
+
+exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_orchestrator.py" "$@"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create HORUS experiment run folders and source-side smoke metrics."""
+"""Create HORUS experiment run folders and source-side baseline metrics."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if str(PYTHON_ROOT) not in sys.path:
 from horus.experiments.analysis import write_summary
 from horus.experiments.manifest import ExperimentManifest, RunIdentity, default_run_id
 from horus.experiments.metrics import CsvMetricWriter, NdjsonEventWriter
-from horus.experiments.synthetic_robot import iter_source_smoke_rows
+from horus.experiments.synthetic_robot import iter_source_baseline_rows
 from horus.experiments.workloads import load_workload_config
 
 
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
-        default=str(Path(__file__).resolve().parent / "configs" / "e0_smoke.json"),
+        default=str(Path(__file__).resolve().parent / "configs" / "e0_baseline.json"),
         help="JSON workload config.",
     )
     parser.add_argument(
@@ -54,7 +54,9 @@ def parse_args() -> argparse.Namespace:
         help="Directory where benchmark run folders are written.",
     )
     parser.add_argument("--run-id", default="", help="Override generated run id.")
-    parser.add_argument("--samples", type=int, default=10, help="Synthetic smoke samples to emit.")
+    parser.add_argument("--duration", type=float, default=None, help="Effective measured duration for this run.")
+    parser.add_argument("--warmup", type=float, default=None, help="Effective warmup duration for this run.")
+    parser.add_argument("--samples", type=int, default=0, help="Synthetic baseline samples to emit.")
     parser.add_argument("--notes", default="", help="Optional run notes.")
     return parser.parse_args()
 
@@ -63,6 +65,8 @@ def main() -> int:
     args = parse_args()
     config_path = Path(args.config).resolve()
     workload = load_workload_config(config_path)
+    duration_s = workload.duration_s if args.duration is None else args.duration
+    warmup_s = workload.warmup_s if args.warmup is None else args.warmup
     run_id = args.run_id or default_run_id(
         workload.experiment,
         workload.condition,
@@ -78,8 +82,8 @@ def main() -> int:
     )
     manifest = ExperimentManifest.from_identity(
         identity,
-        duration_s=workload.duration_s,
-        warmup_s=workload.warmup_s,
+        duration_s=duration_s,
+        warmup_s=warmup_s,
         robot_count=workload.robot_count,
         operator_count=workload.operator_count,
         stream_count=workload.stream_count,
@@ -91,7 +95,15 @@ def main() -> int:
         map_profile=workload.map_profile,
         notes=args.notes,
         repo_root=SDK_ROOT,
-        extra={"workload": workload.to_dict(), "config_path": str(config_path)},
+        extra={
+            "workload": workload.to_dict(),
+            "config_path": str(config_path),
+            "configured_duration_s": workload.duration_s,
+            "configured_warmup_s": workload.warmup_s,
+            "effective_duration_s": duration_s,
+            "effective_warmup_s": warmup_s,
+            "total_source_duration_s": warmup_s + duration_s,
+        },
     )
     manifest.save(run_dir)
 
@@ -111,7 +123,7 @@ def main() -> int:
         condition=workload.condition,
         fieldnames=SOURCE_FIELDS,
     ) as writer:
-        for row in iter_source_smoke_rows(workload, samples=max(1, args.samples)):
+        for row in iter_source_baseline_rows(workload, samples=max(0, args.samples)):
             writer.write(row)
 
     # Create empty files for the other layers so all run folders have the same shape.

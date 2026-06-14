@@ -724,6 +724,16 @@ def build_robot_config_dict(
     if compass_config is not None:
         workspace_config["compass"] = compass_config
 
+    workspace_experiment_metadata = robot.get_metadata("workspace_experiment_config", {})
+    if isinstance(workspace_experiment_metadata, dict) and "enabled" in workspace_experiment_metadata:
+        workspace_config["experiment"] = {
+            "enabled": _coerce_bool(workspace_experiment_metadata.get("enabled"), False),
+            "contract_version": _coerce_text(
+                workspace_experiment_metadata.get("contract_version"),
+                "experiment.v1",
+            ),
+        }
+
     workspace_tutorial_metadata = robot.get_metadata("workspace_tutorial_config", {})
     if isinstance(workspace_tutorial_metadata, dict):
         tutorial_preset_id = _coerce_text(

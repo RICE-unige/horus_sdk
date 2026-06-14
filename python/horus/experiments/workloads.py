@@ -36,7 +36,7 @@ class MapWorkload:
 
 @dataclass
 class WorkloadConfig:
-    experiment: str = "E0_smoke"
+    experiment: str = "E0_baseline"
     condition: str = "default"
     duration_s: float = 120.0
     warmup_s: float = 10.0

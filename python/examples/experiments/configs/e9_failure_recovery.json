@@ -18,6 +18,7 @@
     "bitrate_mbps": 3.0
   },
   "extra": {
+    "navigation": true,
     "failure_type": "bridge_restart",
     "failure_at_s": 45
   }

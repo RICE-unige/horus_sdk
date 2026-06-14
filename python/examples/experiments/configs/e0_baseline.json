@@ -1,0 +1,33 @@
+{
+  "experiment": "E0_baseline",
+  "condition": "one_robot_tf_low_rate_camera",
+  "duration_s": 30,
+  "warmup_s": 5,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "minimal",
+  "map_profile": "none",
+  "camera": {
+    "streams": 1,
+    "resolution": "320x240",
+    "fps": 5,
+    "encoding": "compressed",
+    "bitrate_mbps": 0.5
+  },
+  "pointcloud": {
+    "points": 0,
+    "hz": 0,
+    "point_step": 16,
+    "xyzrgb": true
+  },
+  "map": {
+    "representation": "none",
+    "chunks": 0,
+    "vertices": 0,
+    "triangles": 0,
+    "hz": 0
+  }
+}

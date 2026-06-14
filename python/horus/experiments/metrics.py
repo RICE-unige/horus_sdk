@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import asdict, is_dataclass
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
@@ -19,6 +20,13 @@ def now_ns() -> int:
 
 def monotonic_ns() -> int:
     return time.monotonic_ns()
+
+
+def default_metrics_path(file_name: str) -> Optional[Path]:
+    root = os.getenv("HORUS_EXPERIMENT_RESULTS_DIR")
+    if not root:
+        return None
+    return Path(root) / file_name
 
 
 def normalize_row(row: Any) -> Dict[str, Any]:

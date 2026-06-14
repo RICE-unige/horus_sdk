@@ -1,4 +1,4 @@
-"""Deterministic synthetic metrics for HORUS benchmark smoke runs."""
+"""Deterministic synthetic metrics for HORUS benchmark baseline runs."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def estimate_payload_bytes(workload: WorkloadConfig) -> Dict[str, int]:
     }
 
 
-def iter_source_smoke_rows(workload: WorkloadConfig, *, samples: int = 10) -> Iterator[Dict[str, object]]:
+def iter_source_baseline_rows(workload: WorkloadConfig, *, samples: int = 10) -> Iterator[Dict[str, object]]:
     payloads = estimate_payload_bytes(workload)
     for index in range(samples):
         pose = circular_pose(index)

@@ -29,5 +29,9 @@
     "vertices": 32000,
     "triangles": 48000,
     "hz": 1
+  },
+  "extra": {
+    "navigation": true,
+    "control_load": true
   }
 }

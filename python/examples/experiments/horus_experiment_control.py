@@ -14,13 +14,14 @@ from std_msgs.msg import String
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["start", "stop", "mark", "status"])
+    parser.add_argument("action", choices=["start", "stop", "mark", "status", "export"])
     parser.add_argument("--topic", default="/horus/experiments/control")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--experiment", default="manual")
     parser.add_argument("--condition", default="default")
     parser.add_argument("--name", default="")
     parser.add_argument("--notes", default="")
+    parser.add_argument("--request-id", default="")
     parser.add_argument("--repeat", type=int, default=3, help="Publish repeats for best-effort delivery.")
     parser.add_argument("--period", type=float, default=0.2)
     return parser.parse_args()
@@ -41,6 +42,7 @@ def main() -> int:
         "condition": args.condition,
         "name": args.name,
         "notes": args.notes,
+        "request_id": args.request_id,
     }
 
     rclpy.init()
