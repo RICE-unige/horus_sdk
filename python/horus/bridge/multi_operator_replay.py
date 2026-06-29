@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from std_msgs.msg import String
-except Exception:  # pragma: no cover - tests monkeypatch this when ROS is absent.
+except ImportError:  # pragma: no cover - tests monkeypatch this when ROS is absent.
     String = None  # type: ignore
 
 

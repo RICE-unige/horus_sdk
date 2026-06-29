@@ -709,7 +709,7 @@ def build_robot_config_dict(
         if gateway_port <= 0 or gateway_port > 65535:
             gateway_port = 8088
 
-        return {
+        payload = {
             "enabled": _coerce_bool(
                 compass_enabled if compass_enabled is not None else metadata.get("enabled"),
                 False,
@@ -719,6 +719,13 @@ def build_robot_config_dict(
             "autonomy": "approve_actions",
             "contract_version": _coerce_text(metadata.get("contract_version"), "compass.v1"),
         }
+
+        for key in ("gateway_host", "gateway_http_base_url", "gateway_ws_url"):
+            value = _coerce_text(metadata.get(key), "")
+            if value:
+                payload[key] = value.rstrip("/") if key == "gateway_http_base_url" else value
+
+        return payload
 
     compass_config = _build_compass_config()
     if compass_config is not None:

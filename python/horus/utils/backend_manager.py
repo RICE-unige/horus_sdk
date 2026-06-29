@@ -1,7 +1,11 @@
 import os
+import logging
+import re
 import socket
 import subprocess
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class BackendManager:
@@ -43,15 +47,87 @@ class BackendManager:
             print("  \033[92m✓\033[0m Backend status: \033[90mAlready running\033[0m")
 
     def _is_backend_running(self):
-        """Check if backend is already running"""
+        """Check if the HORUS backend is already running."""
         config = self.backend_configs[self.backend_type]
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex(("localhost", config["tcp_port"]))
-            sock.close()
-            return result == 0
-        except Exception:
+        port = int(config["tcp_port"])
+        if self.backend_process is not None and self.backend_process.poll() is None:
+            return self._is_port_open(port)
+
+        if not self._is_port_open(port):
             return False
+
+        return self._port_owner_looks_like_horus(port, config)
+
+    def _is_port_open(self, port):
+        try:
+            with socket.create_connection(("localhost", int(port)), timeout=0.25):
+                return True
+        except Exception:
+            logger.debug("Port probe failed for localhost:%s", port, exc_info=True)
+            return False
+
+    def _port_owner_looks_like_horus(self, port, config):
+        pids = self._list_listening_pids(port)
+        if not pids:
+            return False
+
+        markers = {
+            str(config.get("package") or ""),
+            str(config.get("launch_file") or ""),
+            "horus_backend",
+            "horus_unity_bridge",
+        }
+        markers = {marker for marker in markers if marker}
+
+        for pid in pids:
+            cmdline = self._read_process_cmdline(pid)
+            if any(marker in cmdline for marker in markers):
+                return True
+
+        return False
+
+    def _list_listening_pids(self, port):
+        pids = set()
+        try:
+            result = subprocess.run(
+                ["ss", "-H", "-ltnp", f"sport = :{int(port)}"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=1.0,
+            )
+            pids.update(int(match) for match in re.findall(r"pid=(\d+)", result.stdout or ""))
+        except Exception:
+            logger.debug("ss listener lookup failed for port %s", port, exc_info=True)
+
+        if not pids:
+            try:
+                result = subprocess.run(
+                    ["lsof", "-t", f"-iTCP:{int(port)}", "-sTCP:LISTEN"],
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=1.0,
+                )
+                for line in (result.stdout or "").splitlines():
+                    line = line.strip()
+                    if line.isdigit():
+                        pids.add(int(line))
+            except Exception:
+                logger.debug("lsof listener lookup failed for port %s", port, exc_info=True)
+
+        return pids
+
+    def _read_process_cmdline(self, pid):
+        try:
+            with open(f"/proc/{int(pid)}/cmdline", "rb") as handle:
+                raw = handle.read()
+            return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace")
+        except Exception:
+            logger.debug("Failed to read process command line for pid %s", pid, exc_info=True)
+            return ""
 
     def _is_unity_endpoint_running(self):
         """Check if Unity bridge is running"""
@@ -63,6 +139,7 @@ class BackendManager:
             sock.close()
             return result == 0
         except Exception:
+            logger.debug("Unity endpoint probe failed", exc_info=True)
             return False
 
     def _start_backend_process(self):
@@ -150,61 +227,14 @@ class BackendManager:
             finally:
                 self.backend_process = None
 
-        # Additionally, ensure all HORUS-related processes are stopped
-        self._cleanup_horus_processes()
+        if self._force_external_cleanup_enabled():
+            print(
+                "\033[90m  • Ignored HORUS_SDK_FORCE_EXTERNAL_CLEANUP; "
+                "cleanup is limited to SDK-owned child processes\033[0m"
+            )
 
         print("\033[90m  ✓ All HORUS backend processes stopped\033[0m")
 
-    def _cleanup_horus_processes(self):
-        """Cleanup any remaining HORUS-related ROS2 processes"""
-        processes_to_kill = [
-            "horus_backend_node",
-            "horus_unity_bridge_node",
-            "horus_unity_bridge",
-        ]
-
-        for process_name in processes_to_kill:
-            try:
-                # Use pkill to find and terminate processes by name
-                result = subprocess.run(
-                    ["pkill", "-f", process_name], capture_output=True, timeout=3
-                )
-                if result.returncode == 0:
-                    print(f"\033[90m  ✓ Terminated {process_name} processes\033[0m")
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass
-
-        # Give processes time to cleanup
-        time.sleep(1)
-
-        # Double-check by killing any processes using our ports
-        self._cleanup_port_processes()
-
-    def _cleanup_port_processes(self):
-        """Kill any processes using HORUS ports"""
-        ports_to_cleanup = [8080, 10000]  # Backend and Unity ports
-
-        for port in ports_to_cleanup:
-            try:
-                # Find processes using the port
-                result = subprocess.run(
-                    ["lsof", "-t", f"-i:{port}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                )
-
-                if result.returncode == 0 and result.stdout.strip():
-                    pids = result.stdout.strip().split("\n")
-                    for pid in pids:
-                        try:
-                            subprocess.run(["kill", "-TERM", pid], timeout=2)
-                            print(
-                                f"\033[90m  ✓ Terminated process {pid} "
-                                f"on port {port}\033[0m"
-                            )
-                        except (subprocess.TimeoutExpired, FileNotFoundError):
-                            pass
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                # lsof might not be available, that's okay
-                pass
+    def _force_external_cleanup_enabled(self):
+        value = os.environ.get("HORUS_SDK_FORCE_EXTERNAL_CLEANUP", "")
+        return value.strip().lower() in {"1", "true", "yes", "on"}

@@ -1,5 +1,6 @@
 """Monitor /rosout for UnityEndpoint log messages to track topic subscription status."""
 
+import logging
 import re
 import threading
 import time
@@ -15,6 +16,8 @@ except ImportError:
     ROS2_AVAILABLE = False
 
 from .topic_status import get_topic_status_board
+
+logger = logging.getLogger(__name__)
 
 
 class RosoutSubscriptionMonitor:
@@ -60,7 +63,7 @@ class RosoutSubscriptionMonitor:
                     # Monitor already running, don't start another
                     return
         except Exception:
-            pass
+            logger.debug("Failed to check for existing rosout monitor node", exc_info=True)
 
         self._running = True
 
@@ -69,6 +72,7 @@ class RosoutSubscriptionMonitor:
             try:
                 rclpy.init()
             except Exception:
+                logger.debug("Failed to initialize ROS 2 for rosout monitor", exc_info=True)
                 self._running = False
                 return
 
@@ -79,12 +83,13 @@ class RosoutSubscriptionMonitor:
                 Log, "/rosout", self._on_rosout_message, 10
             )
         except Exception:
+            logger.debug("Failed to create rosout monitor node/subscription", exc_info=True)
             self._running = False
             if self._node:
                 try:
                     self._node.destroy_node()
                 except Exception:
-                    pass
+                    logger.debug("Failed to destroy partial rosout monitor node", exc_info=True)
                 self._node = None
             return
 
@@ -104,7 +109,10 @@ class RosoutSubscriptionMonitor:
                     try:
                         get_topic_status_board().on_unsubscribe(topic)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to mark topic unsubscribed from rosout monitor",
+                            exc_info=True,
+                        )
 
         if self._thread:
             self._thread.join(timeout=0.5)
@@ -113,7 +121,7 @@ class RosoutSubscriptionMonitor:
             try:
                 self._node.destroy_node()
             except Exception:
-                pass
+                logger.debug("Failed to destroy rosout monitor node", exc_info=True)
             self._node = None
 
     def _spin_loop(self):
@@ -122,7 +130,7 @@ class RosoutSubscriptionMonitor:
             try:
                 rclpy.spin_once(self._node, timeout_sec=0.1)
             except Exception:
-                pass
+                logger.debug("rosout monitor spin_once failed", exc_info=True)
 
     def _on_rosout_message(self, msg: "Log"):
         """Handle incoming rosout messages."""
@@ -158,7 +166,10 @@ class RosoutSubscriptionMonitor:
                         try:
                             get_topic_status_board().on_subscribe(topic)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "Failed to mark topic subscribed from rosout monitor",
+                                exc_info=True,
+                            )
                 return
 
             # Check for disconnection
@@ -173,7 +184,10 @@ class RosoutSubscriptionMonitor:
                             try:
                                 get_topic_status_board().on_unsubscribe(topic)
                             except Exception:
-                                pass
+                                logger.debug(
+                                    "Failed to mark topic unsubscribed from rosout disconnect",
+                                    exc_info=True,
+                                )
                     # Clear the session
                     del self._sessions[ip]
                 return

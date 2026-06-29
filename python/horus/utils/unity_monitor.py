@@ -1,9 +1,12 @@
 """Unity MR Connection Monitor (Unity client -> horus_unity_bridge server)"""
 
+import logging
 import subprocess
 import threading
 import time
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class UnityConnectionMonitor:
@@ -55,7 +58,7 @@ class UnityConnectionMonitor:
                 if (
                     self.is_monitoring
                 ):  # Only log if we're still supposed to be monitoring
-                    pass  # Silent failure to avoid spam
+                    logger.debug("Unity connection monitor loop failed", exc_info=True)
 
             if self.is_monitoring:
                 time.sleep(1)  # Check every 1 second
@@ -106,6 +109,7 @@ class UnityConnectionMonitor:
 
         except Exception:
             # Fallback to netstat if ss fails
+            logger.debug("Unity connection ss probe failed; falling back to netstat", exc_info=True)
             self._monitor_with_netstat()
 
     def _monitor_with_netstat(self):
@@ -147,7 +151,7 @@ class UnityConnectionMonitor:
                             self.connection_callback(ip, False)
 
         except Exception:
-            pass
+            logger.debug("Unity connection netstat probe failed", exc_info=True)
 
     def get_current_connections_debug(self):
         """Get current connections using ss - for debugging"""
@@ -163,6 +167,7 @@ class UnityConnectionMonitor:
                         connections.append(line.strip())
             return connections
         except Exception:
+            logger.debug("Failed to collect current Unity connection debug data", exc_info=True)
             return []
 
     def debug_connections(self):

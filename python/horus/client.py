@@ -1,3 +1,5 @@
+import os
+import logging
 import time
 
 from .utils.backend_manager import BackendManager
@@ -5,6 +7,9 @@ from .utils.branding import show_ascii_art
 from .utils.requirements_checker import RequirementsChecker
 from .utils.unity_monitor import UnityConnectionMonitor
 from .utils.rosout_monitor import get_rosout_monitor
+from .utils.network import resolve_advertise_ip
+
+logger = logging.getLogger(__name__)
 
 
 class Client:
@@ -59,10 +64,10 @@ class Client:
 
                 # Color coding: green for success, red for failure
                 if available:
-                    status_icon = "\033[92m✓\033[0m"
+                    status_icon = "\033[92m[OK]\033[0m"
                     status_text = f"\033[90m{message}\033[0m"
                 else:
-                    status_icon = "\033[91m✗\033[0m"
+                    status_icon = "\033[91m[FAIL]\033[0m"
                     status_text = f"\033[91m{message}\033[0m"
 
                 print(f"  {status_icon} {req_name}: {status_text}")
@@ -71,7 +76,7 @@ class Client:
             except Exception as e:
                 spinner.stop()
                 print(
-                    f"  \033[91m✗\033[0m {req_name}: "
+                    f"  \033[91m[FAIL]\033[0m {req_name}: "
                     f"\033[91mCheck failed: {str(e)}\033[0m"
                 )
                 requirements[req_name] = {
@@ -103,7 +108,7 @@ class Client:
             spinner.stop()
             port = self.backend_manager.get_port()
             print(
-                f"  \033[92m✓\033[0m Backend connection: "
+                f"  \033[92m[OK]\033[0m Backend connection: "
                 f"\033[90mConnected on port {port}\033[0m"
             )
 
@@ -116,13 +121,13 @@ class Client:
                 unity_spinner.stop()
                 unity_port = self.backend_manager.get_unity_port()
                 print(
-                    f"  \033[92m✓\033[0m Unity bridge: "
+                    f"  \033[92m[OK]\033[0m Unity bridge: "
                     f"\033[90mRunning on port {unity_port}\033[0m"
                 )
             else:
                 unity_spinner.stop()
                 print(
-                    "  \033[93m⚠\033[0m Unity bridge: "
+                    "  \033[93m[WARN]\033[0m Unity bridge: "
                     "\033[93mNot yet ready (may still be starting)\033[0m"
                 )
 
@@ -134,20 +139,19 @@ class Client:
                 self.rosout_monitor = get_rosout_monitor()
                 self.rosout_monitor.start()
             except Exception:
-                pass
+                logger.debug("Failed to start rosout monitor", exc_info=True)
 
             print("\n\033[92mSDK initialized successfully\033[0m")
         else:
             spinner.stop()
             print(
-                "  \033[91m✗\033[0m Backend connection: "
+                "  \033[91m[FAIL]\033[0m Backend connection: "
                 "\033[91mFailed to connect\033[0m"
             )
             raise RuntimeError("Backend connection failed")
 
     def _display_unity_connection_info(self):
         """Display Unity MR application connection information"""
-        import socket
         import time
 
         from .utils.spinner import Spinner
@@ -155,15 +159,7 @@ class Client:
         print("\n\033[96m🎮 Unity Mixed Reality Connection\033[0m")
         print("\033[96m" + "═" * 45 + "\033[0m")
 
-        # Get local IP address
-        try:
-            # Create a socket to get the local IP
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            local_ip = s.getsockname()[0]
-            s.close()
-        except Exception:
-            local_ip = "127.0.0.1"
+        local_ip = resolve_advertise_ip()
 
         unity_port = 10000
 
@@ -235,14 +231,14 @@ class Client:
         if hasattr(self, "unity_monitor"):
             print("\033[90m  Stopping Unity connection monitoring...\033[0m")
             self.unity_monitor.stop_monitoring()
-            print("\033[90m  ✓ Unity monitoring stopped\033[0m")
+            print("\033[90m  [OK] Unity monitoring stopped\033[0m")
 
         # Stop rosout monitor
         if hasattr(self, "rosout_monitor") and self.rosout_monitor:
             try:
                 self.rosout_monitor.stop()
             except Exception:
-                pass
+                logger.debug("Failed to stop rosout monitor", exc_info=True)
 
         # Stop live topic status board (if running)
         try:
@@ -250,13 +246,13 @@ class Client:
 
             get_topic_status_board().stop()
         except Exception:
-            pass
+            logger.debug("Failed to stop topic status board", exc_info=True)
 
         # Stop backend and all ROS2 processes
         if hasattr(self, "backend_manager"):
             self.backend_manager.stop_backend()
 
-        print("\033[92m  ✓ HORUS SDK shutdown complete\033[0m")
+        print("\033[92m  [OK] HORUS SDK shutdown complete\033[0m")
 
 
 def main(argv=None):

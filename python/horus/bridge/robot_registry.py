@@ -17,9 +17,15 @@ import atexit
 import signal
 import os
 import math
+import logging
 import shutil
 import shlex
+import tempfile
 from typing import Any, Dict, Tuple, Optional, List
+
+from horus.utils.network import resolve_advertise_ip
+
+logger = logging.getLogger(__name__)
 
 try:
     import rclpy
@@ -53,6 +59,7 @@ class RobotRegistryClient:
         self._ack_by_robot = {}
         self.bridge_process = None
         self._bridge_log_file = None
+        self._bridge_log_path = None
         self._last_heartbeat_time = 0
         self._app_heartbeats = {}
         self._app_uptime_by_id = {}
@@ -66,6 +73,7 @@ class RobotRegistryClient:
         self._registration_replay_request_seq = 0
         self._last_consumed_registration_replay_request_seq = 0
         self._last_registration_replay_request: Dict[str, Any] = {}
+        self._last_spin_once_error_log_time = 0.0
         self._sdk_replay_burst_attempts = 3
         self._sdk_replay_burst_initial_delay_s = 0.15
         self._sdk_replay_burst_inter_attempt_delay_s = 0.25
@@ -79,23 +87,13 @@ class RobotRegistryClient:
         self._robot_description_resolver = RobotDescriptionResolver()
         self._robot_description_by_robot: Dict[str, Dict[str, Any]] = {}
         self._robot_description_by_id: Dict[str, Dict[str, Any]] = {}
-        
+
         if ROS2_AVAILABLE:
             self._initialize_ros2()
 
     def _get_local_ip(self):
-        # ... (lines 59-70 skipped) ...
         """Get local IP address of this machine"""
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            # doesn't even have to be reachable
-            s.connect(('10.255.255.255', 1))
-            IP = s.getsockname()[0]
-        except Exception:
-            IP = '127.0.0.1'
-        finally:
-            s.close()
-        return IP
+        return resolve_advertise_ip()
 
     def _cleanup_bridge(self):
         """Kill the bridge process if we started it"""
@@ -107,18 +105,19 @@ class RobotRegistryClient:
                 os.killpg(os.getpgid(self.bridge_process.pid), signal.SIGINT)
                 self.bridge_process.wait(timeout=3.0)
             except Exception:
+                logger.debug("Graceful Horus bridge shutdown failed; forcing process group kill", exc_info=True)
                 # Force kill if needed
                 try:
                     os.killpg(os.getpgid(self.bridge_process.pid), signal.SIGKILL)
                 except Exception:
-                    pass
+                    logger.debug("Forced Horus bridge process group kill failed", exc_info=True)
             self.bridge_process = None
-            
+
         if self._bridge_log_file:
             try:
                 self._bridge_log_file.close()
             except Exception:
-                pass
+                logger.debug("Failed to close Horus bridge log file", exc_info=True)
             self._bridge_log_file = None
 
     def _cleanup_ros(self):
@@ -129,7 +128,7 @@ class RobotRegistryClient:
                     self.node.destroy_node()
                 rclpy.shutdown()
             except Exception:
-                pass
+                logger.debug("Failed to clean up RobotRegistryClient ROS context", exc_info=True)
             self.ros_initialized = False
 
     def _initialize_ros2(self):
@@ -139,9 +138,9 @@ class RobotRegistryClient:
             if not rclpy.ok():
                 rclpy.init()
             cli.print_success("ROS2 Context Initialized")
-            
+
             self.ros_initialized = True
-            
+
             # Register cleanup
             atexit.register(self._cleanup_ros)
 
@@ -202,11 +201,11 @@ class RobotRegistryClient:
                 durability=DurabilityPolicy.VOLATILE,
                 depth=1
             )
-            
+
             self.node.create_subscription(
-                String, 
-                "/horus/heartbeat", 
-                self._heartbeat_callback, 
+                String,
+                "/horus/heartbeat",
+                self._heartbeat_callback,
                 hb_qos
             )
 
@@ -250,6 +249,129 @@ class RobotRegistryClient:
             s.settimeout(0.5)
             return s.connect_ex(("localhost", port)) == 0
 
+    def _is_likely_horus_bridge_listener(self, port: int) -> Optional[bool]:
+        """Best-effort process identity check for localhost bridge listeners."""
+        if shutil.which("lsof") is None:
+            return None
+
+        pids = self._listener_pids_for_port(port)
+        if pids is None or not pids:
+            return None
+
+        inspected_any = False
+        for pid in pids:
+            cmdline = self._read_process_cmdline(pid)
+            if not cmdline:
+                continue
+            inspected_any = True
+            if self._cmdline_looks_like_horus_bridge(cmdline):
+                return True
+
+        return False if inspected_any else None
+
+    def _listener_pids_for_port(self, port: int) -> Optional[List[int]]:
+        """Return listener pids for a TCP port, or None when ownership cannot be inspected."""
+        try:
+            result = subprocess.run(
+                ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+        except Exception:
+            logger.debug("Failed to inspect listener pids for port %s", port, exc_info=True)
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        pids: List[int] = []
+        for line in (result.stdout or "").splitlines():
+            value = line.strip()
+            if value.isdigit():
+                pids.append(int(value))
+        return pids
+
+    def _read_process_cmdline(self, pid: int) -> str:
+        try:
+            with open(f"/proc/{int(pid)}/cmdline", "rb") as handle:
+                raw = handle.read()
+            return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace")
+        except Exception:
+            logger.debug("Failed to read process command line for pid %s", pid, exc_info=True)
+            return ""
+
+    @staticmethod
+    def _cmdline_looks_like_horus_bridge(cmdline: str) -> bool:
+        output = str(cmdline or "").lower()
+        if not output.strip():
+            return False
+
+        bridge_markers = (
+            "horus_unity_bridge",
+            "unity_bridge",
+            "horus_backend",
+            "horus_complete_backend.launch.py",
+            "horus_backend.launch.py",
+            "horus-start",
+        )
+        return any(marker in output for marker in bridge_markers)
+
+    def _is_horus_bridge_port_open(self, port: int = 10000) -> bool:
+        """Check whether the local Unity bridge port is open and plausibly HORUS-owned."""
+        if not self._is_port_open(port):
+            return False
+
+        identity = self._is_likely_horus_bridge_listener(port)
+        if identity is False:
+            from horus.utils import cli
+            cli.print_error(
+                f"Port {port} is open, but the listener does not look like Horus Bridge."
+            )
+            return False
+
+        return True
+
+    def _open_bridge_log_file(self):
+        """Open a persistent log file for bridge auto-start diagnostics."""
+        if self._bridge_log_file and not self._bridge_log_file.closed:
+            return self._bridge_log_file
+
+        log_file = tempfile.NamedTemporaryFile(
+            mode="w+",
+            prefix="horus-bridge-",
+            suffix=".log",
+            delete=False,
+        )
+        self._bridge_log_file = log_file
+        self._bridge_log_path = log_file.name
+        return log_file
+
+    def _print_bridge_log_tail(self, max_lines: int = 40) -> None:
+        """Print the tail of the bridge startup log after an auto-start failure."""
+        from horus.utils import cli
+
+        log_path = getattr(self, "_bridge_log_path", None)
+        if not log_path or not os.path.isfile(log_path):
+            return
+
+        try:
+            if self._bridge_log_file and not self._bridge_log_file.closed:
+                self._bridge_log_file.flush()
+            with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                lines = handle.readlines()
+        except Exception:
+            logger.debug("Failed to read bridge startup log tail from %s", log_path, exc_info=True)
+            return
+
+        tail = [line.rstrip() for line in lines[-max_lines:] if line.rstrip()]
+        if not tail:
+            return
+
+        cli.print_info(f"Bridge startup log: {log_path}")
+        for line in tail:
+            cli.print_info(f"  {line}")
+
     def _get_bridge_autostart_mode(self) -> str:
         """Resolve bridge auto-start mode from environment."""
         from horus.utils import cli
@@ -270,6 +392,11 @@ class RobotRegistryClient:
         try:
             delay_ms = float(raw_value)
         except Exception:
+            logger.debug(
+                "Invalid HORUS_SDK_BRIDGE_STARTUP_SETTLE_MS value: %r",
+                raw_value,
+                exc_info=True,
+            )
             delay_ms = 750.0
 
         if not math.isfinite(delay_ms) or delay_ms < 0:
@@ -330,9 +457,15 @@ class RobotRegistryClient:
                 timeout=5.0,
             )
         except Exception:
+            logger.debug("Failed to resolve ROS 2 package prefix for %s", package_name, exc_info=True)
             return None
 
         if check_pkg.returncode != 0:
+            logger.debug(
+                "ROS 2 package prefix lookup failed for %s: %s",
+                package_name,
+                str(check_pkg.stderr or "").strip(),
+            )
             return None
 
         prefix = str(check_pkg.stdout or "").strip()
@@ -362,9 +495,21 @@ class RobotRegistryClient:
                 timeout=8.0,
             )
         except Exception:
+            logger.debug(
+                "Failed to resolve ROS 2 package prefix for %s via helper %s",
+                package_name,
+                helper_path,
+                exc_info=True,
+            )
             return None
 
         if check_pkg.returncode != 0:
+            logger.debug(
+                "Helper ROS 2 package prefix lookup failed for %s via %s: %s",
+                package_name,
+                helper_path,
+                str(check_pkg.stderr or "").strip(),
+            )
             return None
 
         prefix = str(check_pkg.stdout or "").strip()
@@ -407,19 +552,21 @@ class RobotRegistryClient:
 
             cli.print_info(f"Trying helper auto-start: {helper_path}")
             try:
+                bridge_log = self._open_bridge_log_file()
                 self.bridge_process = subprocess.Popen(
                     [helper_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=bridge_log,
+                    stderr=subprocess.STDOUT,
                     start_new_session=True,
                 )
-            except Exception:
+            except Exception as exc:
+                cli.print_warning(f"Helper auto-start failed for {helper_path}: {exc}")
                 continue
 
             atexit.register(self._cleanup_bridge)
             with cli.status("Launching Horus Bridge...", spinner="dots"):
                 for _ in range(20):
-                    if self._is_port_open(10000):
+                    if self._is_horus_bridge_port_open(10000):
                         self._sleep_after_bridge_startup_settle()
                         cli.print_success("Horus Bridge launched successfully.")
                         return True
@@ -427,6 +574,7 @@ class RobotRegistryClient:
                         break
                     time.sleep(1.0)
 
+            self._print_bridge_log_tail()
             self._cleanup_bridge()
 
         return False
@@ -445,6 +593,8 @@ class RobotRegistryClient:
                 return False
 
             cli.print_info(f"Using horus_unity_bridge from current shell: {bridge_prefix}")
+
+            bridge_log = self._open_bridge_log_file()
             launch_command = ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"]
             priority_scheduling_arg = self._bridge_priority_scheduling_launch_arg()
             if priority_scheduling_arg:
@@ -453,15 +603,15 @@ class RobotRegistryClient:
 
             self.bridge_process = subprocess.Popen(
                 launch_command,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=bridge_log,
+                stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
             atexit.register(self._cleanup_bridge)
 
             with cli.status("Launching Horus Bridge...", spinner="dots"):
                 for _ in range(15):
-                    if self._is_port_open(10000):
+                    if self._is_horus_bridge_port_open(10000):
                         self._sleep_after_bridge_startup_settle()
                         cli.print_success("Horus Bridge launched successfully.")
                         return True
@@ -469,8 +619,10 @@ class RobotRegistryClient:
                         break
                     time.sleep(1.0)
         except Exception:
+            logger.debug("Failed to auto-start Horus Bridge with ros2 launch", exc_info=True)
             return False
 
+        self._print_bridge_log_tail()
         self._cleanup_bridge()
         return False
 
@@ -478,7 +630,7 @@ class RobotRegistryClient:
         """Ensure bridge port is available, auto-starting bridge if needed."""
         from horus.utils import cli
 
-        if self._is_port_open(10000):
+        if self._is_horus_bridge_port_open(10000):
             cli.print_info("Horus Bridge detected on port 10000.")
             return True
 
@@ -526,8 +678,8 @@ class RobotRegistryClient:
                 self._ack_by_robot[robot_name] = data
             self._ack_received.set()
         except json.JSONDecodeError:
-            pass
-            
+            logger.debug("Ignored malformed registration ACK payload: %r", getattr(msg, "data", None))
+
     def _heartbeat_callback(self, msg):
         """Handle heartbeat from Unity"""
         now = time.time()
@@ -541,6 +693,7 @@ class RobotRegistryClient:
                 heartbeat_value = heartbeat_part.split("|", 1)[0].strip()
                 heartbeat_uptime = float(heartbeat_value)
             except Exception:
+                logger.debug("Failed to parse heartbeat uptime from %r", msg.data, exc_info=True)
                 heartbeat_uptime = None
 
         # Parse IP if present "Heartbeat: <time> | IP: <ip>"
@@ -553,8 +706,8 @@ class RobotRegistryClient:
                     if ip:
                         app_id = ip
                         self._app_heartbeats[ip] = now
-            except:
-                pass
+            except Exception:
+                logger.debug("Failed to parse app heartbeat IP", exc_info=True)
         else:
             self._app_heartbeats["unknown"] = now
 
@@ -573,6 +726,7 @@ class RobotRegistryClient:
         try:
             payload = json.loads(payload_raw)
         except Exception:
+            logger.debug("Ignored malformed multi-operator presence payload: %r", payload_raw, exc_info=True)
             return
 
         if not isinstance(payload, dict):
@@ -603,6 +757,7 @@ class RobotRegistryClient:
                 if isinstance(parsed, dict):
                     payload = parsed
             except Exception:
+                logger.debug("Ignored malformed registration replay request: %r", payload_raw, exc_info=True)
                 payload = {}
 
         self._last_registration_replay_request = payload
@@ -629,6 +784,7 @@ class RobotRegistryClient:
         try:
             payload = json.loads(payload_raw)
         except Exception:
+            logger.debug("Ignored malformed robot-description request payload: %r", payload_raw, exc_info=True)
             return
 
         if not isinstance(payload, dict):
@@ -905,6 +1061,7 @@ class RobotRegistryClient:
         try:
             payload = json.loads(payload_raw)
         except Exception:
+            logger.debug("Ignoring malformed teleop runtime state payload: %s", payload_raw, exc_info=True)
             return
 
         camera_topic = str(payload.get("camera_topic", "") or "").strip()
@@ -1001,7 +1158,7 @@ class RobotRegistryClient:
                 if self.node.count_publishers("/tf") <= 0:
                     return "Waiting for TF"
             except Exception:
-                pass
+                logger.debug("Failed to inspect /tf publisher count while resolving queued status", exc_info=True)
 
         return status
 
@@ -1015,7 +1172,7 @@ class RobotRegistryClient:
                 if topic and topic not in topics:
                     topics.append(topic)
         except Exception:
-            pass
+            logger.debug("Failed to collect enabled visualization topics", exc_info=True)
         return topics
 
     def _collect_control_topics(self, config: Dict[str, Any]) -> list:
@@ -1089,6 +1246,7 @@ class RobotRegistryClient:
             robot.add_metadata("horus_color", ack.get("assigned_color") or ack.get("color"))
             robot.add_metadata("horus_registered", True)
         except Exception:
+            logger.debug("Failed to apply registration metadata to robot %r", getattr(robot, "name", robot), exc_info=True)
             return
         topics = self._collect_topics(dataviz)
         robot.add_metadata("horus_topics", topics)
@@ -1099,7 +1257,7 @@ class RobotRegistryClient:
                 monitor.watch_topics(topics)
                 monitor.start()
             except Exception:
-                pass
+                logger.debug("Failed to start topic monitor after registration metadata update", exc_info=True)
 
     def _get_topic_counts(self, topic: str) -> Tuple[int, int]:
         pubs_info = subs_info = None
@@ -1107,18 +1265,22 @@ class RobotRegistryClient:
         try:
             pubs_info = len(self.node.get_publishers_info_by_topic(topic))
         except Exception:
+            logger.debug("Failed to read publisher info for topic %s", topic, exc_info=True)
             pubs_info = None
         try:
             subs_info = len(self.node.get_subscriptions_info_by_topic(topic))
         except Exception:
+            logger.debug("Failed to read subscription info for topic %s", topic, exc_info=True)
             subs_info = None
         try:
             pubs_count = self.node.count_publishers(topic)
         except Exception:
+            logger.debug("Failed to count publishers for topic %s", topic, exc_info=True)
             pubs_count = None
         try:
             subs_count = self.node.count_subscribers(topic)
         except Exception:
+            logger.debug("Failed to count subscribers for topic %s", topic, exc_info=True)
             subs_count = None
 
         def _choose(*values: Optional[int]) -> int:
@@ -1137,7 +1299,7 @@ class RobotRegistryClient:
             if self.node and normalized_name == str(self.node.get_name()).strip().lstrip("/"):
                 return False
         except Exception:
-            pass
+            logger.debug("Failed to compare backend node name against registry node", exc_info=True)
         if normalized_name in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
             return True
         if normalized_name.startswith("horus_unity_bridge"):
@@ -1158,6 +1320,7 @@ class RobotRegistryClient:
                 == str(self.node.get_name()).strip().lstrip("/")
             )
         except Exception:
+            logger.debug("Failed to compare local node name %s", node_name, exc_info=True)
             return False
 
     def _get_monitored_subscription_state(self, topic: str) -> Optional[bool]:
@@ -1171,8 +1334,18 @@ class RobotRegistryClient:
             if state == "UNSUBSCRIBED":
                 return False
         except Exception:
-            pass
+            logger.debug("Failed to read monitored subscription state for %s", topic, exc_info=True)
         return None
+
+    def _spin_once_registration(self, timeout_sec: float = 0.1) -> None:
+        """Spin the registry node once and rate-limit diagnostics for ROS errors."""
+        try:
+            rclpy.spin_once(self.node, timeout_sec=timeout_sec)
+        except Exception:
+            now = time.time()
+            if now - self._last_spin_once_error_log_time >= 5.0:
+                logger.debug("ROS 2 spin_once failed while waiting for registration state", exc_info=True)
+                self._last_spin_once_error_log_time = now
 
     def _resolve_data_topic_link(self, topic: str) -> bool:
         return self._has_backend_subscriber(topic)
@@ -1181,6 +1354,7 @@ class RobotRegistryClient:
         try:
             infos = self.node.get_subscriptions_info_by_topic(topic)
         except Exception:
+            logger.debug("Failed to read backend subscription info for topic %s", topic, exc_info=True)
             return False
         if any(self._is_backend_node_name(info.node_name) for info in infos):
             return True
@@ -1191,6 +1365,7 @@ class RobotRegistryClient:
         try:
             infos = self.node.get_publishers_info_by_topic(topic)
         except Exception:
+            logger.debug("Failed to read backend publisher info for topic %s", topic, exc_info=True)
             return False
         if any(self._is_backend_node_name(info.node_name) for info in infos):
             return True
@@ -1201,6 +1376,7 @@ class RobotRegistryClient:
         try:
             infos = self.node.get_publishers_info_by_topic(topic)
         except Exception:
+            logger.debug("Failed to read local publisher info for topic %s", topic, exc_info=True)
             return False
         return any(self._is_local_node_name(info.node_name) for info in infos)
 
@@ -1208,6 +1384,7 @@ class RobotRegistryClient:
         try:
             infos = self.node.get_subscriptions_info_by_topic(topic)
         except Exception:
+            logger.debug("Failed to read local subscription info for topic %s", topic, exc_info=True)
             return False
         return any(self._is_local_node_name(info.node_name) for info in infos)
 
@@ -1420,6 +1597,31 @@ class RobotRegistryClient:
         color = render_options.get("color")
         if color not in (None, ""):
             payload["color"] = str(color)
+
+        # OPTIONAL declarative transport lane for 3D-map visualizations. When a map global viz
+        # sets render_options["transport_lane"] to one of the recognized tokens, surface it so
+        # Unity can forward it as the __subscribe "policy" key and the bridge honors it verbatim.
+        # Default unset (or an unrecognized value) emits no field, so the bridge keeps using its
+        # heuristic lane classifier -- fully backward-compatible, no behavior change.
+        _MAP_LANE_VIZ_TYPES = {
+            "point_cloud",
+            "gaussian_splat",
+            "mesh",
+            "octomap",
+            "occupancy_grid",
+        }
+        _VALID_TRANSPORT_LANES = {
+            "strict",
+            "replaceable",
+            "bulk_strict",
+            "bulk_replaceable",
+        }
+        if viz_type_value in _MAP_LANE_VIZ_TYPES:
+            transport_lane = render_options.get("transport_lane")
+            if transport_lane not in (None, ""):
+                normalized_lane = str(transport_lane).strip().lower()
+                if normalized_lane in _VALID_TRANSPORT_LANES:
+                    payload["transport_lane"] = normalized_lane
 
         if viz_type_value == "path":
             path_payload: Dict[str, Any] = {}
@@ -1887,6 +2089,7 @@ class RobotRegistryClient:
             try:
                 visualizations = dataviz.get_enabled_visualizations()
             except Exception:
+                logger.debug("Failed to read global visualization list from %r", dataviz, exc_info=True)
                 visualizations = []
 
             for visualization in visualizations:
@@ -1896,6 +2099,7 @@ class RobotRegistryClient:
                     if visualization.is_robot_specific():
                         continue
                 except Exception:
+                    logger.debug("Failed to classify visualization scope for %r", visualization, exc_info=True)
                     continue
 
                 payload = self._serialize_visualization_payload(
@@ -2075,12 +2279,12 @@ class RobotRegistryClient:
     ) -> Tuple[bool, Dict]:
         """
         Register robot with HORUS backend using internal CLI and automatic bridge management.
-        
+
         Args:
             robot: Robot instance
             dataviz: DataViz instance
             timeout_sec: Timeout for initial registration
-            keep_alive: If True, blocks and maintains the dashboard after registration, 
+            keep_alive: If True, blocks and maintains the dashboard after registration,
                        handling monitoring and re-registration automatically.
             show_dashboard: If False, perform a quiet registration without the UI dashboard.
             compass_enabled: Optional workspace-scoped Compass availability toggle.
@@ -2094,7 +2298,7 @@ class RobotRegistryClient:
 
         if not self._registration_lock.acquire(blocking=False):
             return False, {"error": "Registration already in progress"}
-        
+
         from horus.utils.topic_status import get_topic_status_board
         board = get_topic_status_board()
         board.set_silent(show_dashboard)
@@ -2122,7 +2326,7 @@ class RobotRegistryClient:
             # Display Connect Info using Dashboard
             local_ip = self._get_local_ip()
             bridge_state = "Active" if bridge_running else "Error"
-            
+
             data_topics = self._collect_topics(dataviz)
             control_topics = self._collect_control_topics(config)
             camera_topics = self._collect_camera_topics(config)
@@ -2151,32 +2355,30 @@ class RobotRegistryClient:
                 monitor.watch_topics(monitored_topics, topic_roles)
                 monitor.start()
             except Exception:
-                pass
+                logger.debug("Failed to start topic monitor for registration dashboard", exc_info=True)
 
             # Prepare for Async wait
             self._ack_received.clear()
             self._last_ack_data = {}
-            
+
             # Publish registration request
             msg = String()
             msg.data = config_json
             robot_name = robot.name
             self._ack_by_robot.pop(robot_name, None)
-            
+
             # Initial publish
             self.publisher.publish(msg)
-            
+
             registration_success = False
             final_ack = {}
             seeded_before_app = False
 
             if not show_dashboard:
                 start_time = time.time()
+                last_queued_reason = ""
                 while time.time() - start_time < timeout_sec:
-                    try:
-                        rclpy.spin_once(self.node, timeout_sec=0.1)
-                    except Exception:
-                        pass
+                    self._spin_once_registration(timeout_sec=0.1)
 
                     # Re-publish occasionally
                     if int(time.time()) % 2 == 0:
@@ -2187,10 +2389,21 @@ class RobotRegistryClient:
                         recv_name = ack.get("robot_name", "UNKNOWN")
                         if recv_name == robot_name:
                             if ack.get("success"):
+                                queued_msg = self._queued_reason_from_ack(ack)
+                                if queued_msg:
+                                    last_queued_reason = queued_msg
+                                    self._ack_received.clear()
+                                    continue
                                 return True, ack
                             return False, ack
                         self._ack_received.clear()
 
+                if last_queued_reason:
+                    return False, {
+                        "error": "Registration queued",
+                        "queued": True,
+                        "reason": last_queued_reason,
+                    }
                 return False, {"error": "Registration timeout"}
 
             # --- Enter Dashboard Mode ---
@@ -2201,7 +2414,7 @@ class RobotRegistryClient:
                 dashboard.update_registration("Idle")
                 dashboard.update_status("")
                 last_stats_update = 0.0
-                
+
                 # Connection Monitoring State (for keep_alive)
                 last_connection_state = True # Assume true initially to avoid "Re-established" log on first connect
                 robot_names = [robot.name]
@@ -2210,13 +2423,11 @@ class RobotRegistryClient:
                 queued_reason = ""
                 last_register_publish = 0.0
                 had_connection_drop = False
-                
+                registration_deadline_started_at = None
+
                 while True:
                     # spin to process callbacks (Ack, Heartbeat)
-                    try:
-                        rclpy.spin_once(self.node, timeout_sec=0.1)
-                    except Exception:
-                        pass
+                    self._spin_once_registration(timeout_sec=0.1)
 
                     if self._last_heartbeat_time > 0:
                         seen_heartbeat = True
@@ -2226,9 +2437,16 @@ class RobotRegistryClient:
                     if app_restarted:
                         had_connection_drop = True
 
+                    if (
+                        not registration_success
+                        and registration_deadline_started_at is None
+                        and (is_connected or not wait_for_app_before_register)
+                    ):
+                        registration_deadline_started_at = time.time()
+
                     dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
                     dashboard.update_multi_operator(self._format_multi_operator_summary())
-                    
+
                     # Update Topic Stats (every ~1s)
                     if (time.time() - last_stats_update) >= 1.0:
                         rows = self._build_dashboard_topic_rows(
@@ -2245,6 +2463,16 @@ class RobotRegistryClient:
 
                     # --- Registration Phase ---
                     if not registration_success:
+                        if (
+                            not keep_alive
+                            and registration_deadline_started_at is not None
+                            and (time.time() - registration_deadline_started_at) >= timeout_sec
+                        ):
+                            dashboard.update_registration("Failed")
+                            dashboard.update_status("Registration timeout")
+                            time.sleep(1.0)
+                            return False, {"error": "Registration timeout"}
+
                         if not is_connected:
                             if not wait_for_app_before_register and not seeded_before_app:
                                 self.publisher.publish(msg)
@@ -2296,7 +2524,7 @@ class RobotRegistryClient:
                                         if not keep_alive:
                                             time.sleep(1.5)
                                             return True, ack
-                                    
+
                                     # If keep_alive, we transition to monitoring
                                     # Reset connection state to 'Connected' explicitly
                                     last_connection_state = True
@@ -2309,7 +2537,7 @@ class RobotRegistryClient:
                                     return False, ack
                             else:
                                 self._ack_received.clear()
-                    
+
                     # --- Monitoring Phase (keep_alive=True) ---
                     else:
                         if app_restarted:
@@ -2364,15 +2592,15 @@ class RobotRegistryClient:
                             dashboard.update_status("")
                             if last_connection_state:
                                 had_connection_drop = True
-                        
+
                         last_connection_state = is_connected
 
                     # Update animated elements
                     dashboard.tick()
-                    
+
                     # Simple loop throttle
                     # Note: rclpy.spin_once acts as the sleep/throttle
-            
+
         except KeyboardInterrupt:
             cli.print_info("Registration/Monitoring cancelled by user.")
             return False, {"error": "Cancelled"}
@@ -2486,7 +2714,7 @@ class RobotRegistryClient:
                 monitor.watch_topics(monitored_topics, topic_roles)
                 monitor.start()
             except Exception:
-                pass
+                logger.debug("Failed to start topic monitor for multi-registration dashboard", exc_info=True)
 
             robot_states = {robot.name: "pending" for robot in robots}
             queued_reasons = {}
@@ -2526,10 +2754,7 @@ class RobotRegistryClient:
                     if now - last_publish >= 2.0:
                         self.publisher.publish(msg)
                         last_publish = now
-                    try:
-                        rclpy.spin_once(self.node, timeout_sec=0.1)
-                    except Exception:
-                        pass
+                    self._spin_once_registration(timeout_sec=0.1)
                     ack = self._ack_by_robot.pop(robot_name, None)
                     if ack is None and self._ack_received.is_set():
                         self._ack_received.clear()
@@ -2541,7 +2766,7 @@ class RobotRegistryClient:
                         return False, ack
                 return False, {"error": "Registration timeout"}
 
-            def register_all(dashboard=None, force: bool = False):
+            def register_all(dashboard=None, force: bool = False, allow_queued: bool = True):
                 if dashboard is not None:
                     dashboard.update_status("Seeding registrations...")
                 for robot, dataviz, msg in entries:
@@ -2554,6 +2779,25 @@ class RobotRegistryClient:
                     if not ok:
                         return False, ack
                     handle_ack(ack)
+                    if not allow_queued and robot_states.get(robot.name) == "queued":
+                        return False, {
+                            "error": "Registration queued",
+                            "queued": True,
+                            "robot_name": robot.name,
+                            "reason": queued_reasons.get(robot.name) or "Waiting for Workspace",
+                        }
+                if not allow_queued:
+                    queued_names = [
+                        name for name, state in robot_states.items()
+                        if state == "queued"
+                    ]
+                    if queued_names:
+                        return False, {
+                            "error": "Registration queued",
+                            "queued": True,
+                            "robots": queued_names,
+                            "reason": self._resolve_dashboard_queued_status(queued_reasons),
+                        }
                 return True, {"success": True}
 
             def seed_all_registrations() -> None:
@@ -2576,7 +2820,7 @@ class RobotRegistryClient:
                 dashboard.update_topics(rows)
 
             if not show_dashboard:
-                ok, result = register_all(None)
+                ok, result = register_all(None, allow_queued=False)
                 if not ok:
                     return False, result
                 if not keep_alive:
@@ -2584,10 +2828,7 @@ class RobotRegistryClient:
                 last_connection_state = True
                 self._last_heartbeat_time = time.time()
                 while True:
-                    try:
-                        rclpy.spin_once(self.node, timeout_sec=0.1)
-                    except Exception:
-                        pass
+                    self._spin_once_registration(timeout_sec=0.1)
                     heartbeat_timeout_s = 3.0
                     is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
                     app_restarted = self._consume_app_restart_signal()
@@ -2620,15 +2861,13 @@ class RobotRegistryClient:
                 robot_names = [r.name for r in robots]
                 seen_heartbeat = False
                 had_connection_drop = False
+                registration_deadline_started_at = None
 
                 update_dashboard_topics(dashboard, False, False)
                 seeded_before_app = False
 
                 while True:
-                    try:
-                        rclpy.spin_once(self.node, timeout_sec=0.1)
-                    except Exception:
-                        pass
+                    self._spin_once_registration(timeout_sec=0.1)
 
                     if self._last_heartbeat_time > 0:
                         seen_heartbeat = True
@@ -2638,6 +2877,13 @@ class RobotRegistryClient:
                     replay_request = self._consume_registration_replay_request()
                     if app_restarted:
                         had_connection_drop = True
+
+                    if (
+                        not registration_done
+                        and registration_deadline_started_at is None
+                        and (is_connected or not wait_for_app_before_register)
+                    ):
+                        registration_deadline_started_at = time.time()
 
                     dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
                     dashboard.update_multi_operator(self._format_multi_operator_summary())
@@ -2703,6 +2949,17 @@ class RobotRegistryClient:
                     any_pending = any(state == "pending" for state in states)
                     all_registered = bool(states) and all(state == "registered" for state in states)
                     registration_done = all_registered
+
+                    if (
+                        not keep_alive
+                        and not registration_done
+                        and registration_deadline_started_at is not None
+                        and (time.time() - registration_deadline_started_at) >= timeout_sec
+                    ):
+                        dashboard.update_registration("Failed")
+                        dashboard.update_status("Registration timeout")
+                        time.sleep(1.0)
+                        return False, {"error": "Registration timeout"}
 
                     if (time.time() - last_topics_update) >= 1.0:
                         update_dashboard_topics(dashboard, is_connected, registration_done)
@@ -2830,11 +3087,65 @@ class RobotRegistryClient:
         """
         Unregister robot from HORUS backend
         """
-        self._remove_robot_description_cache(str(robot_id or ""))
-        # For unregistration, we can send a config with "action": "unregister"
-        # Or just empty config with name.
-        # Implementation simplified for now.
-        return True, {"message": "Unregistered (Local cleanup only)"}
+        from horus.utils import cli
+
+        robot_name = str(robot_id or "").strip()
+        if not robot_name:
+            return False, {"error": "Robot id is required"}
+
+        if not self.ros_initialized or self.publisher is None or self.node is None:
+            cli.print_error("ROS2 not initialized. Cannot unregister.")
+            return False, {"error": "ROS2 not available"}
+
+        if not self._registration_lock.acquire(blocking=False):
+            return False, {"error": "Registration already in progress"}
+
+        try:
+            if not self._ensure_bridge_running():
+                return False, {"error": "Bridge Start Failed"}
+
+            payload = {"action": "unregister", "robot_name": robot_name}
+            msg = String()
+            msg.data = json.dumps(payload)
+
+            self._ack_received.clear()
+            self._last_ack_data = {}
+            self._ack_by_robot.pop(robot_name, None)
+
+            start_time = time.time()
+            last_publish = 0.0
+            while time.time() - start_time < timeout_sec:
+                now = time.time()
+                if now - last_publish >= 1.0:
+                    self.publisher.publish(msg)
+                    last_publish = now
+
+                try:
+                    rclpy.spin_once(self.node, timeout_sec=0.1)
+                except Exception:
+                    logger.debug("Failed to spin ROS 2 while waiting for unregister ACK", exc_info=True)
+
+                ack = self._ack_by_robot.pop(robot_name, None)
+                if ack is None and self._ack_received.is_set():
+                    self._ack_received.clear()
+                    if self._last_ack_data.get("robot_name") == robot_name:
+                        ack = self._last_ack_data
+
+                if not ack:
+                    continue
+
+                if ack.get("success"):
+                    self._remove_robot_description_cache(robot_name)
+                    return True, ack
+
+                return False, ack
+
+            return False, {
+                "error": "Unregistration timeout",
+                "robot_id": robot_name,
+            }
+        finally:
+            self._registration_lock.release()
 
     def _resolve_robot_description_artifact(self, robot) -> Optional[Dict[str, Any]]:
         if robot is None:
@@ -2878,6 +3189,7 @@ class RobotRegistryClient:
             try:
                 reason = str(self._robot_description_resolver.last_error or "").strip()
             except Exception:
+                logger.debug("Failed to read robot description resolver error", exc_info=True)
                 reason = ""
             if not has_description_config and not reason:
                 return None
@@ -2966,11 +3278,11 @@ class RobotRegistryClient:
         return self.ros_initialized
 
     def __del__(self):
-        if self.ros_initialized and self.node:
+        if getattr(self, "ros_initialized", False) and getattr(self, "node", None):
             try:
                 self.node.destroy_node()
             except Exception:
-                pass
+                logger.debug("Failed to destroy RobotRegistryClient node in destructor", exc_info=True)
 
 
 _singleton_registry: Optional[RobotRegistryClient] = None

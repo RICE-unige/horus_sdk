@@ -7,12 +7,15 @@ communication between ROS robots and the Meta Quest 3 HORUS application.
 """
 
 import asyncio
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
 
 
 class EventPriority(Enum):
@@ -215,7 +218,7 @@ class EventBus:
             try:
                 subscription.callback(event)
             except Exception as e:
-                print(f"EventBus callback error for {event.topic}: {e}")
+                logger.exception("EventBus callback error for %s: %s", event.topic, e)
                 
     def publish(self, event: Union[Event, str], data: Any = None, priority: EventPriority = EventPriority.NORMAL, source: Optional[str] = None):
         """
@@ -301,7 +304,7 @@ class EventBus:
 
             get_topic_status_board().on_subscribe(topic_filter)
         except Exception:
-            pass
+            logger.debug("Failed to update topic board on event subscription", exc_info=True)
         return subscription.subscription_id
         
     def unsubscribe(self, subscription_id: str) -> bool:
@@ -327,7 +330,10 @@ class EventBus:
 
                             get_topic_status_board().on_unsubscribe(topic)
                         except Exception:
-                            pass
+                            logger.debug(
+                                "Failed to update topic board on event unsubscribe",
+                                exc_info=True,
+                            )
                         return True
         return False
         
@@ -347,7 +353,10 @@ class EventBus:
 
                         get_topic_status_board().on_unsubscribe(topic_filter)
                     except Exception:
-                        pass
+                        logger.debug(
+                            "Failed to update topic board on filtered unsubscribe_all",
+                            exc_info=True,
+                        )
             else:
                 # Notify for each topic key being removed to keep board consistent
                 try:
@@ -356,7 +365,10 @@ class EventBus:
                     for t in list(self._subscriptions.keys()):
                         get_topic_status_board().on_unsubscribe(t)
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Failed to update topic board on unsubscribe_all",
+                        exc_info=True,
+                    )
                 self._subscriptions.clear()
             self._stats["active_subscriptions"] = sum(len(subs) for subs in self._subscriptions.values())
             

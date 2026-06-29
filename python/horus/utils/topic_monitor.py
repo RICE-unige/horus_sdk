@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 from typing import Dict, List, Optional, Set
@@ -11,6 +12,8 @@ except ImportError:
     ROS2_AVAILABLE = False
 
 from .topic_status import get_topic_status_board
+
+logger = logging.getLogger(__name__)
 
 
 class TopicSubscriptionMonitor:
@@ -45,12 +48,14 @@ class TopicSubscriptionMonitor:
             try:
                 rclpy.init()
             except Exception:
+                logger.debug("Failed to initialize ROS 2 for topic monitor", exc_info=True)
                 self._running = False
                 return
         if self._node is None:
             try:
                 self._node = rclpy.create_node("horus_topic_subscription_monitor")
             except Exception:
+                logger.debug("Failed to create topic monitor node", exc_info=True)
                 self._running = False
                 return
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -64,7 +69,7 @@ class TopicSubscriptionMonitor:
             try:
                 self._node.destroy_node()
             except Exception:
-                pass
+                logger.debug("Failed to destroy topic monitor node", exc_info=True)
             self._node = None
 
     def watch_topics(self, topics: List[str], modes: Optional[Dict[str, str]] = None):
@@ -80,7 +85,7 @@ class TopicSubscriptionMonitor:
                     try:
                         get_topic_status_board().on_unsubscribe(t)
                     except Exception:
-                        pass
+                        logger.debug("Failed to seed topic status for %s", t, exc_info=True)
                 if modes and t in modes:
                     mode = modes[t]
                     if mode == "sdk_sub":
@@ -100,7 +105,7 @@ class TopicSubscriptionMonitor:
                     try:
                         get_topic_status_board().on_unsubscribe(t)
                     except Exception:
-                        pass
+                        logger.debug("Failed to emit topic unwatch for %s", t, exc_info=True)
                 self._is_subscribed.pop(t, None)
                 self._zero_since.pop(t, None)
                 self._topic_modes.pop(t, None)
@@ -115,8 +120,7 @@ class TopicSubscriptionMonitor:
                 try:
                     self._check_topic(topic, now)
                 except Exception:
-                    # Avoid noisy logs
-                    pass
+                    logger.debug("Topic monitor check failed for %s", topic, exc_info=True)
             time.sleep(self._poll_interval)
 
     def _check_topic(self, topic: str, now: float):
@@ -152,7 +156,7 @@ class TopicSubscriptionMonitor:
                     try:
                         get_topic_status_board().on_subscribe(topic)
                     except Exception:
-                        pass
+                        logger.debug("Failed to mark topic subscribed for %s", topic, exc_info=True)
                 else:
                     self._zero_since[topic] = None
                 return
@@ -168,7 +172,7 @@ class TopicSubscriptionMonitor:
                     try:
                         get_topic_status_board().on_unsubscribe(topic)
                     except Exception:
-                        pass
+                        logger.debug("Failed to mark topic unsubscribed for %s", topic, exc_info=True)
             else:
                 self._zero_since[topic] = None
             return
@@ -189,7 +193,7 @@ class TopicSubscriptionMonitor:
                 try:
                     get_topic_status_board().on_subscribe(topic)
                 except Exception:
-                    pass
+                    logger.debug("Failed to mark topic subscribed for %s", topic, exc_info=True)
             else:
                 self._zero_since[topic] = None
             return
@@ -203,7 +207,7 @@ class TopicSubscriptionMonitor:
                 try:
                     get_topic_status_board().on_unsubscribe(topic)
                 except Exception:
-                    pass
+                    logger.debug("Failed to mark topic unsubscribed for %s", topic, exc_info=True)
                 return
             # Backend subscriber still present but publishers == 0 -> debounce
             if pub_count == 0:
@@ -216,7 +220,7 @@ class TopicSubscriptionMonitor:
                     try:
                         get_topic_status_board().on_unsubscribe(topic)
                     except Exception:
-                        pass
+                        logger.debug("Failed to mark topic unsubscribed for %s", topic, exc_info=True)
         else:
             # Not subscribed, reset timer
             self._zero_since[topic] = None

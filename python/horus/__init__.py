@@ -17,7 +17,7 @@ from .core import (
     unsubscribe,
 )
 from .dataviz import DataSourceType, DataViz, VisualizationType
-from .robot import Robot, RobotDimensions, RobotType, register_robots
+from .robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
 import os
 
@@ -44,6 +44,7 @@ __all__ = [
     "ColorManager",
     "ColorScheme",
     "RGBColor",
+    "is_registration_cancelled",
     "Event",
     "EventBus",
     "EventPriority",

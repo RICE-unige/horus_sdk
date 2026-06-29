@@ -1,7 +1,10 @@
 import os
+import logging
 import shutil
 import socket
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 
 class RequirementsChecker:
@@ -43,6 +46,7 @@ class RequirementsChecker:
                 available, message = check_func(backend_type)
                 requirements[req_name] = {"available": available, "message": message}
             except Exception as e:
+                logger.debug("Requirement check failed for %s", req_name, exc_info=True)
                 requirements[req_name] = {
                     "available": False,
                     "message": f"Check failed: {str(e)}",
@@ -72,6 +76,7 @@ class RequirementsChecker:
                 return True, "HORUS backend package found"
             return False, "Install with: sudo apt install ros-humble-horus-backend"
         except Exception:
+            logger.debug("Unable to check ROS 2 package list", exc_info=True)
             return False, "Unable to check package list"
 
 
@@ -88,6 +93,7 @@ class RequirementsChecker:
                 return True, f"Port {port} is in use (backend may be running)"
             return True, f"Port {port} is available"
         except Exception:
+            logger.debug("Unable to check backend port %s", port, exc_info=True)
             return False, f"Unable to check port {port}"
 
     def _check_unity_endpoint(self, backend_type):
@@ -105,4 +111,5 @@ class RequirementsChecker:
                 "Unity bridge not detected (will be started automatically)",
             )
         except Exception:
+            logger.debug("Unable to check Unity bridge port", exc_info=True)
             return False, "Unable to check Unity bridge"
