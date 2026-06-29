@@ -1,0 +1,21 @@
+{
+  "experiment": "E12_map_mesh_sweep",
+  "condition": "octomap_mesh_384k_triangles_5hz_lan",
+  "duration_s": 120,
+  "warmup_s": 30,
+  "repetition": 1,
+  "robot_count": 1,
+  "operator_count": 1,
+  "transport": "ros2",
+  "topology": "lan",
+  "robot_profile": "mapping",
+  "map_profile": "octomap_mesh",
+  "robot_pointcloud": false,
+  "map": {
+    "representation": "octomap_mesh",
+    "chunks": 128,
+    "vertices": 256000,
+    "triangles": 384000,
+    "hz": 5
+  }
+}

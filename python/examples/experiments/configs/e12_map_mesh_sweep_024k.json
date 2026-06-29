@@ -1,6 +1,6 @@
 {
-  "experiment": "E4_mesh_vs_pointcloud_map",
-  "condition": "triangle_shell_mesh_24k_triangles_lan",
+  "experiment": "E12_map_mesh_sweep",
+  "condition": "octomap_mesh_24k_triangles_5hz_lan",
   "duration_s": 120,
   "warmup_s": 30,
   "repetition": 1,
@@ -9,13 +9,13 @@
   "transport": "ros2",
   "topology": "lan",
   "robot_profile": "mapping",
-  "map_profile": "triangle_shell",
+  "map_profile": "octomap_mesh",
   "robot_pointcloud": false,
   "map": {
-    "representation": "triangle_shell_mesh",
+    "representation": "octomap_mesh",
     "chunks": 8,
     "vertices": 16000,
     "triangles": 24000,
-    "hz": 1
+    "hz": 5
   }
 }

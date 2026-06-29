@@ -1,8 +1,8 @@
 {
   "experiment": "E0_baseline",
   "condition": "one_robot_tf_low_rate_camera",
-  "duration_s": 30,
-  "warmup_s": 5,
+  "duration_s": 120,
+  "warmup_s": 30,
   "repetition": 1,
   "robot_count": 1,
   "operator_count": 1,

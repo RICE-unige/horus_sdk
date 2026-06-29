@@ -9,13 +9,34 @@ if [[ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
   source "/opt/ros/${ROS_DISTRO}/setup.bash"
 fi
 
+if [[ -f "${HOME}/horus_ws/install/setup.bash" ]]; then
+  # shellcheck source=/dev/null
+  source "${HOME}/horus_ws/install/setup.bash"
+fi
+
 export PYTHONPATH="${SCRIPT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}"
 export HORUS_SDK_NO_BANNER="${HORUS_SDK_NO_BANNER:-1}"
 
 case "${1:-}" in
   10|camera_capacity|camera-capacity)
     shift
+    exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_orchestrator.py" e10_camera_capacity_staged "$@"
+    ;;
+  camera_capacity_sweep|camera-capacity-sweep)
+    shift
     exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_sweep.py" camera_capacity "$@"
+    ;;
+  11|pointcloud_map_capacity|pointcloud-map-capacity)
+    shift
+    exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_sweep.py" pointcloud_map_capacity "$@"
+    ;;
+  12|mesh_map_capacity|mesh-map-capacity)
+    shift
+    exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_sweep.py" mesh_map_capacity "$@"
+    ;;
+  map_capacity|map-capacity)
+    shift
+    exec python3 "${SCRIPT_DIR}/python/examples/experiments/horus_experiment_sweep.py" map_capacity "$@"
     ;;
 esac
 

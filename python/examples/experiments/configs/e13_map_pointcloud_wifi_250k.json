@@ -1,13 +1,13 @@
 {
-  "experiment": "E4_mesh_vs_pointcloud_map",
-  "condition": "pointcloud_map_250k_points_lan",
+  "experiment": "E13_map_topology",
+  "condition": "pointcloud_map_250k_5hz_wifi",
   "duration_s": 120,
   "warmup_s": 30,
   "repetition": 1,
   "robot_count": 1,
   "operator_count": 1,
   "transport": "ros2",
-  "topology": "lan",
+  "topology": "wifi",
   "robot_profile": "mapping",
   "map_profile": "pointcloud_map",
   "robot_pointcloud": false,
@@ -16,12 +16,20 @@
     "chunks": 1,
     "vertices": 0,
     "triangles": 0,
-    "hz": 1
+    "hz": 5
   },
   "pointcloud": {
     "points": 250000,
-    "hz": 1,
+    "hz": 5,
     "point_step": 16,
     "xyzrgb": true
+  },
+  "radio": {
+    "link": "wifi",
+    "band": "",
+    "channel": "",
+    "channel_width_mhz": "",
+    "rssi_dbm": "",
+    "tx_rate_mbps": ""
   }
 }

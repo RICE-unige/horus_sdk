@@ -12,10 +12,37 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 
 COMMON_FIELDS = ("timestamp_ns", "run_id", "experiment", "condition")
+CLOCK_WALL_ANCHOR_ENV = "HORUS_EXPERIMENT_CLOCK_WALL_ANCHOR_NS"
+CLOCK_MONOTONIC_ANCHOR_ENV = "HORUS_EXPERIMENT_CLOCK_MONOTONIC_ANCHOR_NS"
+
+
+def _env_int(name: str, fallback: int) -> int:
+    try:
+        return int(os.getenv(name, ""))
+    except (TypeError, ValueError):
+        return fallback
+
+
+_CLOCK_WALL_ANCHOR_NS = _env_int(CLOCK_WALL_ANCHOR_ENV, time.time_ns())
+_CLOCK_MONOTONIC_ANCHOR_NS = _env_int(CLOCK_MONOTONIC_ANCHOR_ENV, time.monotonic_ns())
+
+
+def clock_anchor_env() -> Dict[str, str]:
+    return {
+        CLOCK_WALL_ANCHOR_ENV: str(_CLOCK_WALL_ANCHOR_NS),
+        CLOCK_MONOTONIC_ANCHOR_ENV: str(_CLOCK_MONOTONIC_ANCHOR_NS),
+    }
 
 
 def now_ns() -> int:
-    return time.time_ns()
+    """Return a Unix-epoch-like timestamp derived from a monotonic clock.
+
+    WSL and VM environments can step wall-clock time while an experiment is
+    running. The benchmark needs timestamps that share an epoch with Quest/Unity
+    wall time but remain monotonic within the host process, so anchor once to
+    wall time and advance using ``time.monotonic_ns()``.
+    """
+    return _CLOCK_WALL_ANCHOR_NS + (time.monotonic_ns() - _CLOCK_MONOTONIC_ANCHOR_NS)
 
 
 def monotonic_ns() -> int:
@@ -27,6 +54,20 @@ def default_metrics_path(file_name: str) -> Optional[Path]:
     if not root:
         return None
     return Path(root) / file_name
+
+
+def source_metric_stream_seen(path: Path, stream: str) -> bool:
+    path = Path(path)
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if str(row.get("stream") or "") == stream:
+                    return True
+    except Exception:
+        return False
+    return False
 
 
 def normalize_row(row: Any) -> Dict[str, Any]:

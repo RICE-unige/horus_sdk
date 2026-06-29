@@ -39,7 +39,7 @@ class WorkloadConfig:
     experiment: str = "E0_baseline"
     condition: str = "default"
     duration_s: float = 120.0
-    warmup_s: float = 10.0
+    warmup_s: float = 30.0
     repetition: int = 1
     robot_count: int = 1
     operator_count: int = 1

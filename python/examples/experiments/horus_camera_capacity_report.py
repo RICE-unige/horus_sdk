@@ -76,17 +76,75 @@ def rows_in_window(path: Path, start: int | None, end: int | None) -> list[dict[
     return rows
 
 
+def staged_camera_config(manifest: dict[str, Any]) -> dict[str, Any]:
+    workload = ((manifest.get("extra") or {}).get("workload") or {})
+    staging = workload.get("camera_staging") if isinstance(workload, dict) else None
+    if not staging or not isinstance(staging, dict):
+        workload_extra = workload.get("extra") if isinstance(workload, dict) else {}
+        staging = workload_extra.get("camera_staging") if isinstance(workload_extra, dict) else {}
+    if not isinstance(staging, dict):
+        return {}
+    enabled = str(staging.get("enabled", True)).strip().lower() not in {"0", "false", "no", "off"}
+    if not enabled:
+        return {}
+    stream_counts = []
+    for value in staging.get("stream_counts") or staging.get("stages") or []:
+        try:
+            stream_counts.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    try:
+        stage_duration_s = float(staging.get("stage_duration_s") or 0.0)
+    except (TypeError, ValueError):
+        stage_duration_s = 0.0
+    if not stream_counts or stage_duration_s <= 0.0:
+        return {}
+    return {"stream_counts": stream_counts, "stage_duration_s": stage_duration_s}
+
+
 def ratio(numerator: int, denominator: int) -> float:
     return 0.0 if denominator <= 0 else numerator / denominator
 
 
-def summarize_run(run_dir: Path) -> dict[str, Any]:
-    manifest = load_json(run_dir / "run_manifest.json")
-    quality = load_json(run_dir / "data_quality.json")
+def percentile(values: list[float], p: float) -> float | None:
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * min(max(p, 0.0), 100.0) / 100.0
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    frac = rank - low
+    return ordered[low] * (1.0 - frac) + ordered[high] * frac
+
+
+def numeric(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def summarize_window(
+    run_dir: Path,
+    manifest: dict[str, Any],
+    quality: dict[str, Any],
+    derived: dict[str, Any],
+    *,
+    sdk_start: int | None,
+    sdk_end: int | None,
+    headset_start: int | None,
+    headset_end: int | None,
+    stage_index: int | str = "",
+    active_streams: int | str | None = None,
+    stage_start_s: float | str = "",
+    stage_end_s: float | str = "",
+) -> dict[str, Any]:
     workload = ((manifest.get("extra") or {}).get("workload") or {})
     camera = workload.get("camera") or {}
-    sdk_start, sdk_end = sdk_window(run_dir)
-    headset_start, headset_end = headset_window(run_dir)
 
     source_rows = rows_in_window(run_dir / "source_metrics.csv", sdk_start, sdk_end)
     headset_rows = rows_in_window(run_dir / "headset_metrics.csv", headset_start, headset_end)
@@ -103,10 +161,36 @@ def summarize_run(run_dir: Path) -> dict[str, Any]:
     source_count = len(source_camera)
     received_count = len(headset_camera_received)
     displayed_count = len(headset_camera_displayed)
+    if isinstance(stage_start_s, (int, float)) and isinstance(stage_end_s, (int, float)):
+        duration_s = max(0.0, float(stage_end_s) - float(stage_start_s))
+    else:
+        duration_s = numeric(manifest.get("duration_s")) or 0.0
+    displayed_hz_total = displayed_count / duration_s if duration_s > 0 else 0.0
+    streams = numeric(active_streams if active_streams not in (None, "") else camera.get("streams", manifest.get("stream_count", ""))) or 0.0
+    displayed_hz_per_stream = displayed_hz_total / streams if streams > 0 else 0.0
+
+    latency_values: list[float] = []
+    for row in rows_in_window(run_dir / "derived_metrics.csv", sdk_start, sdk_end):
+        if row.get("category") != "latency":
+            continue
+        if "displayed" not in (row.get("name") or ""):
+            continue
+        value = numeric(row.get("latency_ms"))
+        if value is not None:
+            latency_values.append(value)
+    p95_latency = percentile(latency_values, 95)
+    stage_drop_rate = 1.0 - ratio(displayed_count, source_count)
+
     return {
         "run_id": run_dir.name,
         "condition": manifest.get("condition", ""),
-        "quality_ok": quality.get("ok", False),
+        "stage_index": stage_index,
+        "active_streams": active_streams if active_streams not in (None, "") else camera.get("streams", manifest.get("stream_count", "")),
+        "stage_start_s": f"{stage_start_s:.3f}" if isinstance(stage_start_s, (int, float)) else stage_start_s,
+        "stage_end_s": f"{stage_end_s:.3f}" if isinstance(stage_end_s, (int, float)) else stage_end_s,
+        "measurement_valid": quality.get("measurement_valid", quality.get("ok", False)),
+        "within_envelope": quality.get("within_envelope", False),
+        "degraded": quality.get("degraded", False),
         "streams": camera.get("streams", manifest.get("stream_count", "")),
         "resolution": camera.get("resolution", manifest.get("resolution", "")),
         "target_fps": camera.get("fps", manifest.get("target_fps", "")),
@@ -116,7 +200,59 @@ def summarize_run(run_dir: Path) -> dict[str, Any]:
         "headset_camera_displayed": displayed_count,
         "received_ratio": f"{ratio(received_count, source_count):.4f}",
         "displayed_ratio": f"{ratio(displayed_count, source_count):.4f}",
+        "displayed_hz_total": f"{displayed_hz_total:.3f}",
+        "displayed_hz_per_stream": f"{displayed_hz_per_stream:.3f}",
+        "camera_latency_p95_ms_max": f"{p95_latency:.3f}" if p95_latency is not None else "",
+        "camera_drop_rate_max": f"{stage_drop_rate:.4f}" if source_count > 0 else "",
     }
+
+
+def summarize_run(run_dir: Path) -> list[dict[str, Any]]:
+    manifest = load_json(run_dir / "run_manifest.json")
+    quality = load_json(run_dir / "data_quality.json")
+    derived = load_json(run_dir / "derived_summary.json")
+    sdk_start, sdk_end = sdk_window(run_dir)
+    headset_start, headset_end = headset_window(run_dir)
+    staging = staged_camera_config(manifest)
+    if not staging or sdk_start is None or headset_start is None:
+        return [
+            summarize_window(
+                run_dir,
+                manifest,
+                quality,
+                derived,
+                sdk_start=sdk_start,
+                sdk_end=sdk_end,
+                headset_start=headset_start,
+                headset_end=headset_end,
+            )
+        ]
+
+    duration_s = numeric(manifest.get("duration_s")) or 0.0
+    stage_duration_s = float(staging["stage_duration_s"])
+    rows: list[dict[str, Any]] = []
+    for index, stream_count in enumerate(staging["stream_counts"]):
+        start_s = index * stage_duration_s
+        end_s = min(duration_s, (index + 1) * stage_duration_s)
+        if end_s <= start_s:
+            continue
+        rows.append(
+            summarize_window(
+                run_dir,
+                manifest,
+                quality,
+                derived,
+                sdk_start=sdk_start + int(start_s * 1_000_000_000),
+                sdk_end=sdk_start + int(end_s * 1_000_000_000),
+                headset_start=headset_start + int(start_s * 1_000_000_000),
+                headset_end=headset_start + int(end_s * 1_000_000_000),
+                stage_index=index,
+                active_streams=stream_count,
+                stage_start_s=start_s,
+                stage_end_s=end_s,
+            )
+        )
+    return rows
 
 
 def main() -> int:
@@ -124,7 +260,7 @@ def main() -> int:
     runs = [run.resolve() for run in (args.runs or sorted(args.results_root.glob("e10_camera_capacity_*"))) if run.is_dir()]
     if not args.include_incomplete:
         runs = [run for run in runs if (run / "data_quality.json").exists()]
-    rows = [summarize_run(run) for run in runs]
+    rows = [row for run in runs for row in summarize_run(run)]
     if not rows:
         print("No completed E10 camera-capacity run folders found.", file=sys.stderr)
         return 1

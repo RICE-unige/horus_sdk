@@ -2,7 +2,7 @@
   "experiment": "E10_camera_capacity",
   "condition": "ros_compressed_1280x720_30fps_2streams_lan",
   "duration_s": 120,
-  "warmup_s": 10,
+  "warmup_s": 30,
   "repetition": 1,
   "robot_count": 2,
   "operator_count": 1,
@@ -14,7 +14,7 @@
     "streams": 2,
     "resolution": "1280x720",
     "fps": 30,
-    "encoding": "compressed",
+    "encoding": "ros_compressed",
     "bitrate_mbps": 0.0
   },
   "capacity_sweep": {

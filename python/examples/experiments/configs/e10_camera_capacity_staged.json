@@ -1,25 +1,31 @@
 {
   "experiment": "E10_camera_capacity",
-  "condition": "ros_compressed_1280x720_30fps_6streams_lan",
-  "duration_s": 120,
+  "condition": "ros_compressed_1280x720_30fps_staged_1to8_lan",
+  "duration_s": 300,
   "warmup_s": 30,
   "repetition": 1,
-  "robot_count": 6,
+  "robot_count": 8,
   "operator_count": 1,
   "transport": "ros2_compressed",
   "topology": "lan",
   "robot_profile": "camera_capacity",
   "map_profile": "none",
   "camera": {
-    "streams": 6,
+    "streams": 8,
     "resolution": "1280x720",
     "fps": 30,
     "encoding": "ros_compressed",
     "bitrate_mbps": 0.0
   },
+  "camera_staging": {
+    "enabled": true,
+    "stage_duration_s": 60,
+    "stream_counts": [1, 2, 4, 6, 8]
+  },
   "capacity_sweep": {
     "family": "ros_compressed",
-    "stream_count": 6,
+    "mode": "staged_single_run",
+    "stream_count": 8,
     "sweep_values": [1, 2, 4, 6, 8],
     "success_criteria": {
       "headset_displayed_ratio_min": 0.9,

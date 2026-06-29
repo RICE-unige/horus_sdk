@@ -1,6 +1,6 @@
 {
-  "experiment": "E4_mesh_vs_pointcloud_map",
-  "condition": "pointcloud_map_250k_points_lan",
+  "experiment": "E11_map_pointcloud_sweep",
+  "condition": "pointcloud_map_100k_5hz_lan",
   "duration_s": 120,
   "warmup_s": 30,
   "repetition": 1,
@@ -16,11 +16,11 @@
     "chunks": 1,
     "vertices": 0,
     "triangles": 0,
-    "hz": 1
+    "hz": 5
   },
   "pointcloud": {
-    "points": 250000,
-    "hz": 1,
+    "points": 100000,
+    "hz": 5,
     "point_step": 16,
     "xyzrgb": true
   }

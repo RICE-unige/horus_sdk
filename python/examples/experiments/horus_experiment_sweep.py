@@ -20,6 +20,28 @@ SUITES = {
         "e10_camera_capacity_ros_06stream",
         "e10_camera_capacity_ros_08stream",
     ],
+    "pointcloud_map_capacity": [
+        "e11_map_pointcloud_sweep_0100k",
+        "e11_map_pointcloud_sweep_0250k",
+        "e11_map_pointcloud_sweep_0500k",
+        "e11_map_pointcloud_sweep_1000k",
+    ],
+    "mesh_map_capacity": [
+        "e12_map_mesh_sweep_024k",
+        "e12_map_mesh_sweep_096k",
+        "e12_map_mesh_sweep_192k",
+        "e12_map_mesh_sweep_384k",
+    ],
+    "map_capacity": [
+        "e11_map_pointcloud_sweep_0100k",
+        "e11_map_pointcloud_sweep_0250k",
+        "e11_map_pointcloud_sweep_0500k",
+        "e11_map_pointcloud_sweep_1000k",
+        "e12_map_mesh_sweep_024k",
+        "e12_map_mesh_sweep_096k",
+        "e12_map_mesh_sweep_192k",
+        "e12_map_mesh_sweep_384k",
+    ],
 }
 
 

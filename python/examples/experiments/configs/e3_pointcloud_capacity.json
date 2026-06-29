@@ -2,7 +2,7 @@
   "experiment": "E3_pointcloud_capacity",
   "condition": "250k_points_5hz_1robot_lan",
   "duration_s": 120,
-  "warmup_s": 10,
+  "warmup_s": 30,
   "repetition": 1,
   "robot_count": 1,
   "operator_count": 1,

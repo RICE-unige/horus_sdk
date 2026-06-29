@@ -2,7 +2,7 @@
   "experiment": "E8_multi_operator_scaling",
   "condition": "4operators_4robots_shared_private_lan",
   "duration_s": 120,
-  "warmup_s": 10,
+  "warmup_s": 30,
   "repetition": 1,
   "robot_count": 4,
   "operator_count": 4,
@@ -14,7 +14,11 @@
     "streams": 2,
     "resolution": "640x480",
     "fps": 15,
-    "encoding": "compressed",
+    "encoding": "ros_compressed",
     "bitrate_mbps": 0.0
+  },
+  "extra": {
+    "navigation": true,
+    "robot_pointcloud": false
   }
 }

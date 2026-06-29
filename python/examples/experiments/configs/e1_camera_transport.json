@@ -2,7 +2,7 @@
   "experiment": "E1_camera_transport",
   "condition": "ros_compressed_1280x720_30fps_4streams_lan",
   "duration_s": 120,
-  "warmup_s": 10,
+  "warmup_s": 30,
   "repetition": 1,
   "robot_count": 4,
   "operator_count": 1,

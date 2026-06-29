@@ -2,11 +2,11 @@
   "experiment": "E9_failure_recovery",
   "condition": "bridge_restart_stream_recovery_lan",
   "duration_s": 120,
-  "warmup_s": 10,
+  "warmup_s": 30,
   "repetition": 1,
   "robot_count": 1,
   "operator_count": 1,
-  "transport": "mixed",
+  "transport": "ros2",
   "topology": "lan",
   "robot_profile": "navigation_perception",
   "map_profile": "none",
@@ -14,7 +14,7 @@
     "streams": 1,
     "resolution": "640x480",
     "fps": 15,
-    "encoding": "h264",
+    "encoding": "ros_compressed",
     "bitrate_mbps": 3.0
   },
   "extra": {

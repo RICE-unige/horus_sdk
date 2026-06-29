@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - optional runtime acceleration.
     PillowImage = None
 
 import rclpy
+from rclpy._rclpy_pybind11 import RCLError
 from rclpy.executors import ExternalShutdownException
 from geometry_msgs.msg import Point, PoseStamped, TransformStamped, Twist
 from nav_msgs.msg import Odometry, Path as PathMsg
@@ -35,12 +36,14 @@ from std_msgs.msg import ColorRGBA, Header, String
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import Marker
 
-from horus.experiments.metrics import CsvMetricWriter, NdjsonEventWriter, default_metrics_path
+from horus.experiments.metrics import CsvMetricWriter, NdjsonEventWriter, default_metrics_path, now_ns
 from horus.experiments.workloads import WorkloadConfig, load_workload_config
 
 
 STOP_REQUESTED = False
 CAMERA_ANIMATION_FRAMES = 4
+POINTCLOUD_ANIMATION_FRAMES = 4
+CONTROL_TOPIC = "/horus/experiments/control"
 
 
 def request_stop(_signum: int, _frame: object) -> None:
@@ -120,7 +123,15 @@ def clamp_rate(value: float, fallback: float) -> float:
 
 def camera_is_compressed(workload: WorkloadConfig) -> bool:
     encoding = str(workload.camera.encoding or "").strip().lower()
-    return encoding in {"compressed", "jpeg", "jpg"}
+    return encoding in {
+        "compressed",
+        "compressed_image",
+        "jpeg",
+        "jpg",
+        "ros_compressed",
+        "sensor_msgs/compressedimage",
+        "sensor_msgs/msg/compressedimage",
+    }
 
 
 def camera_uses_webrtc(workload: WorkloadConfig) -> bool:
@@ -147,9 +158,26 @@ def navigation_enabled(workload: WorkloadConfig) -> bool:
     return value is True or str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def workload_extra(workload: WorkloadConfig) -> dict[str, Any]:
+    extra = dict(getattr(workload, "extra", {}) or {})
+    nested = extra.get("extra")
+    if isinstance(nested, dict):
+        extra.update(nested)
+    return extra
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def make_header(node: Node, frame_id: str) -> Header:
     header = Header()
-    header.stamp = node.get_clock().now().to_msg()
+    stamp_ns = now_ns()
+    header.stamp.sec = int(stamp_ns // 1_000_000_000)
+    header.stamp.nanosec = int(stamp_ns % 1_000_000_000)
     header.frame_id = frame_id
     return header
 
@@ -160,6 +188,10 @@ class SyntheticWorkloadNode(Node):
         self.workload = workload
         self.navigation_enabled = navigation_enabled(workload)
         self.control_load_enabled = self._control_load_enabled()
+        self.gate_heavy_streams = env_flag("HORUS_EXPERIMENT_GATE_HEAVY_STREAMS")
+        self.heavy_streams_started = False
+        results_dir = os.getenv("HORUS_EXPERIMENT_RESULTS_DIR", "")
+        self.workload_start_signal = Path(results_dir) / "workload_start.json" if results_dir else None
         self.started = time.monotonic()
         self.sequence = 0
         self.map_sequence = 0
@@ -168,21 +200,39 @@ class SyntheticWorkloadNode(Node):
         self.width, self.height = parse_resolution(workload.camera.resolution)
         self.compressed_camera = camera_is_compressed(workload)
         self.webrtc_camera = camera_uses_webrtc(workload)
+        self.camera_stage_streams = self._camera_stage_stream_counts()
+        self.camera_stage_duration_s = self._camera_stage_duration()
+        self.camera_stage_started_at: float | None = None
+        self.camera_stage_index = -1
+        self.camera_stage_measurement_started = False
+        self.active_camera_streams = max(0, workload.camera.streams)
         self.raw_camera_frames = [
             self._make_camera_payload(self.width, self.height, phase)
             for phase in range(CAMERA_ANIMATION_FRAMES)
         ]
         self.jpeg_camera_frames = self._make_jpeg_frames()
         self.pointcloud_payloads = {
-            name: self._make_pointcloud_payload(max(0, workload.pointcloud.points), max(16, workload.pointcloud.point_step), idx)
+            name: [
+                self._make_pointcloud_payload(
+                    max(0, workload.pointcloud.points),
+                    max(16, workload.pointcloud.point_step),
+                    idx * 101 + phase,
+                )
+                for phase in range(POINTCLOUD_ANIMATION_FRAMES)
+            ]
             for idx, name in enumerate(self.robot_names)
         }
-        self.map_pointcloud_payload = self._make_pointcloud_payload(
-            max(0, workload.pointcloud.points),
-            max(16, workload.pointcloud.point_step),
-            99,
-            map_cloud=True,
-        )
+        self.pointcloud_sequences = {name: 0 for name in self.robot_names}
+        self.map_pointcloud_sequence = 0
+        self.map_pointcloud_payloads = [
+            self._make_pointcloud_payload(
+                max(0, workload.pointcloud.points),
+                max(16, workload.pointcloud.point_step),
+                990 + phase,
+                map_cloud=True,
+            )
+            for phase in range(POINTCLOUD_ANIMATION_FRAMES)
+        ]
         self.mesh_chunks = self._make_mesh_chunks()
 
         metrics_path = Path(metrics_csv) if metrics_csv else default_metrics_path("source_metrics.csv")
@@ -216,6 +266,11 @@ class SyntheticWorkloadNode(Node):
                 writer.__enter__()
 
         self.tf_pub = self.create_publisher(TFMessage, "/tf", 20)
+        self.control_sub = (
+            self.create_subscription(String, CONTROL_TOPIC, self.on_experiment_control, 10)
+            if self.gate_heavy_streams
+            else None
+        )
         self.presence_pub = self.create_publisher(String, "/horus/multi_operator_presence", 10)
         self.lease_state_pub = self.create_publisher(String, "/horus/multi_operator/control_lease_state", 10)
         self.camera_pubs = self._create_camera_publishers()
@@ -262,19 +317,21 @@ class SyntheticWorkloadNode(Node):
         )
 
         self.create_timer(1.0 / 20.0, self.publish_state)
-        camera_rate = clamp_rate(workload.camera.fps, 1.0)
-        for spec in self.camera_pubs:
-            self.publish_camera(spec)
-            self.create_timer(1.0 / camera_rate, lambda spec=spec: self.publish_camera(spec))
-        if self.pointcloud_pubs:
-            self.publish_pointclouds()
-            self.create_timer(1.0 / clamp_rate(workload.pointcloud.hz, 1.0), self.publish_pointclouds)
-        if self.map_points_pub is not None:
-            self.publish_map_points()
-            self.create_timer(1.0 / clamp_rate(workload.map.hz, 1.0), self.publish_map_points)
-        if self.mesh_pub is not None:
-            self.publish_mesh_snapshot()
-            self.create_timer(1.0 / clamp_rate(workload.map.hz, 1.0), self.publish_mesh_snapshot)
+        if self.gate_heavy_streams:
+            self.write_event(
+                "heavy_streams_waiting",
+                {
+                    "control_topic": CONTROL_TOPIC,
+                    "signal_path": str(self.workload_start_signal or ""),
+                    "camera_streams": len(self.camera_pubs),
+                    "pointcloud_streams": len(self.pointcloud_pubs),
+                    "map_pointcloud": self.map_points_pub is not None,
+                    "mesh_chunks": len(self.mesh_chunks),
+                },
+            )
+            self.create_timer(0.1, self.check_workload_start_signal)
+        else:
+            self.start_heavy_streams("startup")
         if workload.operator_count > 1:
             self.publish_operator_emulation()
             self.create_timer(1.0, self.publish_operator_emulation)
@@ -294,6 +351,137 @@ class SyntheticWorkloadNode(Node):
                 "mesh_triangles": workload.map.triangles,
                 "navigation_enabled": self.navigation_enabled,
                 "control_load_enabled": self.control_load_enabled,
+            },
+        )
+
+    def on_experiment_control(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        action = payload.get("action")
+        if action not in {"start", "workload_start", "measurement_start"}:
+            return
+        target_run_id = str(payload.get("run_id") or "").strip()
+        local_run_id = os.getenv("HORUS_EXPERIMENT_RUN_ID", "manual")
+        if target_run_id and target_run_id != local_run_id:
+            return
+        self.start_heavy_streams(str(action))
+        if action == "measurement_start" and not self.camera_stage_measurement_started:
+            self.camera_stage_measurement_started = True
+            self.reset_camera_stage_schedule(str(action))
+
+    def check_workload_start_signal(self) -> None:
+        if self.heavy_streams_started or self.workload_start_signal is None:
+            return
+        if not self.workload_start_signal.exists():
+            return
+        try:
+            payload = json.loads(self.workload_start_signal.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+        target_run_id = str(payload.get("run_id") or "").strip() if isinstance(payload, dict) else ""
+        local_run_id = os.getenv("HORUS_EXPERIMENT_RUN_ID", "manual")
+        if target_run_id and target_run_id != local_run_id:
+            return
+        self.start_heavy_streams("workload_start_signal")
+
+    def start_heavy_streams(self, reason: str) -> None:
+        if self.heavy_streams_started:
+            return
+        self.heavy_streams_started = True
+        if self.camera_stage_streams:
+            self.reset_camera_stage_schedule(reason)
+        camera_rate = clamp_rate(self.workload.camera.fps, 1.0)
+        for spec in self.camera_pubs:
+            self.publish_camera(spec)
+            self.create_timer(1.0 / camera_rate, lambda spec=spec: self.publish_camera(spec))
+        if self.camera_stage_streams:
+            self.create_timer(0.25, self.update_camera_stage)
+        if self.pointcloud_pubs:
+            self.publish_pointclouds()
+            self.create_timer(1.0 / clamp_rate(self.workload.pointcloud.hz, 1.0), self.publish_pointclouds)
+        if self.map_points_pub is not None:
+            self.publish_map_points()
+            self.create_timer(1.0 / clamp_rate(self.workload.map.hz, 1.0), self.publish_map_points)
+        if self.mesh_pub is not None:
+            self.publish_mesh_snapshot()
+            self.create_timer(1.0 / clamp_rate(self.workload.map.hz, 1.0), self.publish_mesh_snapshot)
+        self.write_event(
+            "heavy_streams_started",
+            {
+                "reason": reason,
+                "camera_streams": len(self.camera_pubs),
+                "pointcloud_streams": len(self.pointcloud_pubs),
+                "map_pointcloud": self.map_points_pub is not None,
+                "mesh_chunks": len(self.mesh_chunks),
+            },
+        )
+
+    def _camera_stage_stream_counts(self) -> list[int]:
+        extra = workload_extra(self.workload)
+        staging = extra.get("camera_staging")
+        if not isinstance(staging, dict):
+            return []
+        enabled = str(staging.get("enabled", True)).strip().lower() not in {"0", "false", "no", "off"}
+        if not enabled:
+            return []
+        values = staging.get("stream_counts") or staging.get("stages") or []
+        counts: list[int] = []
+        for value in values:
+            try:
+                count = int(value)
+            except (TypeError, ValueError):
+                continue
+            count = max(0, min(count, max(0, self.workload.camera.streams)))
+            if not counts or counts[-1] != count:
+                counts.append(count)
+        return counts
+
+    def _camera_stage_duration(self) -> float:
+        extra = workload_extra(self.workload)
+        staging = extra.get("camera_staging")
+        if not isinstance(staging, dict):
+            return 0.0
+        try:
+            duration = float(staging.get("stage_duration_s", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(1.0, duration)
+
+    def reset_camera_stage_schedule(self, reason: str) -> None:
+        if not self.camera_stage_streams:
+            return
+        self.camera_stage_started_at = time.monotonic()
+        self.set_camera_stage(0, reason)
+
+    def update_camera_stage(self) -> None:
+        if not self.camera_stage_streams or self.camera_stage_started_at is None:
+            return
+        elapsed = time.monotonic() - self.camera_stage_started_at
+        index = min(
+            len(self.camera_stage_streams) - 1,
+            int(elapsed // max(1.0, self.camera_stage_duration_s)),
+        )
+        if index != self.camera_stage_index:
+            self.set_camera_stage(index, "schedule")
+
+    def set_camera_stage(self, index: int, reason: str) -> None:
+        if not self.camera_stage_streams:
+            return
+        index = max(0, min(index, len(self.camera_stage_streams) - 1))
+        stream_count = self.camera_stage_streams[index]
+        self.camera_stage_index = index
+        self.active_camera_streams = stream_count
+        elapsed = 0.0 if self.camera_stage_started_at is None else time.monotonic() - self.camera_stage_started_at
+        self.write_event(
+            "camera_stage_started",
+            {
+                "stage_index": index,
+                "active_streams": stream_count,
+                "stage_duration_s": self.camera_stage_duration_s,
+                "elapsed_s": elapsed,
+                "reason": reason,
             },
         )
 
@@ -417,11 +605,19 @@ class SyntheticWorkloadNode(Node):
             marker.color = ColorRGBA(r=0.35, g=0.72, b=0.82, a=0.95)
             for i in range(start, end):
                 x = (i % side) * size - side * size * 0.5
-                z = (i // side) * size - side * size * 0.25
-                y = 0.16 * math.sin(x * 0.8) * math.cos(z * 0.5)
-                marker.points.append(Point(x=x, y=y, z=z))
-                marker.points.append(Point(x=x + size, y=y + 0.03 * math.sin(i), z=z))
-                marker.points.append(Point(x=x, y=y + 0.03 * math.cos(i), z=z + size))
+                y = (i // side) * size - side * size * 0.25
+                height = 0.16 * math.sin(x * 0.8) * math.cos(y * 0.5)
+                color_phase = 0.5 + 0.5 * math.sin((x * 0.55) + (y * 0.35))
+                color = ColorRGBA(
+                    r=0.22 + 0.18 * color_phase,
+                    g=0.58 + 0.24 * (1.0 - color_phase),
+                    b=0.76 + 0.18 * color_phase,
+                    a=0.95,
+                )
+                marker.points.append(Point(x=x, y=y, z=height))
+                marker.points.append(Point(x=x + size, y=y, z=height + 0.03 * math.sin(i)))
+                marker.points.append(Point(x=x, y=y + size, z=height + 0.03 * math.cos(i)))
+                marker.colors.extend((color, color, color))
             chunks.append(marker)
         return chunks
 
@@ -503,6 +699,8 @@ class SyntheticWorkloadNode(Node):
         self.path_pubs[robot_name].publish(path)
 
     def publish_camera(self, spec: dict[str, Any]) -> None:
+        if self.camera_stage_streams and int(spec.get("stream_index", 0)) >= self.active_camera_streams:
+            return
         frame_seq = int(spec.get("frame_seq", 0)) + 1
         spec["frame_seq"] = frame_seq
         self.sequence += 1
@@ -543,44 +741,58 @@ class SyntheticWorkloadNode(Node):
             resolution=f"{self.width}x{self.height}",
             encoding=encoding,
             fallback=str(fallback).lower(),
-            notes=f"frame_phase={phase};jpeg_encoder_missing" if fallback else f"frame_phase={phase}",
+            notes=(
+                f"frame_phase={phase};active_camera_streams={self.active_camera_streams};"
+                f"camera_stage={self.camera_stage_index};jpeg_encoder_missing"
+                if fallback
+                else f"frame_phase={phase};active_camera_streams={self.active_camera_streams};camera_stage={self.camera_stage_index}"
+            ),
         )
 
     def publish_pointclouds(self) -> None:
         for robot_name, publisher in self.pointcloud_pubs.items():
             self.sequence += 1
-            payload = self.pointcloud_payloads[robot_name]
+            frame_seq = self.pointcloud_sequences.get(robot_name, 0) + 1
+            self.pointcloud_sequences[robot_name] = frame_seq
+            payloads = self.pointcloud_payloads[robot_name]
+            phase = (frame_seq - 1) % len(payloads)
+            payload = payloads[phase]
             msg = self.make_pointcloud(f"{robot_name}/lidar_link", self.workload.pointcloud.points, payload)
             publisher.publish(msg)
             self.write_metric(
                 robot_id=robot_name,
                 stream="pointcloud",
                 topic=f"/{robot_name}/points",
-                seq=self.sequence,
+                seq=frame_seq,
                 source_hz=self.workload.pointcloud.hz,
                 payload_bytes=len(payload),
                 transport="ros2",
                 points=msg.width,
                 point_step=msg.point_step,
+                notes=f"frame_phase={phase}",
             )
 
     def publish_map_points(self) -> None:
         if self.map_points_pub is None:
             return
         self.sequence += 1
-        msg = self.make_pointcloud("map", self.workload.pointcloud.points, self.map_pointcloud_payload)
+        self.map_pointcloud_sequence += 1
+        phase = (self.map_pointcloud_sequence - 1) % len(self.map_pointcloud_payloads)
+        payload = self.map_pointcloud_payloads[phase]
+        msg = self.make_pointcloud("map", self.workload.pointcloud.points, payload)
         self.map_points_pub.publish(msg)
         self.write_metric(
             robot_id="world",
             stream="map_pointcloud",
             topic="/horus/experiment/map_points",
-            seq=self.sequence,
+            seq=self.map_pointcloud_sequence,
             source_hz=self.workload.map.hz,
-            payload_bytes=len(self.map_pointcloud_payload),
+            payload_bytes=len(payload),
             transport="ros2",
             points=msg.width,
             point_step=msg.point_step,
             representation="pointcloud",
+            notes=f"frame_phase={phase}",
         )
 
     def make_pointcloud(self, frame_id: str, points: int, payload: bytes) -> PointCloud2:
@@ -788,7 +1000,7 @@ def main() -> int:
         while not STOP_REQUESTED and time.monotonic() < deadline and rclpy.ok():
             try:
                 rclpy.spin_once(node, timeout_sec=0.05)
-            except ExternalShutdownException:
+            except (ExternalShutdownException, RCLError):
                 break
     finally:
         node.destroy_node()

@@ -181,6 +181,9 @@ obj/
 *.log
 .history/
 results/
+results_rejected/
+analysis/
+paper_analysis/
 
 # Dependency directories
 node_modules/
@@ -254,6 +257,7 @@ pip-wheel-metadata/
 *.pid
 *.sock
 *.port
+results/
 
 # Rust workspace artifacts
 rust/Cargo.lock

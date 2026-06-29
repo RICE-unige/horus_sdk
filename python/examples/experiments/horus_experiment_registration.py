@@ -23,7 +23,15 @@ from horus.sensors import Camera, Lidar3D
 
 def camera_is_compressed(workload: WorkloadConfig) -> bool:
     encoding = str(workload.camera.encoding or "").strip().lower()
-    return encoding in {"compressed", "jpeg", "jpg"}
+    return encoding in {
+        "compressed",
+        "compressed_image",
+        "jpeg",
+        "jpg",
+        "ros_compressed",
+        "sensor_msgs/compressedimage",
+        "sensor_msgs/msg/compressedimage",
+    }
 
 
 def camera_uses_webrtc(workload: WorkloadConfig) -> bool:
@@ -48,6 +56,8 @@ def navigation_enabled(workload: WorkloadConfig) -> bool:
 
 def camera_topic(robot_name: str, camera_index: int, workload: WorkloadConfig) -> str:
     base = f"/{robot_name}/camera_{camera_index}/image_raw"
+    if camera_uses_webrtc(workload):
+        return f"/{robot_name}/camera_{camera_index}/webrtc/image_raw"
     if camera_is_compressed(workload):
         return f"{base}/compressed"
     return base
@@ -218,10 +228,12 @@ def attach_global_layers(dataviz: DataViz, workload: WorkloadConfig) -> None:
             render_options={
                 "max_triangles": max(1000, int(workload.map.triangles)),
                 "chunk_max_triangles": max(1000, math.ceil(max(1, workload.map.triangles) / max(1, workload.map.chunks or 1))),
-                "use_vertex_colors": False,
+                "use_vertex_colors": True,
                 "alpha": 0.95,
+                "double_sided": True,
                 "transport": "marker",
                 "source_coordinate_space": "enu",
+                "color": "#59B8D1",
             },
         )
     if "pointcloud" in representation:
@@ -255,6 +267,12 @@ def build_registration(workload: WorkloadConfig) -> tuple[list[Robot], list[Data
 
 
 def registration_preview(robots: list[Robot], datavizs: list[DataViz], workload: WorkloadConfig) -> dict[str, Any]:
+    representation = str(workload.map.representation or "none").lower()
+    robot_pointcloud = (
+        robot_pointcloud_enabled(workload)
+        and int(workload.pointcloud.points or 0) > 0
+        and float(workload.pointcloud.hz or 0.0) > 0.0
+    )
     return {
         "experiment": workload.experiment,
         "condition": workload.condition,
@@ -262,7 +280,9 @@ def registration_preview(robots: list[Robot], datavizs: list[DataViz], workload:
         "robot_count": len(robots),
         "visualization_count": sum(len(dataviz.visualizations) for dataviz in datavizs),
         "camera_streams": int(workload.camera.streams or 0),
-        "pointcloud_points_per_robot": int(workload.pointcloud.points or 0),
+        "robot_pointcloud_enabled": robot_pointcloud,
+        "pointcloud_points_per_robot": int(workload.pointcloud.points or 0) if robot_pointcloud else 0,
+        "map_pointcloud_points": int(workload.pointcloud.points or 0) if "pointcloud" in representation else 0,
         "map_representation": workload.map.representation,
         "map_triangles": int(workload.map.triangles or 0),
         "navigation_enabled": navigation_enabled(workload),
