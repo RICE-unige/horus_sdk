@@ -80,6 +80,8 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 - ROS packages are installed through the ROS/apt environment, not as portable PyPI dependencies.
 - Installed/buildable `horus_ros2` bridge runtime (`horus_unity_bridge`); SDK registration auto-starts it when needed
 
+For WSL, VPN, Docker, or multi-NIC machines, set `HORUS_SDK_ADVERTISE_IP=<reachable-ip>` when the Quest/app should connect to a specific interface.
+
 > [!WARNING]
 > `horus_ros2/main` currently includes `GenericClient`-based bridge code that is not available in ROS 2 Humble headers.
 > For this reason, `horus_sdk` CI on Humble validates `horus_interfaces` and `horus_backend` from `horus_ros2` and skips `horus_unity_bridge` packages.
@@ -97,6 +99,8 @@ Default install root:
 - `~/horus/sdk`
 - `~/horus/ros2`
 - `~/horus/bin`
+
+Treat `~/horus/sdk` and `~/horus/ros2` as installed runtime copies. For development and debugging, use a normal source checkout such as `~/horus_sdk` and `~/horus_ws/src/horus_ros2`.
 
 Post-install helpers:
 - `horus-status`
@@ -215,7 +219,7 @@ For advanced Carter validation with topic probing, Nav2 action bridging, and Apr
 
 ### Live Unitree Go1 registration
 
-Use this for the real Unitree Go1 ROS graph. The registration includes TF, the front compressed camera, LaserScan, collision alert DataViz, Robot Manager, legged teleop on `/unitree_go1/cmd_vel`, and the real Go1 URDF visual mesh from `/home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description`.
+Use this for the real Unitree Go1 ROS graph. The registration includes TF, the front compressed camera, LaserScan, collision alert DataViz, Robot Manager, legged teleop on `/unitree_go1/cmd_vel`, and the real Go1 URDF visual mesh from `GO1_DESCRIPTION_ROOT`.
 
 The HORUS MR legged action buttons publish `/unitree_go1/stand_up` and `/unitree_go1/sit_down`. The support relay below maps those to the Unitree SDK high-mode service `/unitree_go1/legged_sdk/set_high_mode` with `mode=10` for stand and `mode=20` for sit. The same relay also converts `/unitree_go1/scan` into `/unitree_go1/collision_risk` so the HORUS collision alert layer can render live obstacle risk.
 
@@ -226,7 +230,7 @@ source ~/horus_ws/install/setup.bash
 export PYTHONPATH=python:$PYTHONPATH
 
 # Required robot-description source for visual mesh registration:
-# /home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description/urdf/go1.urdf
+export GO1_DESCRIPTION_ROOT=/path/to/go1_description
 
 # Terminal A: relay HORUS legged buttons to Unitree SetHighMode service
 python3 python/examples/tools/unitree_go1_high_mode_relay.py
