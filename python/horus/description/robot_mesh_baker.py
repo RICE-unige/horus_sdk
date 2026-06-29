@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import os
 import shutil
@@ -19,6 +20,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .robot_description_models import MeshAsset
+
+logger = logging.getLogger(__name__)
 
 
 def _float_list(values: np.ndarray) -> List[float]:
@@ -364,7 +367,7 @@ class RobotMeshBaker:
             if windows_path:
                 return windows_path
         except Exception:
-            pass
+            logger.debug("Failed to convert WSL path %s for Windows Blender", path_value, exc_info=True)
         return str(path_value)
 
     def _normalize_to_obj_if_needed(self, source_path: Path) -> Optional[Path]:
@@ -508,6 +511,7 @@ class RobotMeshBaker:
                 return self._binary_stl_to_obj(source_path, output_path)
             return self._ascii_stl_to_obj(source_path, output_path)
         except Exception:
+            logger.debug("Failed to convert STL mesh %s to OBJ", source_path, exc_info=True)
             return None
 
     def _binary_stl_to_obj(self, source_path: Path, output_path: Path) -> Path:
@@ -581,6 +585,7 @@ class RobotMeshBaker:
         try:
             root = ET.parse(source_path).getroot()
         except Exception:
+            logger.debug("Failed to parse DAE mesh %s", source_path, exc_info=True)
             return None
 
         namespace = ""
@@ -941,7 +946,7 @@ class RobotMeshBaker:
                                 dtype=np.float32,
                             )
                         except Exception:
-                            pass
+                            logger.debug("Ignoring malformed Kd material color in %s: %s", mtl_path, line, exc_info=True)
         return material_colors
 
     def _simplify_mesh(

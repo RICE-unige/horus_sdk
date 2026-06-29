@@ -8,6 +8,7 @@ import base64
 import gzip
 import hashlib
 import json
+import logging
 import math
 import os
 import shutil
@@ -27,6 +28,8 @@ from .robot_description_models import (
     RobotDescriptionV2,
 )
 from .robot_mesh_baker import RobotMeshBaker
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_vec3(raw_value: Optional[str], default_xyz: Tuple[float, float, float]) -> List[float]:
@@ -199,6 +202,9 @@ class RobotDescriptionResolveConfig:
     urdf_path: str = ""
     ros_param_node: str = ""
     ros_param_name: str = "robot_description"
+    robot_description_topic: str = "/robot_description"
+    urdf_package: str = ""
+    mesh_root: str = ""
     base_frame: str = "base_link"
     chunk_size_bytes: int = 12000
     is_transparent: bool = False
@@ -218,6 +224,7 @@ class RobotDescriptionResolver:
         self._last_error: str = ""
         self._last_resolution_cache_status: str = "miss"
         self._mesh_baker = RobotMeshBaker()
+        self._package_share_cache: Dict[str, Optional[Path]] = {}
 
     @property
     def last_error(self) -> str:
@@ -266,6 +273,7 @@ class RobotDescriptionResolver:
             return None
         except Exception as exc:
             self._last_error = f"Robot description compile failed: {exc}"
+            logger.debug("Robot description compile failed", exc_info=True)
             return None
         payload_json = json.dumps(payload.to_dict(), sort_keys=True, separators=(",", ":"))
         description_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
@@ -308,6 +316,7 @@ class RobotDescriptionResolver:
             is_transparent=requested_transparent,
             encoding="json+gzip+base64",
             chunk_size_bytes=chunk_size,
+            body_mesh_mode=config.body_mesh_mode,
         )
 
         artifact = RobotDescriptionArtifact(
@@ -356,6 +365,7 @@ class RobotDescriptionResolver:
             is_transparent=requested_transparent,
             encoding=cached.manifest.encoding,
             chunk_size_bytes=chunk_size,
+            body_mesh_mode=cached.manifest.body_mesh_mode,
         )
         return RobotDescriptionArtifact(
             manifest=variant_manifest,
@@ -375,7 +385,7 @@ class RobotDescriptionResolver:
         is_transparent = _coerce_bool(config.get("is_transparent", False), False)
         include_visual_meshes = _coerce_bool(config.get("include_visual_meshes", True), True)
         source = str(config.get("source", "ros") or "ros").strip().lower()
-        if source not in {"ros"}:
+        if source not in {"ros", "topic"}:
             source = "ros"
 
         chunk_size = config.get("chunk_size_bytes", 12000)
@@ -403,6 +413,9 @@ class RobotDescriptionResolver:
             urdf_path=str(config.get("urdf_path", "") or "").strip(),
             ros_param_node=str(config.get("ros_param_node", "") or "").strip(),
             ros_param_name=str(config.get("ros_param_name", "robot_description") or "robot_description").strip(),
+            robot_description_topic=str(config.get("robot_description_topic", "/robot_description") or "/robot_description").strip() or "/robot_description",
+            urdf_package=str(config.get("urdf_package", "") or "").strip(),
+            mesh_root=str(config.get("mesh_root", "") or "").strip(),
             base_frame=str(config.get("base_frame", "base_link") or "base_link").strip() or "base_link",
             chunk_size_bytes=max(1024, min(64000, chunk_size)),
             is_transparent=is_transparent,
@@ -430,8 +443,11 @@ class RobotDescriptionResolver:
             except OSError as exc:
                 return "", f"Failed reading URDF file '{candidate}': {exc}"
 
+        if config.source == "topic":
+            return self._resolve_urdf_xml_from_topic(config)
+
         if not config.ros_param_node:
-            return "", "No URDF path and no ros_param_node configured."
+            return "", "No URDF path and no ros_param_node configured for source='ros'."
 
         try:
             process = subprocess.run(
@@ -448,6 +464,7 @@ class RobotDescriptionResolver:
                 timeout=8.0,
             )
         except Exception as exc:
+            logger.debug("Failed to query ROS parameter %s", config.ros_param_name, exc_info=True)
             return "", f"Failed to query ROS parameter '{config.ros_param_name}': {exc}"
 
         if process.returncode != 0:
@@ -457,9 +474,77 @@ class RobotDescriptionResolver:
         raw_stdout = str(process.stdout or "")
         _, _, value = raw_stdout.partition(":")
         candidate_xml = value.strip() if value else raw_stdout.strip()
+        candidate_xml = self._extract_robot_xml(candidate_xml)
         if "<robot" not in candidate_xml:
             return "", "ROS parameter did not contain a <robot ...> URDF payload."
         return candidate_xml, ""
+
+    def _resolve_urdf_xml_from_topic(self, config: RobotDescriptionResolveConfig) -> Tuple[str, str]:
+        """Read a latched ``std_msgs/String`` ``robot_description`` topic (RViz-equivalent path).
+
+        Mirrors the ``ros2 param get`` approach with a one-shot ``ros2 topic echo`` so the
+        resolver stays self-contained (no rclpy node lifecycle in the registration path).
+        The transient_local/reliable QoS matches ``robot_state_publisher``'s latched
+        publisher, so an already-published description is delivered immediately.
+        """
+        topic = str(config.robot_description_topic or "/robot_description").strip() or "/robot_description"
+        ros2_exec = shutil.which("ros2")
+        if not ros2_exec:
+            return "", "ros2 CLI not found on PATH; cannot read robot_description topic."
+
+        command = [
+            ros2_exec,
+            "topic",
+            "echo",
+            "--once",
+            "--full-length",
+            "--qos-durability",
+            "transient_local",
+            "--qos-reliability",
+            "reliable",
+            "--field",
+            "data",
+            topic,
+            "std_msgs/msg/String",
+        ]
+        try:
+            process = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+        except Exception as exc:
+            logger.debug("Failed to read robot_description topic %s", topic, exc_info=True)
+            return "", f"Failed to read robot_description topic '{topic}': {exc}"
+
+        if process.returncode != 0:
+            stderr = str(process.stderr or process.stdout or "").strip()
+            return "", f"robot_description topic read failed (topic={topic}): {stderr}"
+
+        candidate_xml = self._extract_robot_xml(str(process.stdout or ""))
+        if "<robot" not in candidate_xml:
+            return "", f"robot_description topic '{topic}' did not contain a <robot ...> URDF payload."
+        return candidate_xml, ""
+
+    @staticmethod
+    def _extract_robot_xml(raw_value: str) -> str:
+        """Slice a ``<robot ...>...</robot>`` element out of CLI output.
+
+        ``ros2 topic echo`` appends a ``---`` record separator (and may wrap long
+        string fields), so locate the URDF element by markers rather than trusting
+        the surrounding formatting. ElementTree parses a fragment that begins at
+        ``<robot`` without needing the XML declaration.
+        """
+        text = str(raw_value or "").replace("\r\n", "\n")
+        start = text.find("<robot")
+        if start == -1:
+            return text.strip()
+        end = text.rfind("</robot>")
+        if end != -1:
+            return text[start:end + len("</robot>")]
+        return text[start:].strip()
 
     def _expand_xacro(self, xacro_path: str) -> Tuple[str, str]:
         commands: List[List[str]] = []
@@ -486,6 +571,7 @@ class RobotDescriptionResolver:
                 )
             except Exception as exc:
                 last_error = f"Failed running {' '.join(command)}: {exc}"
+                logger.debug("Failed to run xacro command: %s", " ".join(command), exc_info=True)
                 continue
 
             if process.returncode != 0:
@@ -514,6 +600,9 @@ class RobotDescriptionResolver:
         robot_name = str(root.attrib.get("name", "robot")).strip() or str(getattr(robot, "name", "") or "").strip() or "robot"
         fallback_proxy = self._default_mesh_proxy_size(robot)
         package_root = self._resolve_package_root(config.urdf_path)
+        if package_root is None and config.urdf_package:
+            package_root = self._resolve_package_share(config.urdf_package)
+        mesh_root = Path(config.mesh_root).expanduser() if config.mesh_root else None
 
         links_local: Dict[str, List[CompiledCollision]] = {}
         visuals_local: Dict[str, List[_VisualSourceData]] = {}
@@ -639,6 +728,7 @@ class RobotDescriptionResolver:
                         mesh_uri=visual.mesh_uri,
                         urdf_path=config.urdf_path,
                         package_root=package_root,
+                        mesh_root=mesh_root,
                     )
                     if source_path is None:
                         continue
@@ -987,30 +1077,82 @@ class RobotDescriptionResolver:
             current = current.parent
         return None
 
+    def _resolve_package_share(self, package_name: str) -> Optional[Path]:
+        """Resolve a ROS package's share directory via the ament index (RViz-equivalent).
+
+        Cached per package name; returns ``None`` when ament is unavailable or the
+        package is not on ``AMENT_PREFIX_PATH``, so callers can fall back gracefully.
+        """
+        name = str(package_name or "").strip()
+        if not name:
+            return None
+        if name in self._package_share_cache:
+            return self._package_share_cache[name]
+
+        share_dir: Optional[Path] = None
+        try:
+            from ament_index_python.packages import get_package_share_directory
+
+            share_dir = Path(get_package_share_directory(name)).resolve()
+        except Exception:
+            share_dir = None
+        self._package_share_cache[name] = share_dir
+        return share_dir
+
     def _resolve_mesh_path(
         self,
         mesh_uri: str,
         urdf_path: str,
         package_root: Optional[Path],
+        mesh_root: Optional[Path] = None,
     ) -> Optional[Path]:
         raw_uri = str(mesh_uri or "").strip()
         if not raw_uri:
             return None
 
+        # Strip an optional file:// scheme that some exporters emit.
+        if raw_uri.startswith("file://"):
+            raw_uri = raw_uri[len("file://"):]
+
         if raw_uri.startswith("package://"):
             package_relative = raw_uri[len("package://"):]
             package_name, _, relative_path = package_relative.partition("/")
-            if package_root is not None and package_root.name == package_name and relative_path:
+            if not package_name or not relative_path:
+                return None
+
+            # 1) URDF-local package (URDF file lives inside the referenced package).
+            if package_root is not None and package_root.name == package_name:
                 candidate = (package_root / relative_path).resolve()
                 if candidate.is_file():
                     return candidate
+
+            # 2) ament index — installed/sourced ROS package (the RViz resolution path).
+            share_dir = self._resolve_package_share(package_name)
+            if share_dir is not None:
+                candidate = (share_dir / relative_path).resolve()
+                if candidate.is_file():
+                    return candidate
+
+            # 3) explicit mesh_root override: <root>/<pkg>/<rel> or <root>/<rel>.
+            if mesh_root is not None:
+                for option in (mesh_root / package_name / relative_path, mesh_root / relative_path):
+                    resolved = option.expanduser().resolve()
+                    if resolved.is_file():
+                        return resolved
             return None
 
         candidate = Path(raw_uri).expanduser()
         if not candidate.is_absolute():
             urdf_file = Path(str(urdf_path or "")).expanduser()
             if urdf_file.is_file():
-                candidate = (urdf_file.parent / candidate).resolve()
+                resolved = (urdf_file.parent / candidate).resolve()
+                if resolved.is_file():
+                    return resolved
+            if mesh_root is not None:
+                resolved = (mesh_root / candidate).expanduser().resolve()
+                if resolved.is_file():
+                    return resolved
+            return None
         if candidate.is_file():
             return candidate
         return None

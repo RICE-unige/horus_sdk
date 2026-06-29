@@ -393,6 +393,9 @@ class WorkspaceTutorialConfig:
 @dataclass(frozen=True)
 class WorkspaceCompassConfig:
     enabled: bool = False
+    gateway_host: str = ""
+    gateway_http_base_url: str = ""
+    gateway_ws_url: str = ""
     gateway_port: int = 8088
     voice_mode: str = "auto"
     autonomy: str = "approve_actions"
@@ -402,6 +405,9 @@ class WorkspaceCompassConfig:
     def from_values(
         cls,
         enabled: Any = False,
+        gateway_host: Any = "",
+        gateway_http_base_url: Any = "",
+        gateway_ws_url: Any = "",
         gateway_port: Any = 8088,
         voice_mode: Any = "auto",
         autonomy: Any = "approve_actions",
@@ -421,6 +427,9 @@ class WorkspaceCompassConfig:
 
         return cls(
             enabled=bool(enabled),
+            gateway_host=str(gateway_host or "").strip(),
+            gateway_http_base_url=str(gateway_http_base_url or "").strip().rstrip("/"),
+            gateway_ws_url=str(gateway_ws_url or "").strip(),
             gateway_port=resolved_port,
             voice_mode=normalized_voice_mode,
             autonomy="approve_actions",
@@ -428,13 +437,17 @@ class WorkspaceCompassConfig:
         )
 
     def to_payload(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "enabled": self.enabled,
             "gateway_port": self.gateway_port,
             "voice_mode": self.voice_mode,
             "autonomy": self.autonomy,
             "contract_version": self.contract_version,
         }
+        _put_if_set(payload, "gateway_host", self.gateway_host or None)
+        _put_if_set(payload, "gateway_http_base_url", self.gateway_http_base_url or None)
+        _put_if_set(payload, "gateway_ws_url", self.gateway_ws_url or None)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -466,11 +479,14 @@ class WorkspaceExperimentConfig:
 
 @dataclass(frozen=True)
 class RobotDescriptionConfig:
-    urdf_path: str
+    urdf_path: str = ""
     base_frame: str = "base_link"
     source: str = "ros"
     ros_param_node: str = ""
     ros_param_name: str = "robot_description"
+    robot_description_topic: str = "/robot_description"
+    urdf_package: str = ""
+    mesh_root: str = ""
     chunk_size_bytes: int = 12000
     is_transparent: bool = False
     include_visual_meshes: bool = True
@@ -481,11 +497,14 @@ class RobotDescriptionConfig:
     @classmethod
     def from_values(
         cls,
-        urdf_path: Any,
+        urdf_path: Any = "",
         base_frame: Any = "base_link",
         source: Any = "ros",
         ros_param_node: Any = "",
         ros_param_name: Any = "robot_description",
+        robot_description_topic: Any = "/robot_description",
+        urdf_package: Any = "",
+        mesh_root: Any = "",
         chunk_size_bytes: Any = 12000,
         is_transparent: Any = False,
         include_visual_meshes: Any = True,
@@ -503,12 +522,19 @@ class RobotDescriptionConfig:
         if normalized_body_mesh_mode == "collision_only":
             resolved_include_visual_meshes = False
 
+        normalized_source = str(source or "ros").strip().lower()
+        if normalized_source not in {"ros", "topic"}:
+            normalized_source = "ros"
+
         return cls(
             urdf_path=str(urdf_path or ""),
             base_frame=str(base_frame or "base_link"),
-            source=str(source or "ros"),
+            source=normalized_source,
             ros_param_node=str(ros_param_node or ""),
             ros_param_name=str(ros_param_name or "robot_description"),
+            robot_description_topic=str(robot_description_topic or "/robot_description"),
+            urdf_package=str(urdf_package or ""),
+            mesh_root=str(mesh_root or ""),
             chunk_size_bytes=int(max(1024, min(64000, coerce_int(chunk_size_bytes, 12000)))),
             is_transparent=bool(is_transparent),
             include_visual_meshes=resolved_include_visual_meshes,
@@ -525,6 +551,9 @@ class RobotDescriptionConfig:
             "base_frame": self.base_frame,
             "ros_param_node": self.ros_param_node,
             "ros_param_name": self.ros_param_name,
+            "robot_description_topic": self.robot_description_topic,
+            "urdf_package": self.urdf_package,
+            "mesh_root": self.mesh_root,
             "chunk_size_bytes": self.chunk_size_bytes,
             "is_transparent": self.is_transparent,
             "include_visual_meshes": self.include_visual_meshes,

@@ -89,6 +89,23 @@ def test_compass_serialized_from_robot_metadata():
     }
 
 
+def test_compass_serializes_explicit_gateway_endpoint():
+    robot, dataviz = _build_robot_and_dataviz()
+    robot.configure_workspace_compass(
+        enabled=True,
+        gateway_host="gateway.local",
+        gateway_http_base_url="https://gateway.example:9443/",
+        gateway_ws_url="wss://gateway.example:9443/v1/copilot/ws",
+    )
+    client = _build_client()
+
+    config = client._build_robot_config_dict(robot, dataviz)
+
+    assert config["workspace_config"]["compass"]["gateway_host"] == "gateway.local"
+    assert config["workspace_config"]["compass"]["gateway_http_base_url"] == "https://gateway.example:9443"
+    assert config["workspace_config"]["compass"]["gateway_ws_url"] == "wss://gateway.example:9443/v1/copilot/ws"
+
+
 def test_workspace_scale_omitted_when_invalid():
     robot, dataviz = _build_robot_and_dataviz()
     client = _build_client()

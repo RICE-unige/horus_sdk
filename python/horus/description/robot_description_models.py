@@ -1,4 +1,4 @@
-﻿"""Robot description data models for SDK -> MR transport."""
+"""Robot description data models for SDK -> MR transport."""
 
 from __future__ import annotations
 
@@ -138,6 +138,7 @@ class RobotDescriptionManifestV2:
     is_transparent: bool
     encoding: str
     chunk_size_bytes: int
+    body_mesh_mode: str = "preview_mesh"
 
     def to_dict(self) -> Dict:
         return asdict(self)

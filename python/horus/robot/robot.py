@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import importlib
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from .config import (
@@ -29,6 +30,9 @@ from .config import (
 if TYPE_CHECKING:
     from ..dataviz import DataViz
     from ..sensors import SensorInstance, SensorType
+
+
+logger = logging.getLogger(__name__)
 
 
 class RobotType(Enum):
@@ -287,6 +291,9 @@ class Robot:
         self,
         *,
         enabled: bool = True,
+        gateway_host: str = "",
+        gateway_http_base_url: str = "",
+        gateway_ws_url: str = "",
         gateway_port: int = 8088,
         voice_mode: str = "auto",
         contract_version: str = "compass.v1",
@@ -296,6 +303,9 @@ class Robot:
             self._WORKSPACE_COMPASS_METADATA_KEY,
             WorkspaceCompassConfig.from_values(
                 enabled=enabled,
+                gateway_host=gateway_host,
+                gateway_http_base_url=gateway_http_base_url,
+                gateway_ws_url=gateway_ws_url,
                 gateway_port=gateway_port,
                 voice_mode=voice_mode,
                 autonomy="approve_actions",
@@ -614,11 +624,14 @@ class Robot:
 
     def configure_robot_description(
         self,
-        urdf_path: str,
+        urdf_path: str = "",
         base_frame: str = "base_link",
         source: str = "ros",
         ros_param_node: str = "",
         ros_param_name: str = "robot_description",
+        robot_description_topic: str = "/robot_description",
+        urdf_package: str = "",
+        mesh_root: str = "",
         chunk_size_bytes: int = 12000,
         is_transparent: bool = False,
         include_visual_meshes: bool = True,
@@ -626,7 +639,22 @@ class Robot:
         body_mesh_mode: str = "preview_mesh",
         enabled: bool = True,
     ) -> None:
-        """Configure robot description resolution for MR collision/joint visualization."""
+        """Configure robot description resolution for MR collision/joint visualization.
+
+        Sources:
+            ``source="ros"``    -- read the URDF from a node parameter
+                                   (``ros2 param get <ros_param_node> <ros_param_name>``).
+            ``source="topic"``  -- read the URDF from a latched ``std_msgs/String``
+                                   topic (``robot_description_topic``), the same source
+                                   RViz uses. No ``urdf_path``/node required.
+
+        Mesh resolution:
+            ``package://`` URIs resolve via the ament index (installed/sourced ROS
+            packages), falling back to ``urdf_package`` (the URDF's own package, when
+            sourced from a parameter/topic) and then ``mesh_root`` (an explicit
+            filesystem root). ``urdf_path`` is optional and only needed when reading a
+            URDF/xacro directly off disk.
+        """
         self.add_metadata(
             "robot_description_config",
             RobotDescriptionConfig.from_values(
@@ -635,6 +663,9 @@ class Robot:
                 source=source,
                 ros_param_node=ros_param_node,
                 ros_param_name=ros_param_name,
+                robot_description_topic=robot_description_topic,
+                urdf_package=urdf_package,
+                mesh_root=mesh_root,
                 chunk_size_bytes=chunk_size_bytes,
                 is_transparent=is_transparent,
                 include_visual_meshes=include_visual_meshes,
@@ -750,7 +781,7 @@ class Robot:
                     for topic in topics:
                         board.on_subscribe(topic)
                 except Exception:
-                    pass
+                    logger.debug("Failed to update topic status board after robot registration", exc_info=True)
 
                 # Hand topics to the ROS graph monitor so it can reconcile real state
                 try:
@@ -759,7 +790,7 @@ class Robot:
                     monitor.watch_topics(topics)
                     monitor.start()
                 except Exception:
-                    pass
+                    logger.debug("Failed to start topic monitor after robot registration", exc_info=True)
 
         return success, result
 
@@ -789,7 +820,7 @@ class Robot:
                     for topic in topics:
                         board.on_unsubscribe(topic)
                 except Exception:
-                    pass
+                    logger.debug("Failed to update topic status board after robot unregistration", exc_info=True)
 
                 try:
                     from ..utils.topic_monitor import get_topic_monitor
@@ -797,7 +828,7 @@ class Robot:
                     monitor = get_topic_monitor()
                     monitor.unwatch_topics(topics, emit_unsubscribed=False)
                 except Exception:
-                    pass
+                    logger.debug("Failed to update topic monitor after robot unregistration", exc_info=True)
 
             # Clear registration metadata
             self.metadata.pop("horus_robot_id", None)
@@ -845,6 +876,11 @@ def register_robots(
         compass_enabled=compass_enabled,
         wait_for_app_before_register=wait_for_app_before_register,
     )
+
+
+def is_registration_cancelled(result) -> bool:
+    """Return True when dashboard monitoring was stopped by the user."""
+    return isinstance(result, dict) and result.get("error") == "Cancelled"
 
 
 def _get_registry_client():
