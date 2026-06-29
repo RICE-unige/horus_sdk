@@ -12,7 +12,7 @@ if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
 try:
-    from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+    from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
     from horus.sensors import Camera
     from horus.utils import cli
 except ImportError:
@@ -313,9 +313,8 @@ def main():
         workspace_scale=args.workspace_scale,
     )
     if not success:
-        error_text = str((result or {}).get("error", "")).strip().lower()
-        if "cancel" in error_text:
-            cli.print_info("Stereo registration demo cancelled by user.")
+        if is_registration_cancelled(result):
+            cli.print_info("Registration monitor stopped.")
             return
         cli.print_error(f"Registration failed: {result}")
 

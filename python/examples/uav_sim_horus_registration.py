@@ -16,7 +16,7 @@ SDK_PYTHON = Path(__file__).resolve().parents[1]
 if (SDK_PYTHON / "horus").is_dir():
     sys.path.insert(0, str(SDK_PYTHON))
 
-from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
 
 
 DEFAULT_COMMAND_TOPIC = "/uav_sim/command"
@@ -368,6 +368,9 @@ def main() -> None:
             wait_for_app_before_register=not args.no_wait_for_app,
         )
     if not success:
+        if is_registration_cancelled(result):
+            print("HORUS registration monitor stopped.")
+            raise SystemExit(0)
         raise SystemExit(f"HORUS registration failed: {result}")
 
 

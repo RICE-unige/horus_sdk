@@ -112,7 +112,7 @@ def download_file(url: str, dest: Path, force: bool = False) -> None:
         tmp.unlink()
 
     print(f"[get] {url}")
-    with urllib.request.urlopen(url) as response, tmp.open("wb") as out:
+    with urllib.request.urlopen(url, timeout=60.0) as response, tmp.open("wb") as out:
         length_header = response.headers.get("Content-Length")
         total = int(length_header) if length_header and length_header.isdigit() else 0
         read = 0
@@ -134,7 +134,7 @@ def download_file(url: str, dest: Path, force: bool = False) -> None:
 
 def list_huggingface_folder_files(rel_folder: str) -> Set[str]:
     api_url = f"https://huggingface.co/api/datasets/nerfstudioteam/datasets/tree/main/{rel_folder}?recursive=1&expand=1"
-    with urllib.request.urlopen(api_url) as response:
+    with urllib.request.urlopen(api_url, timeout=30.0) as response:
         entries = json.load(response)
 
     names: Set[str] = set()

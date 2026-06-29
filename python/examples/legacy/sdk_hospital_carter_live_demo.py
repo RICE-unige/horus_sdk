@@ -42,7 +42,7 @@ if PACKAGE_ROOT not in sys.path:
 
 try:
     from horus.dataviz import DataViz
-    from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+    from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
     from horus.sensors import Camera, LaserScan
     from horus.utils import cli
 except ImportError:
@@ -2137,6 +2137,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             wait_for_app_before_register=False,
         )
         if not success:
+            if is_registration_cancelled(result):
+                cli.print_info("Registration monitor stopped.")
+                return 0
             cli.print_error(f"Registration failed: {result}")
             return 1
 

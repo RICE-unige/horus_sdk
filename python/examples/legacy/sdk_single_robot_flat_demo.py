@@ -10,8 +10,9 @@ PACKAGE_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
-from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
 from horus.sensors import Camera
+from horus.utils import cli
 
 
 def build_parser():
@@ -72,12 +73,17 @@ def main():
         odom_topic="/odom",
         collision_risk_topic="/collision_risk",
     )
-    register_robots(
+    success, result = register_robots(
         [robot],
         datavizs=[dataviz],
         keep_alive=args.keep_alive,
         workspace_scale=args.workspace_scale,
     )
+    if not success:
+        if is_registration_cancelled(result):
+            cli.print_info("Registration monitor stopped.")
+            return
+        raise SystemExit(f"HORUS registration failed: {result}")
 
 
 if __name__ == "__main__":

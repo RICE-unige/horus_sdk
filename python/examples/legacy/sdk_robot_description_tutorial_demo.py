@@ -11,7 +11,7 @@ if PACKAGE_ROOT not in sys.path:
 
 try:
     import sdk_robot_description_demo as base_demo
-    from horus.robot import register_robots
+    from horus.robot import is_registration_cancelled, register_robots
     from horus.utils import cli
     from horus.utils.map_3d_workflow import resolve_map_3d_mode
 except ImportError:
@@ -125,6 +125,9 @@ def main():
         workspace_scale=float(args.workspace_scale),
     )
     if not success:
+        if is_registration_cancelled(result):
+            cli.print_info("Registration monitor stopped.")
+            return
         cli.print_error(f"Registration failed: {result}")
         return
     cli.print_success("Robot-description tutorial demo registration complete.")

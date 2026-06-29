@@ -478,6 +478,11 @@ python3 python/examples/legacy/sdk_robot_description_demo.py \
   --map-3d-mode mesh
 ```
 
+The managed mesh path uses the compact HORUS indexed-binary mesh topic by default
+(`<mesh-topic>/indexed`) and suppresses heavyweight marker publishes. Use
+`--no-map-3d-mesh-indexed-binary` only when you explicitly want marker-only/RViz
+validation.
+
 Dense mesh stress mode:
 
 ```bash

@@ -80,8 +80,12 @@ class RuntimeAsset:
     splat_count: int
     sha256: str
     content_length: int
-    chunks: Sequence[str]
+    # In base64 String mode these are base64-encoded ASCII strings (one per chunk). In
+    # binary (UInt8MultiArray) mode these are raw ``bytes`` chunks. ``chunk_encoding`` records
+    # which so the publisher and manifest stay consistent.
+    chunks: Sequence
     chunk_size_bytes: int
+    chunk_encoding: str = "raw+base64"
 
 
 @dataclass
@@ -141,7 +145,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--chunk-item-topic",
         default="/horus/gaussian_splat/chunk_item",
-        help="std_msgs/String topic carrying base64 runtime PLY chunks.",
+        help="Topic carrying runtime PLY chunks: std_msgs/String (base64, default) or "
+             "std_msgs/UInt8MultiArray (raw bytes) when --binary-chunks is set.",
     )
     parser.add_argument(
         "--chunk-end-topic",
@@ -160,6 +165,40 @@ def parse_args() -> argparse.Namespace:
         default=10.0,
         help="Seconds between full ROS chunk transfer bursts for late HORUS subscribers. Use 0 to publish once.",
     )
+    parser.add_argument(
+        "--sh-order",
+        type=int,
+        default=-1,
+        help="If >=0, prune spherical-harmonics bands above this order from the runtime PLY before "
+             "chunking. Lossless to the rendered image when the renderer uses <= this SH order, and "
+             "much smaller on the wire (order 0 drops ~70%% of bytes). Default -1 keeps all bands. "
+             "Requires a splat importer that infers SH degree from the f_rest property count, OR the "
+             "operator manually matching this to the renderer's SH order. Prune is only applied when "
+             "--sh-prune is also passed (this is purely the target order).",
+    )
+    parser.add_argument(
+        "--sh-prune",
+        dest="sh_prune",
+        action="store_true",
+        help="OPT-IN: actually drop spherical-harmonics bands above --sh-order from the runtime PLY "
+             "before chunking. Default off (no prune). WARNING: the HORUS Unity splat importer "
+             "(GaussianSplatPlyLoader) does NOT derive SH order from the f_rest property count -- it "
+             "assumes a fixed order-3 (45 f_rest) layout and zero-fills any missing bands. Pruning is "
+             "therefore only image-lossless when --sh-order is >= the renderer's configured SH order "
+             "(GaussianSplatMapVisualizer sh_order / m_SHOrder). Set --sh-order explicitly and match it "
+             "to the renderer before enabling this.",
+    )
+    parser.set_defaults(sh_prune=False)
+    parser.add_argument(
+        "--binary-chunks",
+        dest="binary_chunks",
+        action="store_true",
+        help="OPT-IN: publish chunk_item as std_msgs/UInt8MultiArray raw PLY bytes instead of the "
+             "default base64 std_msgs/String. Removes the 33%% base64 inflation and the per-chunk JSON "
+             "parse on the Unity side. The chunk_begin/chunk_end announcements stay std_msgs/String. "
+             "Default off (base64 String) for backward compatibility with current HORUS builds.",
+    )
+    parser.set_defaults(binary_chunks=False)
     parser.add_argument(
         "--chunk-begin-delay",
         type=float,
@@ -517,16 +556,101 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def runtime_subset_path(source_path: Path, header: PlyHeader, render_count: int, cache_dir: Path) -> Path:
+def runtime_subset_path(
+    source_path: Path, header: PlyHeader, render_count: int, cache_dir: Path, sh_order: int = -1
+) -> Path:
     source_stat = source_path.stat()
     requested_count = header.vertex_count if render_count <= 0 else min(render_count, header.vertex_count)
     key = hashlib.sha256(
-        f"{source_path.resolve()}|{source_stat.st_size}|{source_stat.st_mtime_ns}|{requested_count}".encode("utf-8")
+        f"{source_path.resolve()}|{source_stat.st_size}|{source_stat.st_mtime_ns}|{requested_count}|sh{sh_order}".encode("utf-8")
     ).hexdigest()[:16]
-    return cache_dir.expanduser() / f"{source_path.stem}_{requested_count}_{key}.ply"
+    return cache_dir.expanduser() / f"{source_path.stem}_{requested_count}_sh{sh_order}_{key}.ply"
 
 
-def write_runtime_ply_subset(source_path: Path, render_count: int, cache_dir: Path) -> Tuple[Path, int]:
+def _build_sh_prune_plan(header: PlyHeader, sh_order: int) -> Optional[Dict]:
+    """Plan to drop spherical-harmonics bands above ``sh_order`` from each vertex (lossless w.r.t.
+    the rendered image when the renderer is configured at <= that SH order).
+
+    Assumes the standard INRIA/aras-style channel-major ``f_rest`` layout: f_rest are contiguous
+    and ordered [channel0 coeffs..][channel1 coeffs..][channel2 coeffs..]. Returns None when there
+    is nothing to prune (no f_rest, or the source already has <= the requested order). The kept
+    f_rest are renumbered contiguously so a degree-aware importer infers the reduced order from the
+    property count.
+    """
+    if sh_order < 0:
+        return None
+    props = list(header.vertex_properties)
+    names = [p.name for p in props]
+    try:
+        sizes = [struct.calcsize("<" + PLY_STRUCT_TYPES[p.data_type]) for p in props]
+    except KeyError:
+        return None
+    offsets: List[int] = []
+    acc = 0
+    for size in sizes:
+        offsets.append(acc)
+        acc += size
+
+    f_rest_idx = [i for i, n in enumerate(names) if n.startswith("f_rest_")]
+    if not f_rest_idx:
+        return None
+    total = len(f_rest_idx)
+    if total % 3 != 0:
+        return None
+    if f_rest_idx != list(range(f_rest_idx[0], f_rest_idx[0] + total)):
+        return None  # non-contiguous f_rest: layout not understood, do not prune
+    per_channel = total // 3
+    keep_per_channel = max(0, (sh_order + 1) ** 2 - 1)
+    if keep_per_channel >= per_channel:
+        return None  # target order >= source order: nothing to drop
+
+    kept_global: List[int] = []
+    for channel in range(3):
+        base = f_rest_idx[0] + channel * per_channel
+        for k in range(keep_per_channel):
+            kept_global.append(base + k)
+
+    f_start = f_rest_idx[0]
+    output_prop_order = list(range(0, f_start)) + kept_global + list(range(f_start + total, len(props)))
+
+    new_prop_lines: List[Tuple[str, str]] = []
+    f_counter = 0
+    for out_i in output_prop_order:
+        if names[out_i].startswith("f_rest_"):
+            new_prop_lines.append((props[out_i].data_type, f"f_rest_{f_counter}"))
+            f_counter += 1
+        else:
+            new_prop_lines.append((props[out_i].data_type, names[out_i]))
+
+    copy_slices = [(offsets[out_i], sizes[out_i]) for out_i in output_prop_order]
+    return {"new_prop_lines": new_prop_lines, "copy_slices": copy_slices}
+
+
+def _rewrite_pruned_header(header: PlyHeader, vertex_count: int, new_prop_lines: Sequence[Tuple[str, str]]) -> bytes:
+    lines: List[str] = []
+    in_vertex = False
+    emitted = False
+    for line in header.header_lines:
+        if line.startswith("element vertex "):
+            lines.append(f"element vertex {vertex_count}")
+            in_vertex = True
+            emitted = False
+            continue
+        if line.startswith("element ") and not line.startswith("element vertex"):
+            in_vertex = False
+        if in_vertex and line.startswith("property "):
+            if not emitted:
+                for dtype, name in new_prop_lines:
+                    lines.append(f"property {dtype} {name}")
+                emitted = True
+            continue  # drop the original vertex property lines
+        lines.append(line)
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def write_runtime_ply_subset(
+    source_path: Path, render_count: int, cache_dir: Path, sh_order: int = -1
+) -> Tuple[Path, int]:
     header = read_ply_header(source_path)
     if header.vertex_count <= 0:
         raise ValueError(f"No vertices found in {source_path}")
@@ -537,7 +661,8 @@ def write_runtime_ply_subset(source_path: Path, render_count: int, cache_dir: Pa
 
     indices = selected_indices(header.vertex_count, render_count)
     vertex_struct = binary_vertex_struct(header)
-    output_path = runtime_subset_path(source_path, header, render_count, cache_dir)
+    prune_plan = _build_sh_prune_plan(header, sh_order)
+    output_path = runtime_subset_path(source_path, header, render_count, cache_dir, sh_order)
     if output_path.exists():
         return output_path, len(indices)
 
@@ -548,13 +673,23 @@ def write_runtime_ply_subset(source_path: Path, render_count: int, cache_dir: Pa
 
     vertex_data_end = header.data_offset + header.vertex_count * vertex_struct.size
     with source_path.open("rb") as source, temp_path.open("wb") as target:
-        target.write(rewrite_ply_header_for_vertex_count(header, len(indices)))
-        for vertex_index in indices:
-            source.seek(header.data_offset + vertex_index * vertex_struct.size)
-            data = source.read(vertex_struct.size)
-            if len(data) != vertex_struct.size:
-                raise ValueError(f"Unexpected end of PLY vertex data at index {vertex_index}")
-            target.write(data)
+        if prune_plan is not None:
+            target.write(_rewrite_pruned_header(header, len(indices), prune_plan["new_prop_lines"]))
+            slices = prune_plan["copy_slices"]
+            for vertex_index in indices:
+                source.seek(header.data_offset + vertex_index * vertex_struct.size)
+                data = source.read(vertex_struct.size)
+                if len(data) != vertex_struct.size:
+                    raise ValueError(f"Unexpected end of PLY vertex data at index {vertex_index}")
+                target.write(b"".join(data[off:off + size] for off, size in slices))
+        else:
+            target.write(rewrite_ply_header_for_vertex_count(header, len(indices)))
+            for vertex_index in indices:
+                source.seek(header.data_offset + vertex_index * vertex_struct.size)
+                data = source.read(vertex_struct.size)
+                if len(data) != vertex_struct.size:
+                    raise ValueError(f"Unexpected end of PLY vertex data at index {vertex_index}")
+                target.write(data)
 
         source.seek(vertex_data_end)
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -571,6 +706,18 @@ def build_asset_chunks(asset_path: Path, chunk_size_bytes: int) -> List[str]:
         for raw_chunk in iter(lambda: handle.read(chunk_size), b""):
             chunks.append(base64.b64encode(raw_chunk).decode("ascii"))
     return chunks or [""]
+
+
+def build_raw_asset_chunks(asset_path: Path, chunk_size_bytes: int) -> List[bytes]:
+    """Raw (un-encoded) PLY byte chunks for the binary UInt8MultiArray transport. Same chunk
+    boundaries as the base64 path so content_length/sha256/chunk_count stay identical -- only the
+    on-the-wire encoding differs (no 33% base64 inflation, no per-chunk JSON parse)."""
+    chunk_size = max(1024, min(1024 * 1024, int(chunk_size_bytes)))
+    chunks: List[bytes] = []
+    with asset_path.open("rb") as handle:
+        for raw_chunk in iter(lambda: handle.read(chunk_size), b""):
+            chunks.append(raw_chunk)
+    return chunks or [b""]
 
 
 def load_preview_points(path: Path, sample_count: int, scale: float, center: bool) -> PreviewData:
@@ -637,7 +784,7 @@ def build_runtime_manifest(
         "chunk_end_topic": args.chunk_end_topic,
         "chunk_count": len(runtime_asset.chunks),
         "chunk_size_bytes": runtime_asset.chunk_size_bytes,
-        "chunk_encoding": "raw+base64",
+        "chunk_encoding": runtime_asset.chunk_encoding,
         "source_format": "3dgs_ply",
         "splat_ply": str(runtime_asset.path),
         "dataset": prebuilt.get("dataset", "custom"),
@@ -677,7 +824,7 @@ def publish_ros(preview: PreviewData, runtime_asset: RuntimeAsset, runtime_manif
         from nav_msgs.msg import Odometry
         from sensor_msgs.msg import PointCloud2, PointField
         from sensor_msgs_py import point_cloud2
-        from std_msgs.msg import Header, String
+        from std_msgs.msg import Header, MultiArrayDimension, MultiArrayLayout, String, UInt8MultiArray
         from tf2_msgs.msg import TFMessage
     except ImportError as exc:
         raise SystemExit(
@@ -700,7 +847,9 @@ def publish_ros(preview: PreviewData, runtime_asset: RuntimeAsset, runtime_manif
     chunk_qos = QoSProfile(depth=256)
     chunk_qos.reliability = ReliabilityPolicy.RELIABLE
     chunk_begin_pub = node.create_publisher(String, args.chunk_begin_topic, chunk_qos)
-    chunk_item_pub = node.create_publisher(String, args.chunk_item_topic, chunk_qos)
+    binary_chunks = bool(args.binary_chunks)
+    chunk_item_type = UInt8MultiArray if binary_chunks else String
+    chunk_item_pub = node.create_publisher(chunk_item_type, args.chunk_item_topic, chunk_qos)
     chunk_end_pub = node.create_publisher(String, args.chunk_end_topic, chunk_qos)
 
     fake_robot_states = build_fake_robot_states(args)
@@ -828,6 +977,29 @@ def publish_ros(preview: PreviewData, runtime_asset: RuntimeAsset, runtime_manif
         point_pub.publish(cloud_msg)
         manifest_pub.publish(manifest_msg)
 
+    def make_binary_chunk_item(index: int, total_chunks: int, payload: bytes):
+        # std_msgs/UInt8MultiArray carrying raw PLY bytes. Routing metadata that the base64
+        # String envelope used to carry in JSON is moved into the MultiArrayLayout, so the
+        # message stays self-describing and no parallel String item is needed:
+        #   data_offset   = chunk_index
+        #   dim[0].label  = asset_id   (correlates the chunk to its chunk_begin assembly)
+        #   dim[0].size   = chunk_index
+        #   dim[0].stride = total_chunks
+        #   dim[1].label  = "bytes"
+        #   dim[1].size   = len(payload)
+        #   dim[1].stride = len(payload)
+        msg = UInt8MultiArray()
+        byte_len = len(payload)
+        msg.layout = MultiArrayLayout(
+            dim=[
+                MultiArrayDimension(label=asset_id, size=int(index), stride=int(total_chunks)),
+                MultiArrayDimension(label="bytes", size=int(byte_len), stride=int(byte_len)),
+            ],
+            data_offset=int(index),
+        )
+        msg.data = list(payload)
+        return msg
+
     def publish_chunk_burst() -> None:
         expected_chunks = len(runtime_asset.chunks)
         progress_step = max(1, expected_chunks // 10)
@@ -841,7 +1013,7 @@ def publish_ros(preview: PreviewData, runtime_asset: RuntimeAsset, runtime_manif
                 "content_length": runtime_asset.content_length,
                 "expected_chunks": expected_chunks,
                 "splat_count": runtime_asset.splat_count,
-                "encoding": "raw+base64",
+                "encoding": runtime_asset.chunk_encoding,
                 "ts_unix_ms": now_ms,
             },
             separators=(",", ":"),
@@ -855,16 +1027,19 @@ def publish_ros(preview: PreviewData, runtime_asset: RuntimeAsset, runtime_manif
         batch_size = max(1, int(args.chunk_batch_size))
         batch_pause = max(0.0, float(args.chunk_batch_pause))
         for index, chunk_data in enumerate(runtime_asset.chunks):
-            item = String()
-            item.data = json.dumps(
-                {
-                    "asset_id": asset_id,
-                    "chunk_index": index,
-                    "total_chunks": expected_chunks,
-                    "chunk_data": chunk_data,
-                },
-                separators=(",", ":"),
-            )
+            if binary_chunks:
+                item = make_binary_chunk_item(index, expected_chunks, chunk_data)
+            else:
+                item = String()
+                item.data = json.dumps(
+                    {
+                        "asset_id": asset_id,
+                        "chunk_index": index,
+                        "total_chunks": expected_chunks,
+                        "chunk_data": chunk_data,
+                    },
+                    separators=(",", ":"),
+                )
             chunk_item_pub.publish(item)
             sent_count = index + 1
             if sent_count == 1 or sent_count == expected_chunks or (sent_count % progress_step) == 0:
@@ -952,13 +1127,29 @@ def main() -> int:
     source_manifest = read_manifest(args.manifest.expanduser()) if args.ply is None else {}
     ply_path = choose_ply_path(args, source_manifest)
     preview = load_preview_points(ply_path, args.sample_count, args.scale, args.center)
+    # Pruning is OPT-IN: only honor --sh-order when --sh-prune is explicitly set. Without
+    # --sh-prune the runtime PLY keeps every SH band, preserving the existing wire bytes.
+    effective_sh_order = args.sh_order if args.sh_prune else -1
+    if args.sh_prune and args.sh_order < 0:
+        raise SystemExit(
+            "--sh-prune requires an explicit --sh-order >= 0 (the band order to keep). The HORUS "
+            "Unity importer is not SH-order-aware, so set --sh-order to match the renderer's SH order."
+        )
     runtime_ply_path, runtime_splat_count = write_runtime_ply_subset(
         ply_path,
         args.splat_render_count,
         args.asset_cache_dir,
+        effective_sh_order,
     )
     chunk_size_bytes = max(1024, min(1024 * 1024, int(args.chunk_size_bytes)))
-    asset_chunks = build_asset_chunks(runtime_ply_path, chunk_size_bytes)
+    # Same chunk boundaries either way; only the per-chunk encoding differs. content_length,
+    # sha256 and chunk_count are identical across both transports (lossless).
+    if args.binary_chunks:
+        asset_chunks = build_raw_asset_chunks(runtime_ply_path, chunk_size_bytes)
+        chunk_encoding = "raw+uint8multiarray"
+    else:
+        asset_chunks = build_asset_chunks(runtime_ply_path, chunk_size_bytes)
+        chunk_encoding = "raw+base64"
     runtime_asset = RuntimeAsset(
         path=runtime_ply_path,
         splat_count=runtime_splat_count,
@@ -966,6 +1157,7 @@ def main() -> int:
         content_length=runtime_ply_path.stat().st_size,
         chunks=asset_chunks,
         chunk_size_bytes=chunk_size_bytes,
+        chunk_encoding=chunk_encoding,
     )
     runtime_manifest = build_runtime_manifest(source_manifest, preview, runtime_asset, args)
 
@@ -979,8 +1171,10 @@ def main() -> int:
     )
     print(
         f"ROS chunks:     {len(runtime_asset.chunks)} chunks "
-        f"({runtime_asset.chunk_size_bytes} raw bytes/chunk)"
+        f"({runtime_asset.chunk_size_bytes} raw bytes/chunk, encoding={runtime_asset.chunk_encoding})"
     )
+    if args.sh_prune:
+        print(f"SH prune:       enabled, keeping bands up to order {args.sh_order}")
     print(f"Preview topic:  {args.preview_topic}")
     print(f"Manifest topic: {args.manifest_topic}")
     print(f"Chunk topics:   {args.chunk_begin_topic}, {args.chunk_item_topic}, {args.chunk_end_topic}")

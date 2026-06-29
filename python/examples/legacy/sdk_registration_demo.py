@@ -39,7 +39,7 @@ if package_root not in sys.path:
     sys.path.insert(0, package_root)
 
 try:
-    from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+    from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
     from horus.sensors import Camera
     from horus.utils import cli
 except ImportError:
@@ -649,8 +649,8 @@ def main():
             compass_enabled=True if args.enable_compass else None,
         )
         if not success:
-            if isinstance(result, dict) and result.get("error") == "Cancelled":
-                cli.print_info("Registration cancelled by user.")
+            if is_registration_cancelled(result):
+                cli.print_info("Registration monitor stopped.")
                 return
             cli.print_error(f"Registration failed: {result}")
             return

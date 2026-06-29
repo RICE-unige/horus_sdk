@@ -13,7 +13,7 @@ if PACKAGE_ROOT not in sys.path:
     sys.path.insert(0, PACKAGE_ROOT)
 
 try:
-    from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+    from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
     from horus.sensors import Camera
     from horus.utils import cli
     from horus.utils.map_3d_workflow import (
@@ -641,6 +641,9 @@ def main():
         workspace_scale=float(args.workspace_scale),
     )
     if not success:
+        if is_registration_cancelled(result):
+            cli.print_info("Registration monitor stopped.")
+            return
         cli.print_error(f"Registration failed: {result}")
         return
     cli.print_success("Robot-description demo registration complete.")

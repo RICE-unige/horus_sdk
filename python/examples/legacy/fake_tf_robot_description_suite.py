@@ -231,7 +231,8 @@ def main():
         cli.print_info(
             "[3D-MAP] Mode=octomap "
             f"(profile={map_profile.value}). Auto-starting fake octomap publisher "
-            f"(octomap={args.map_3d_octomap_topic}, mesh={args.map_3d_octomap_mesh_topic})."
+            f"(octomap={args.map_3d_octomap_topic}, mesh={args.map_3d_octomap_mesh_topic}, "
+            f"indexed_binary={'on' if args.map_3d_mesh_indexed_binary else 'off'})."
         )
     else:
         cli.print_info(
@@ -239,7 +240,8 @@ def main():
             f"(profile={map_profile.value}). Auto-starting fake pointcloud publisher ({args.map_3d_topic}) "
             f"and converter transport={mesh_transport.value} "
             f"(marker={args.map_3d_mesh_topic}) "
-            f"policy={args.map_3d_mesh_update_policy}."
+            f"policy={args.map_3d_mesh_update_policy}, "
+            f"indexed_binary={'on' if args.map_3d_mesh_indexed_binary else 'off'}."
         )
 
     args.scale = 1.0
@@ -267,6 +269,8 @@ def main():
                 mesh_max_triangles=args.map_3d_mesh_max_triangles,
                 mesh_update_policy=args.map_3d_mesh_update_policy,
                 mesh_republish_interval=args.map_3d_mesh_republish_interval,
+                mesh_indexed_binary=bool(args.map_3d_mesh_indexed_binary),
+                mesh_indexed_binary_only=bool(args.map_3d_mesh_indexed_binary),
                 map_3d_octomap_topic=args.map_3d_octomap_topic,
                 map_3d_octomap_mesh_topic=args.map_3d_octomap_mesh_topic,
                 map_3d_octomap_frame=args.map_3d_octomap_frame,

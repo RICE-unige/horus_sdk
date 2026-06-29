@@ -11,7 +11,7 @@ From a source checkout:
     PYTHONPATH=python:$PYTHONPATH python3 python/examples/gaussian_splat_fixture_registration.py
 """
 
-from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
 
 
 ROBOT_SPECS = [
@@ -91,4 +91,7 @@ success, result = register_robots(
 )
 
 if not success:
+    if is_registration_cancelled(result):
+        print("HORUS registration monitor stopped.")
+        raise SystemExit(0)
     raise SystemExit(f"HORUS registration failed: {result}")

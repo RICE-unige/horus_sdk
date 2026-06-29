@@ -11,8 +11,7 @@ Expected live ROS graph:
     /unitree_go1/robot_description
     /unitree_go1/front_camera/left/color/image_rect/compressed
 
-This uses the real Go1 URDF and visual meshes from:
-    /home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description
+This uses the real Go1 URDF and visual meshes from GO1_DESCRIPTION_ROOT.
 
 Run the support relay in a separate terminal. It publishes the missing front
 camera optical TF and also handles HORUS MR Stand Up, Sit Down, and collision
@@ -20,16 +19,24 @@ alert visualization:
     PYTHONPATH=python:$PYTHONPATH python3 python/examples/tools/unitree_go1_high_mode_relay.py
 
 From a source checkout:
+    export GO1_DESCRIPTION_ROOT=/path/to/go1_description
     PYTHONPATH=python:$PYTHONPATH python3 python/examples/unitree_go1_registration.py
 """
 
+import os
 from pathlib import Path
 
-from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
 from horus.sensors import Camera, LaserScan
 
 ROBOT_NAME = "unitree_go1"
-GO1_DESCRIPTION_ROOT = Path("/home/omotoye/Unitree_ros2_to_real/ros2_ws/src/go1_description")
+if "GO1_DESCRIPTION_ROOT" not in os.environ:
+    raise SystemExit(
+        "GO1_DESCRIPTION_ROOT must point to the go1_description package "
+        "(for example: export GO1_DESCRIPTION_ROOT=/path/to/go1_description)"
+    )
+
+GO1_DESCRIPTION_ROOT = Path(os.environ["GO1_DESCRIPTION_ROOT"]).expanduser()
 GO1_URDF = GO1_DESCRIPTION_ROOT / "urdf" / "go1.urdf"
 FRONT_CAMERA_TOPIC = f"/{ROBOT_NAME}/front_camera/left/color/image_rect/compressed"
 FRONT_CAMERA_INFO_TOPIC = f"/{ROBOT_NAME}/front_camera/left/camera_info"
@@ -172,4 +179,7 @@ success, result = register_robots(
 )
 
 if not success:
+    if is_registration_cancelled(result):
+        print("HORUS registration monitor stopped.")
+        raise SystemExit(0)
     raise SystemExit(f"HORUS registration failed: {result}")
