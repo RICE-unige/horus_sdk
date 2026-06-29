@@ -14,10 +14,12 @@
 #include <utility>
 #include <vector>
 
+#include <octomap/ColorOcTree.h>
 #include <octomap/OcTree.h>
 #include <octomap_msgs/conversions.h>
 #include <octomap_msgs/msg/octomap.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/color_rgba.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 namespace
@@ -25,6 +27,7 @@ namespace
 using OctomapMsg = octomap_msgs::msg::Octomap;
 using MarkerMsg = visualization_msgs::msg::Marker;
 using PointMsg = geometry_msgs::msg::Point;
+using ColorMsg = std_msgs::msg::ColorRGBA;
 
 enum class MarkerStyle
 {
@@ -51,11 +54,45 @@ PointMsg point(double x, double y, double z)
   return p;
 }
 
-void add_triangle(MarkerMsg & marker, const PointMsg & a, const PointMsg & b, const PointMsg & c)
+ColorMsg color_rgba(float r, float g, float b, float a)
+{
+  ColorMsg color;
+  color.r = std::clamp(r, 0.0f, 1.0f);
+  color.g = std::clamp(g, 0.0f, 1.0f);
+  color.b = std::clamp(b, 0.0f, 1.0f);
+  color.a = std::clamp(a, 0.0f, 1.0f);
+  return color;
+}
+
+ColorMsg normal_axis_color(int axis, int side, float alpha)
+{
+  const float shade = side > 0 ? 1.0f : 0.58f;
+  switch (axis)
+  {
+    case 0:
+      return color_rgba(0.92f * shade, 0.20f * shade, 0.20f * shade, alpha);
+    case 1:
+      return color_rgba(0.20f * shade, 0.82f * shade, 0.26f * shade, alpha);
+    case 2:
+      return color_rgba(0.22f * shade, 0.44f * shade, 0.96f * shade, alpha);
+    default:
+      return color_rgba(0.62f, 0.72f, 0.86f, alpha);
+  }
+}
+
+void add_triangle(
+  MarkerMsg & marker,
+  const PointMsg & a,
+  const PointMsg & b,
+  const PointMsg & c,
+  const ColorMsg & color)
 {
   marker.points.push_back(a);
   marker.points.push_back(b);
   marker.points.push_back(c);
+  marker.colors.push_back(color);
+  marker.colors.push_back(color);
+  marker.colors.push_back(color);
 }
 
 void add_face(
@@ -63,13 +100,15 @@ void add_face(
   const PointMsg & a,
   const PointMsg & b,
   const PointMsg & c,
-  const PointMsg & d)
+  const PointMsg & d,
+  const ColorMsg & color)
 {
-  add_triangle(marker, a, b, c);
-  add_triangle(marker, a, c, d);
+  add_triangle(marker, a, b, c, color);
+  add_triangle(marker, a, c, d, color);
 }
 
-bool is_occupied_at(const octomap::OcTree & tree, double x, double y, double z)
+template <typename TreeT>
+bool is_occupied_at(const TreeT & tree, double x, double y, double z)
 {
   const auto * node = tree.search(x, y, z);
   return node != nullptr && tree.isNodeOccupied(node);
@@ -160,7 +199,8 @@ void add_merged_face(
   double u0,
   double u1,
   double v0,
-  double v1)
+  double v1,
+  float alpha)
 {
   PointMsg p00;
   PointMsg p10;
@@ -197,11 +237,11 @@ void add_merged_face(
 
   if (use_positive_winding)
   {
-    add_face(marker, p00, p10, p11, p01);
+    add_face(marker, p00, p10, p11, p01, normal_axis_color(axis, side, alpha));
   }
   else
   {
-    add_face(marker, p00, p01, p11, p10);
+    add_face(marker, p00, p01, p11, p10, normal_axis_color(axis, side, alpha));
   }
 }
 }  // namespace
@@ -345,20 +385,34 @@ private:
       return;
     }
 
-    const auto * tree = dynamic_cast<const octomap::OcTree *>(abstract_tree.get());
-    if (tree == nullptr)
+    if (const auto * tree = dynamic_cast<const octomap::OcTree *>(abstract_tree.get()))
     {
-      RCLCPP_WARN(
-        get_logger(),
-        "Unsupported Octomap tree type '%s'; only OcTree is currently converted",
-        abstract_tree->getTreeType().c_str());
+      build_and_queue_tree(msg, *tree, source_signature);
       return;
     }
 
-    std::size_t occupied_count = 0;
-    for (auto it = tree->begin_leafs(), end = tree->end_leafs(); it != end; ++it)
+    if (const auto * tree = dynamic_cast<const octomap::ColorOcTree *>(abstract_tree.get()))
     {
-      if (tree->isNodeOccupied(*it))
+      build_and_queue_tree(msg, *tree, source_signature);
+      return;
+    }
+
+    RCLCPP_WARN(
+      get_logger(),
+      "Unsupported Octomap tree type '%s'; supported types are OcTree and ColorOcTree",
+      abstract_tree->getTreeType().c_str());
+  }
+
+  template <typename TreeT>
+  void build_and_queue_tree(
+    const OctomapMsg & msg,
+    const TreeT & tree,
+    std::uint64_t source_signature)
+  {
+    std::size_t occupied_count = 0;
+    for (auto it = tree.begin_leafs(), end = tree.end_leafs(); it != end; ++it)
+    {
+      if (tree.isNodeOccupied(*it))
       {
         ++occupied_count;
       }
@@ -373,11 +427,11 @@ private:
     pending_markers_.clear();
     if (marker_style_ == MarkerStyle::RvizVoxels)
     {
-      publish_full_voxel_markers(msg, *tree, occupied_count);
+      publish_full_voxel_markers(msg, tree, occupied_count);
     }
     else
     {
-      publish_surface_mesh_markers(msg, *tree, occupied_count);
+      publish_surface_mesh_markers(msg, tree, occupied_count);
     }
 
     RCLCPP_INFO(
@@ -458,9 +512,10 @@ private:
     pending_markers_.push_back(marker);
   }
 
+  template <typename TreeT>
   void publish_surface_mesh_markers(
     const OctomapMsg & msg,
-    const octomap::OcTree & tree,
+    const TreeT & tree,
     std::size_t occupied_count)
   {
     constexpr const char * ns = "uav_sim_octomap_surface_chunked";
@@ -563,7 +618,16 @@ private:
         {
           publish_chunk();
         }
-        add_merged_face(marker, plane_key.axis, plane_key.side, plane, u0, u1, v0, v1);
+        add_merged_face(
+          marker,
+          plane_key.axis,
+          plane_key.side,
+          plane,
+          u0,
+          u1,
+          v0,
+          v1,
+          static_cast<float>(alpha_));
         chunk_triangles += 2;
         emitted_triangles += 2;
         ++merged_quads;
@@ -695,19 +759,20 @@ private:
       msg.header.frame_id.empty() ? "map" : msg.header.frame_id.c_str());
   }
 
-  static void add_cube(MarkerMsg & marker, const PointMsg (&p)[8])
+  static void add_cube(MarkerMsg & marker, const PointMsg (&p)[8], float alpha)
   {
-    add_face(marker, p[4], p[6], p[7], p[5]);
-    add_face(marker, p[0], p[1], p[3], p[2]);
-    add_face(marker, p[2], p[3], p[7], p[6]);
-    add_face(marker, p[0], p[4], p[5], p[1]);
-    add_face(marker, p[1], p[5], p[7], p[3]);
-    add_face(marker, p[0], p[2], p[6], p[4]);
+    add_face(marker, p[4], p[6], p[7], p[5], normal_axis_color(0, 1, alpha));
+    add_face(marker, p[0], p[1], p[3], p[2], normal_axis_color(0, -1, alpha));
+    add_face(marker, p[2], p[3], p[7], p[6], normal_axis_color(1, 1, alpha));
+    add_face(marker, p[0], p[4], p[5], p[1], normal_axis_color(1, -1, alpha));
+    add_face(marker, p[1], p[5], p[7], p[3], normal_axis_color(2, 1, alpha));
+    add_face(marker, p[0], p[2], p[6], p[4], normal_axis_color(2, -1, alpha));
   }
 
+  template <typename TreeT>
   void publish_full_voxel_markers(
     const OctomapMsg & msg,
-    const octomap::OcTree & tree,
+    const TreeT & tree,
     std::size_t occupied_count)
   {
     constexpr const char * ns = "uav_sim_octomap_voxels_chunked";
@@ -770,7 +835,7 @@ private:
         point(x1, y1, z1),
       };
 
-      add_cube(marker, p);
+      add_cube(marker, p, static_cast<float>(alpha_));
       ++chunk_voxels;
       ++emitted_voxels;
       emitted_triangles += 12;

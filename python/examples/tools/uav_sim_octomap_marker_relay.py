@@ -40,6 +40,7 @@ find_package(octomap REQUIRED)
 find_package(octomap_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 add_executable(uav_sim_octomap_marker_relay "{SOURCE.as_posix()}")
 target_compile_features(uav_sim_octomap_marker_relay PRIVATE cxx_std_17)
@@ -49,6 +50,7 @@ ament_target_dependencies(
   octomap_msgs
   visualization_msgs
   geometry_msgs
+  std_msgs
 )
 target_include_directories(uav_sim_octomap_marker_relay PRIVATE ${{OCTOMAP_INCLUDE_DIRS}})
 target_link_libraries(uav_sim_octomap_marker_relay ${{OCTOMAP_LIBRARIES}})

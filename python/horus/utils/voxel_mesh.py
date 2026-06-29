@@ -143,6 +143,27 @@ def _greedy_rectangles_for_plane(
     width = max_u - min_u + 1
     height = max_v - min_v + 1
 
+    # Guard against a pathologically large dense grid: if the plane's occupied cells are sparse
+    # within a huge bounding box (e.g. a few isolated voxels spanning a large extent), the dense
+    # (height x width [x3]) allocations below can reach gigabytes and OOM the publisher. Fall back
+    # to emitting each cell as a 1x1 quad -- the same surface, just unmerged -- with memory bounded
+    # to O(len(cells)).
+    cell_count = len(cells)
+    grid_area = width * height
+    if grid_area > 4_000_000 or grid_area > cell_count * 64:
+        fallback: List[Tuple[int, int, int, int, Optional[ColorTuple]]] = []
+        for (u, v), color in cells.items():
+            if color is None:
+                quantized: Optional[ColorTuple] = None
+            else:
+                quantized = (
+                    _quantize_channel(int(color[0]), color_quant_step),
+                    _quantize_channel(int(color[1]), color_quant_step),
+                    _quantize_channel(int(color[2]), color_quant_step),
+                )
+            fallback.append((u, v, 1, 1, quantized))
+        return fallback
+
     present = np.zeros((height, width), dtype=np.bool_)
     color_grid = np.zeros((height, width, 3), dtype=np.int32)
     has_color = np.zeros((height, width), dtype=np.bool_)

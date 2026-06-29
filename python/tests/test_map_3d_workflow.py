@@ -127,6 +127,8 @@ def test_build_map_3d_process_specs_for_mesh_includes_converter_defaults():
     assert "once" in converter.command
     assert "--mesh-transport" in converter.command
     assert MeshTransport.MARKER.value in converter.command
+    assert "--indexed-binary" in converter.command
+    assert "--indexed-binary-only" in converter.command
 
 
 def test_build_map_3d_process_specs_for_mesh_defaults_disable_periodic_snapshot_keepalive():
@@ -243,6 +245,38 @@ def test_build_map_3d_process_specs_for_octomap_uses_fake_octomap_publisher():
     assert "--max-triangles" in command
     assert "91000" in command
     assert "--detailed" in command
+    assert "--indexed-binary" in command
+    assert "--indexed-binary-only" in command
+
+
+def test_build_map_3d_process_specs_can_disable_indexed_binary_mesh():
+    specs = build_map_3d_process_specs(
+        mode=Map3DMode.MESH,
+        python_executable="python3",
+        script_dir="/tmp/examples",
+        map_3d_topic="/map_3d",
+        map_3d_frame="map",
+        map_3d_mesh_topic="/map_3d_mesh",
+        mesh_indexed_binary=False,
+    )
+
+    assert "--indexed-binary" not in specs[1].command
+    assert "--indexed-binary-only" not in specs[1].command
+
+
+def test_build_map_3d_process_specs_can_disable_indexed_binary_octomap():
+    specs = build_map_3d_process_specs(
+        mode=Map3DMode.OCTOMAP,
+        python_executable="python3",
+        script_dir="/tmp/examples",
+        map_3d_topic="/map_3d",
+        map_3d_frame="map",
+        map_3d_mesh_topic="/map_3d_mesh",
+        mesh_indexed_binary=False,
+    )
+
+    assert "--indexed-binary" not in specs[0].command
+    assert "--indexed-binary-only" not in specs[0].command
 
 
 def test_pointcloud_to_mesh_command_contains_expected_topics():
@@ -259,6 +293,21 @@ def test_pointcloud_to_mesh_command_contains_expected_topics():
     assert "/mesh_out" in command
     assert "--update-policy" in command
     assert "continuous" in command
+    assert "--indexed-binary" in command
+    assert "--indexed-binary-only" in command
+
+
+def test_pointcloud_to_mesh_command_can_disable_indexed_binary():
+    command = build_pointcloud_to_mesh_converter_command(
+        python_executable="python3",
+        script_dir="/tmp/examples",
+        cloud_topic="/source_cloud",
+        mesh_topic="/mesh_out",
+        indexed_binary=False,
+    )
+
+    assert "--indexed-binary" not in command
+    assert "--indexed-binary-only" not in command
 
 
 def test_pointcloud_to_mesh_command_supports_marker_array_transport_flags():

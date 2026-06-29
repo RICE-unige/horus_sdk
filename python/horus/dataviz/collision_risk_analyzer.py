@@ -13,7 +13,7 @@ try:
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import LaserScan, PointCloud2
     from std_msgs.msg import String
-except Exception:
+except ImportError:
     QoSProfile = None
     DurabilityPolicy = None
     ReliabilityPolicy = None
@@ -23,7 +23,7 @@ except Exception:
 
 try:
     from sensor_msgs_py import point_cloud2
-except Exception:
+except ImportError:
     point_cloud2 = None
 
 

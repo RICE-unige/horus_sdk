@@ -12,6 +12,7 @@ import json
 import importlib.util
 import os
 import random
+import struct
 import sys
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -29,11 +30,75 @@ try:
     from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-    from std_msgs.msg import ColorRGBA, String
+    from std_msgs.msg import ColorRGBA, String, UInt8MultiArray
     from visualization_msgs.msg import Marker
 except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Opt-in indexed-binary mesh transport ('HMSH' v1), published as a single
+# std_msgs/UInt8MultiArray on '<mesh_topic>/indexed'. Use --indexed-binary-only
+# for HORUS MR so the bridge does not also relay the heavyweight Marker payload.
+# Layout (little-endian): [u32 magic=0x484D5348][u32 version=1][u32 chunkId]
+# [u32 vertexCount][u32 indexCount][u8 hasColor][u8 pad*3] then vertices
+# (x,y,z float32[, r,g,b,a uint8]) then indices (u32). Lossless de-dup.
+# ---------------------------------------------------------------------------
+INDEXED_MESH_MAGIC = 0x484D5348  # 'HMSH'
+INDEXED_MESH_VERSION = 1
+INDEXED_MESH_HEADER_STRUCT = struct.Struct("<IIIII B 3x")
+
+
+def encode_indexed_mesh_multiarray_chunk(chunk_id, vertices, colors, quant=100000):
+    """Pack one mesh chunk into 'HMSH' v1 bytes. Returns (payload, vcount, icount)."""
+    n = len(vertices)
+    usable = (n // 3) * 3
+    has_colors = colors is not None and len(colors) >= usable
+
+    vmap: Dict[Tuple[int, int, int, int, int, int], int] = {}
+    uniq_pos: List[Tuple[float, float, float]] = []
+    uniq_col: List[Tuple[int, int, int, int]] = []
+    indices: List[int] = []
+    for i in range(usable):
+        x, y, z = vertices[i]
+        if has_colors:
+            c = colors[i]
+            r, g, b = int(c[0]) & 255, int(c[1]) & 255, int(c[2]) & 255
+        else:
+            r, g, b = 180, 184, 200
+        key = (int(round(x * quant)), int(round(y * quant)), int(round(z * quant)), r, g, b)
+        idx = vmap.get(key)
+        if idx is None:
+            idx = len(uniq_pos)
+            vmap[key] = idx
+            uniq_pos.append((float(x), float(y), float(z)))
+            uniq_col.append((r, g, b, 255))
+        indices.append(idx)
+
+    vcount = len(uniq_pos)
+    icount = len(indices)
+    if has_colors:
+        vertex_dtype = np.dtype([("p", "<f4", 3), ("c", "<u1", 4)])
+        varr = np.empty(vcount, dtype=vertex_dtype)
+        if vcount:
+            varr["p"] = np.asarray(uniq_pos, dtype="<f4")
+            varr["c"] = np.asarray(uniq_col, dtype="<u1")
+        vertex_bytes = varr.tobytes()
+    else:
+        pos = np.asarray(uniq_pos, dtype="<f4") if vcount else np.empty((0, 3), dtype="<f4")
+        vertex_bytes = pos.tobytes()
+
+    header = INDEXED_MESH_HEADER_STRUCT.pack(
+        INDEXED_MESH_MAGIC,
+        INDEXED_MESH_VERSION,
+        int(chunk_id) & 0xFFFFFFFF,
+        vcount,
+        icount,
+        1 if has_colors else 0,
+    )
+    payload = header + vertex_bytes + np.asarray(indices, dtype="<u4").tobytes()
+    return payload, vcount, icount
 
 try:
     from octomap_msgs.msg import Octomap
@@ -57,7 +122,11 @@ VoxelKey = Tuple[int, int, int]
 ColorU8 = Tuple[int, int, int]
 SDK_REPLAY_REQUEST_TOPIC = "/horus/multi_operator/sdk_registration_replay_request"
 SDK_REPLAY_END_TOPIC = "/horus/multi_operator/sdk_registry_replay_end"
-REPLAY_BURST_COUNT_DEFAULT = 8
+# A single re-publish suffices: the octomap mesh latches via TRANSIENT_LOCAL durability, so a
+# late-joining/replaying subscriber receives the newest snapshot on subscribe. The previous 8x burst
+# dumped consecutive full-mesh marker floods onto the single Unity TCP socket, head-of-line-blocking
+# TF/camera/scan while the mesh drained.
+REPLAY_BURST_COUNT_DEFAULT = 1
 REPLAY_BURST_INTERVAL_DEFAULT = 0.5
 
 
@@ -73,11 +142,16 @@ class FakeOctomapPublisher(Node):
         republish_interval: float,
         detailed: bool,
         seed: int,
+        indexed_binary: bool = False,
+        indexed_binary_only: bool = False,
     ) -> None:
         super().__init__("horus_fake_octomap_publisher")
         self.octomap_topic = str(octomap_topic)
         self.mesh_topic = str(mesh_topic)
         self.frame_id = str(frame_id)
+        self.indexed_binary = bool(indexed_binary)
+        self.indexed_binary_only = bool(indexed_binary and indexed_binary_only)
+        self.indexed_topic = self.mesh_topic + "/indexed"
         self.voxel_size = max(0.02, float(voxel_size))
         self.max_voxels = max(0, int(max_voxels))
         self.max_triangles = max(0, int(max_triangles))
@@ -92,6 +166,11 @@ class FakeOctomapPublisher(Node):
             reliability=ReliabilityPolicy.RELIABLE,
         )
         self.mesh_pub = self.create_publisher(Marker, self.mesh_topic, qos)
+        self.indexed_pub = (
+            self.create_publisher(UInt8MultiArray, self.indexed_topic, qos)
+            if self.indexed_binary
+            else None
+        )
         self.octomap_pub = (
             self.create_publisher(Octomap, self.octomap_topic, qos)
             if HAS_NATIVE_OCTOMAP
@@ -122,10 +201,28 @@ class FakeOctomapPublisher(Node):
         if not mesh_result.vertices:
             raise RuntimeError("Failed to build fake OctoMap mesh: no triangles generated.")
 
-        self.marker = self._build_marker(mesh_result.vertices, mesh_result.colors)
+        self.marker = (
+            None
+            if self.indexed_binary_only
+            else self._build_marker(mesh_result.vertices, mesh_result.colors)
+        )
         self.octomap_msg = self._build_octomap_message()
         self.scene_voxel_count = int(voxel_coords.shape[0])
         self.scene_triangle_count = int(mesh_result.triangle_count)
+
+        # The fake scene is static, so encode the indexed-binary payload once (single chunk 0).
+        self.indexed_payload: Optional[bytes] = None
+        self.indexed_vertex_count = 0
+        self.indexed_index_count = 0
+        if self.indexed_binary:
+            payload, vcount, icount = encode_indexed_mesh_multiarray_chunk(
+                chunk_id=0,
+                vertices=mesh_result.vertices,
+                colors=mesh_result.colors,
+            )
+            self.indexed_payload = payload
+            self.indexed_vertex_count = vcount
+            self.indexed_index_count = icount
 
         self._last_mesh_subs = -1
         self._last_octomap_subs = -1
@@ -147,6 +244,8 @@ class FakeOctomapPublisher(Node):
             f"voxels={self.scene_voxel_count}, triangles={self.scene_triangle_count}, "
             f"voxel_size={self.voxel_size:.3f}, detailed={self.detailed}, "
             f"native_octomap={'on' if self.octomap_pub is not None else 'off'}, "
+            f"indexed_binary={'on' if self.indexed_pub is not None else 'off'}, "
+            f"indexed_binary_only={'on' if self.indexed_binary_only else 'off'}, "
             f"replay_burst={self._replay_burst_count}x{self._replay_burst_interval:.2f}s"
         )
 
@@ -318,8 +417,13 @@ class FakeOctomapPublisher(Node):
 
     def _publish(self, reason: str) -> None:
         now = self.get_clock().now().to_msg()
-        self.marker.header.stamp = now
-        self.mesh_pub.publish(self.marker)
+        if self.marker is not None:
+            self.marker.header.stamp = now
+            self.mesh_pub.publish(self.marker)
+        if self.indexed_pub is not None and self.indexed_payload is not None:
+            out = UInt8MultiArray()
+            out.data = list(self.indexed_payload)
+            self.indexed_pub.publish(out)
         if self.octomap_msg is not None and self.octomap_pub is not None:
             self.octomap_msg.header.stamp = now
             self.octomap_pub.publish(self.octomap_msg)
@@ -370,7 +474,7 @@ class FakeOctomapPublisher(Node):
             return
 
         attempt = (self._replay_burst_total - self._replay_burst_remaining) + 1
-        snapshot_available = self.marker is not None
+        snapshot_available = self.marker is not None or self.indexed_payload is not None
         if snapshot_available:
             self._publish(reason=f"replay_burst_{attempt}")
             self._replay_burst_published += 1
@@ -452,6 +556,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--detailed", action="store_true", default=False, help="Use denser fake map layout.")
     parser.add_argument("--seed", type=int, default=42, help="Scene random seed.")
+    parser.add_argument(
+        "--indexed-binary",
+        action="store_true",
+        default=False,
+        help=(
+            "Opt-in: additionally publish a lossless 'HMSH' v1 indexed-binary mesh "
+            "(std_msgs/UInt8MultiArray, ~4-6x smaller) on '<mesh-topic>/indexed'. The "
+            "default Marker path is unchanged and remains authoritative."
+        ),
+    )
+    parser.add_argument(
+        "--indexed-binary-only",
+        action="store_true",
+        default=False,
+        help=(
+            "When --indexed-binary is enabled, suppress heavyweight Marker mesh "
+            "publishes and use '<mesh-topic>/indexed' as the HORUS MR path."
+        ),
+    )
     return parser
 
 
@@ -468,6 +591,8 @@ def main() -> None:
         republish_interval=args.republish_interval,
         detailed=bool(args.detailed),
         seed=args.seed,
+        indexed_binary=bool(args.indexed_binary),
+        indexed_binary_only=bool(args.indexed_binary_only),
     )
 
     try:

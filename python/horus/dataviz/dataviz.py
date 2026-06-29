@@ -394,14 +394,49 @@ class DataViz:
 
         self._add_or_update_visualization(viz_config)
 
+    # Recognized declarative transport lanes for 3D-map visualizations. These mirror the bridge's
+    # OutboundMessagePolicy tokens and are honored verbatim by the bridge when forwarded from Unity.
+    _VALID_TRANSPORT_LANES = (
+        "strict",
+        "replaceable",
+        "bulk_strict",
+        "bulk_replaceable",
+    )
+
+    @classmethod
+    def _apply_transport_lane(
+        cls,
+        render_options: Dict[str, Any],
+        transport_lane: Optional[str],
+    ) -> None:
+        """
+        Optionally stamp an explicit transport lane onto a map visualization's render options.
+
+        Default (transport_lane=None) is a no-op, preserving the bridge's heuristic lane
+        classification. An explicit caller value already present in render_options is respected
+        and not overwritten.
+        """
+        if transport_lane is None or "transport_lane" in render_options:
+            return
+        normalized = str(transport_lane).strip().lower()
+        if normalized not in cls._VALID_TRANSPORT_LANES:
+            raise ValueError(
+                "transport_lane must be one of "
+                f"{cls._VALID_TRANSPORT_LANES}, got '{transport_lane}'"
+            )
+        render_options["transport_lane"] = normalized
+
     # Environment/World visualizations (robot-independent)
     def add_occupancy_grid(
         self,
         topic: str,
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
+        transport_lane: Optional[str] = None,
     ) -> None:
         """Add occupancy grid map visualization"""
+        render_options = dict(render_options or {})
+        self._apply_transport_lane(render_options, transport_lane)
         data_source = EnvironmentDataSource(
             name="occupancy_grid",
             source_type=DataSourceType.OCCUPANCY_GRID,
@@ -423,8 +458,11 @@ class DataViz:
         topic: str,
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
+        transport_lane: Optional[str] = None,
     ) -> None:
         """Add 3D map visualization"""
+        render_options = dict(render_options or {})
+        self._apply_transport_lane(render_options, transport_lane)
         data_source = EnvironmentDataSource(
             name="map_3d",
             source_type=DataSourceType.MAP_3D,
@@ -435,7 +473,7 @@ class DataViz:
         viz_config = VisualizationConfig(
             viz_type=VisualizationType.POINT_CLOUD,
             data_source=data_source,
-            render_options=render_options or {},
+            render_options=render_options,
             layer_priority=-5,  # Background layer
         )
 
@@ -446,8 +484,11 @@ class DataViz:
         topic: str,
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
+        transport_lane: Optional[str] = None,
     ) -> None:
         """Add global 3D mesh map visualization."""
+        render_options = dict(render_options or {})
+        self._apply_transport_lane(render_options, transport_lane)
         data_source = EnvironmentDataSource(
             name="map_3d_mesh",
             source_type=DataSourceType.MAP_3D,
@@ -458,7 +499,7 @@ class DataViz:
         viz_config = VisualizationConfig(
             viz_type=VisualizationType.MESH,
             data_source=data_source,
-            render_options=render_options or {},
+            render_options=render_options,
             layer_priority=-4,
         )
 
@@ -469,8 +510,11 @@ class DataViz:
         topic: str,
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
+        transport_lane: Optional[str] = None,
     ) -> None:
         """Add global OctoMap visualization metadata."""
+        render_options = dict(render_options or {})
+        self._apply_transport_lane(render_options, transport_lane)
         data_source = EnvironmentDataSource(
             name="map_3d_octomap",
             source_type=DataSourceType.MAP_3D,
@@ -481,7 +525,7 @@ class DataViz:
         viz_config = VisualizationConfig(
             viz_type=VisualizationType.OCTOMAP,
             data_source=data_source,
-            render_options=render_options or {},
+            render_options=render_options,
             layer_priority=-4,
         )
 
@@ -493,9 +537,11 @@ class DataViz:
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
         preview_topic: str = "/map_gaussian_splat_preview",
+        transport_lane: Optional[str] = None,
     ) -> None:
         """Add a global Gaussian Splat map visualization."""
         options = dict(render_options or {})
+        self._apply_transport_lane(options, transport_lane)
         options.setdefault("manifest_topic", manifest_topic)
         options.setdefault("chunk_begin_topic", "/horus/gaussian_splat/chunk_begin")
         options.setdefault("chunk_item_topic", "/horus/gaussian_splat/chunk_item")

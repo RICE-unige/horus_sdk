@@ -14,8 +14,11 @@ Usage examples:
 """
 
 import argparse
+import base64
+import hashlib
 import json
 import math
+import os
 import random
 import struct
 import sys
@@ -33,6 +36,137 @@ except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
     sys.exit(1)
 
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - numpy is optional; a struct fallback is used without it
+    np = None
+
+
+def serialize_pointcloud_xyzrgb(points) -> bytes:
+    """Serialize ``[(x, y, z, rgb_u32), ...]`` into PointCloud2 wire bytes.
+
+    Layout is ``point_step=16`` with fields ``<fffI`` (x, y, z float32 + packed rgb). The packed
+    rgb uint32 is written bit-for-bit into the float32 ``rgb`` slot -- exactly how PointCloud2
+    carries packed colour -- so the previous per-point ``struct.unpack('<f', struct.pack('<I',
+    rgb))`` round-trip is unnecessary. Vectorised with numpy when available. Callers cache the
+    result and only re-run it when the point set actually changes, so a static map is never
+    re-serialised per publish (the dominant per-publish CPU cost on the single rclpy spin thread).
+    """
+    n = len(points)
+    if n == 0:
+        return b""
+    if np is not None:
+        dtype = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("rgb", "<u4")])
+        return np.array(points, dtype=dtype).tobytes()
+    packer = struct.Struct("<fffI")
+    buf = bytearray(n * 16)
+    pack_into = packer.pack_into
+    offset = 0
+    for x, y, z, rgb_u32 in points:
+        pack_into(buf, offset, float(x), float(y), float(z), int(rgb_u32) & 0xFFFFFFFF)
+        offset += 16
+    return bytes(buf)
+
+
+def _pc_chunked_enabled(node=None) -> bool:
+    """Opt-in chunked PointCloud2 transport. Default OFF keeps the single-message path byte-for-byte
+    unchanged. Enabled either by the ``--chunked`` CLI flag (resolved onto ``node._pc_chunked``) or,
+    for backward compatibility, the ``HORUS_PC_CHUNKED=1`` environment variable. The CLI flag takes
+    precedence when an explicit per-node value is set."""
+    if node is not None:
+        explicit = getattr(node, "_pc_chunked", None)
+        if explicit is not None:
+            return bool(explicit)
+    return os.environ.get("HORUS_PC_CHUNKED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _pc_chunk_size(node=None) -> int:
+    """Resolve the per-chunk byte budget. The ``--chunk-bytes`` CLI flag (resolved onto
+    ``node._pc_chunk_bytes``) takes precedence over the ``HORUS_PC_CHUNK_SIZE`` env var; both floor
+    at 4096 so a chunk always carries whole points (point_step=16)."""
+    if node is not None:
+        explicit = getattr(node, "_pc_chunk_bytes", None)
+        if explicit is not None:
+            try:
+                return max(4096, int(explicit))
+            except (TypeError, ValueError):
+                pass
+    try:
+        return max(4096, int(os.environ.get("HORUS_PC_CHUNK_SIZE", "262144")))
+    except ValueError:
+        return 262144
+
+
+def _publish_pointcloud_chunked(node, base_topic, frame_id, data_bytes, point_count, chunk_size):
+    """Publish the cached PointCloud2 wire bytes as an ordered begin/item/end chunk stream on
+    ``<base_topic>/chunks_begin|_item|_end``.
+
+    The bridge classifies these chunk topics onto the Bulk lane and interleaves Realtime traffic
+    (TF/camera/scan) between the (small) chunk frames, instead of head-of-line-blocking them behind
+    one multi-MB PointCloud2 frame. Lossless: the reassembled bytes are byte-identical to the single
+    payload. ``asset_id`` is the content hash, so an unchanged re-publish carries the same id and is
+    de-dupable by the consumer.
+    """
+    pubs = getattr(node, "_pc_chunk_pubs", None)
+    if pubs is None:
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+
+        qos = QoSProfile(depth=256)
+        qos.reliability = ReliabilityPolicy.RELIABLE
+        pubs = (
+            node.create_publisher(String, base_topic + "/chunks_begin", qos),
+            node.create_publisher(String, base_topic + "/chunks_item", qos),
+            node.create_publisher(String, base_topic + "/chunks_end", qos),
+        )
+        node._pc_chunk_pubs = pubs
+    begin_pub, item_pub, end_pub = pubs
+
+    n = len(data_bytes)
+    chunk_size = max(4096, int(chunk_size))
+    total = (n + chunk_size - 1) // chunk_size if n > 0 else 0
+    asset_id = hashlib.sha256(data_bytes).hexdigest()[:32]
+
+    begin = {
+        "asset_id": asset_id,
+        "total_chunks": total,
+        "content_length": n,
+        "frame_id": frame_id,
+        "width": int(point_count),
+        "height": 1,
+        "point_step": 16,
+        "row_step": 16 * int(point_count),
+        "is_bigendian": False,
+        "is_dense": True,
+        "fields": [
+            {"name": "x", "offset": 0, "datatype": 7, "count": 1},
+            {"name": "y", "offset": 4, "datatype": 7, "count": 1},
+            {"name": "z", "offset": 8, "datatype": 7, "count": 1},
+            {"name": "rgb", "offset": 12, "datatype": 7, "count": 1},
+        ],
+    }
+    begin_msg = String()
+    begin_msg.data = json.dumps(begin)
+    begin_pub.publish(begin_msg)
+
+    index = 0
+    offset = 0
+    while offset < n:
+        end_offset = min(offset + chunk_size, n)
+        item = {
+            "asset_id": asset_id,
+            "index": index,
+            "data": base64.b64encode(data_bytes[offset:end_offset]).decode("ascii"),
+        }
+        item_msg = String()
+        item_msg.data = json.dumps(item)
+        item_pub.publish(item_msg)
+        offset = end_offset
+        index += 1
+
+    end_msg = String()
+    end_msg.data = json.dumps({"asset_id": asset_id, "received_count": index, "sha256": asset_id})
+    end_pub.publish(end_msg)
+
 
 class Fake3DMapPublisher(Node):
     def __init__(
@@ -46,8 +180,14 @@ class Fake3DMapPublisher(Node):
         resolution: float,
         obstacle_count: int,
         seed: int,
+        chunked: Optional[bool] = None,
+        chunk_bytes: int = 262144,
     ) -> None:
         super().__init__("horus_fake_3d_map_publisher")
+        # Opt-in chunk-transport config must be resolved BEFORE the initial latched publish below so
+        # the first (and every) snapshot honors --chunked. None -> HORUS_PC_CHUNKED env fallback.
+        self._pc_chunked = chunked
+        self._pc_chunk_bytes = int(chunk_bytes)
         self.topic = topic
         self.frame_id = frame_id
         self.rate_hz = max(0.1, float(rate_hz))
@@ -176,13 +316,19 @@ class Fake3DMapPublisher(Node):
         msg.row_step = msg.point_step * msg.width
         msg.is_dense = True
 
-        data = bytearray(msg.row_step)
-        pack_into = self._point_struct.pack_into
-        for i, (x, y, z, rgb_u32) in enumerate(self._points):
-            rgb_float = struct.unpack("<f", struct.pack("<I", rgb_u32))[0]
-            pack_into(data, i * msg.point_step, float(x), float(y), float(z), rgb_float)
+        # Serialize once and cache. The wire bytes only change when the point set itself changes
+        # (identity check), so a static or re-latched map is never re-serialised per publish.
+        if getattr(self, "_wire_cache_src", None) is not self._points:
+            self._wire_cache = serialize_pointcloud_xyzrgb(self._points)
+            self._wire_cache_src = self._points
 
-        msg.data = data
+        if _pc_chunked_enabled(self):
+            _publish_pointcloud_chunked(
+                self, self.topic, self.frame_id, self._wire_cache, len(self._points), _pc_chunk_size(self)
+            )
+            return
+
+        msg.data = self._wire_cache
         self.publisher.publish(msg)
 
 
@@ -205,8 +351,13 @@ class CompactHouse3DMapPublisher(Node):
         include_ceiling: bool,
         publish_mode: str,
         on_change_republish_interval: float,
+        chunked: Optional[bool] = None,
+        chunk_bytes: int = 262144,
     ) -> None:
         super().__init__("horus_fake_3d_map_publisher_compact_house")
+        # Resolve opt-in chunk-transport config before the initial latched publish (see basic node).
+        self._pc_chunked = chunked
+        self._pc_chunk_bytes = int(chunk_bytes)
         self.topic = topic
         self.frame_id = frame_id
         self.rate_hz = max(0.1, float(rate_hz))
@@ -680,13 +831,19 @@ class CompactHouse3DMapPublisher(Node):
         msg.row_step = msg.point_step * msg.width
         msg.is_dense = True
 
-        data = bytearray(msg.row_step)
-        pack_into = self._point_struct.pack_into
-        for i, (x, y, z, rgb_u32) in enumerate(self._points):
-            rgb_float = struct.unpack("<f", struct.pack("<I", rgb_u32))[0]
-            pack_into(data, i * msg.point_step, float(x), float(y), float(z), rgb_float)
+        # Serialize once and cache. The wire bytes only change when the point set itself changes
+        # (identity check), so a static or re-latched map is never re-serialised per publish.
+        if getattr(self, "_wire_cache_src", None) is not self._points:
+            self._wire_cache = serialize_pointcloud_xyzrgb(self._points)
+            self._wire_cache_src = self._points
 
-        msg.data = data
+        if _pc_chunked_enabled(self):
+            _publish_pointcloud_chunked(
+                self, self.topic, self.frame_id, self._wire_cache, len(self._points), _pc_chunk_size(self)
+            )
+            return
+
+        msg.data = self._wire_cache
         self.publisher.publish(msg)
 
 
@@ -694,7 +851,11 @@ PointKey = Tuple[int, int, int]
 PointValue = Tuple[float, float, float, int]
 SDK_REPLAY_REQUEST_TOPIC = "/horus/multi_operator/sdk_registration_replay_request"
 SDK_REPLAY_END_TOPIC = "/horus/multi_operator/sdk_registry_replay_end"
-REPLAY_BURST_COUNT_DEFAULT = 8
+# A single re-publish is sufficient: the map publisher latches via TRANSIENT_LOCAL durability, so a
+# late-joining/replaying subscriber receives the newest map snapshot on subscribe. The previous 8x
+# burst dumped up to ~38 MB of full-cloud copies onto the single Unity TCP socket in ~4s, which is a
+# direct head-of-line-blocking trigger that starves TF/camera/scan while the map drains.
+REPLAY_BURST_COUNT_DEFAULT = 1
 REPLAY_BURST_INTERVAL_DEFAULT = 0.5
 
 
@@ -739,8 +900,13 @@ class Fake3DMapPublisherRealistic(Node):
         map_change_interval: float,
         on_change_republish_interval: float,
         max_points: int = 0,
+        chunked: Optional[bool] = None,
+        chunk_bytes: int = 262144,
     ) -> None:
         super().__init__("horus_fake_3d_map_publisher_realistic")
+        # Resolve opt-in chunk-transport config before the initial latched publish (see basic node).
+        self._pc_chunked = chunked
+        self._pc_chunk_bytes = int(chunk_bytes)
         self.topic = topic
         self.frame_id = frame_id
         self.rate_hz = max(0.1, float(rate_hz))
@@ -1144,13 +1310,19 @@ class Fake3DMapPublisherRealistic(Node):
         msg.row_step = msg.point_step * msg.width
         msg.is_dense = True
 
-        data = bytearray(msg.row_step)
-        pack_into = self._point_struct.pack_into
-        for i, (x, y, z, rgb_u32) in enumerate(self._points):
-            rgb_float = struct.unpack("<f", struct.pack("<I", rgb_u32))[0]
-            pack_into(data, i * msg.point_step, float(x), float(y), float(z), rgb_float)
+        # Serialize once and cache. The wire bytes only change when the point set itself changes
+        # (identity check), so a static or re-latched map is never re-serialised per publish.
+        if getattr(self, "_wire_cache_src", None) is not self._points:
+            self._wire_cache = serialize_pointcloud_xyzrgb(self._points)
+            self._wire_cache_src = self._points
 
-        msg.data = data
+        if _pc_chunked_enabled(self):
+            _publish_pointcloud_chunked(
+                self, self.topic, self.frame_id, self._wire_cache, len(self._points), _pc_chunk_size(self)
+            )
+            return
+
+        msg.data = self._wire_cache
         self.publisher.publish(msg)
 
     def _on_replay_burst_tick(self) -> None:
@@ -1324,12 +1496,44 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Realistic profile: regenerate and publish the map every N seconds when >0.",
     )
+
+    # Opt-in chunked PointCloud2 transport (default OFF -> single-message path unchanged). When set,
+    # the cached wire bytes are streamed as begin/item/end on <topic>/chunks_begin|_item|_end so the
+    # bridge can interleave Realtime traffic between bounded chunks instead of head-of-line-blocking
+    # behind one multi-MB PointCloud2. Lossless: reassembled bytes are byte-identical to the cloud.
+    parser.add_argument(
+        "--chunked",
+        dest="chunked",
+        action="store_true",
+        default=False,
+        help="Opt-in: publish the map as begin/item/end chunks on sibling String topics instead of "
+        "one PointCloud2 message (default off; the single-message path is unchanged).",
+    )
+    parser.add_argument(
+        "--chunk-bytes",
+        dest="chunk_bytes",
+        type=int,
+        default=262144,
+        help="Per-chunk byte budget for --chunked transport (default 262144; floored at 4096).",
+    )
     return parser
+
+
+def _chunk_kwargs(args: argparse.Namespace) -> Dict[str, object]:
+    """Resolve the opt-in chunk-transport constructor kwargs. ``--chunked`` (default False) forces
+    chunking on; when absent ``chunked`` is ``None`` so the HORUS_PC_CHUNKED env-var fallback still
+    governs (default off). ``--chunk-bytes`` supplies the per-chunk budget when chunking is active.
+    Passed into the node constructor so the very first latched publish already honors the flag."""
+    return {
+        "chunked": True if getattr(args, "chunked", False) else None,
+        "chunk_bytes": int(getattr(args, "chunk_bytes", 262144)),
+    }
 
 
 def _build_node(args: argparse.Namespace) -> Node:
     profile = str(args.profile or "basic").strip().lower()
     defaults = PROFILE_DEFAULTS[profile]
+    chunk_kwargs = _chunk_kwargs(args)
 
     if profile == "basic":
         return Fake3DMapPublisher(
@@ -1342,6 +1546,7 @@ def _build_node(args: argparse.Namespace) -> Node:
             resolution=float(_value(args, defaults, "resolution")),
             obstacle_count=int(_value(args, defaults, "obstacle_count")),
             seed=int(_value(args, defaults, "seed")),
+            **chunk_kwargs,
         )
 
     if profile == "compact_house":
@@ -1359,6 +1564,7 @@ def _build_node(args: argparse.Namespace) -> Node:
             include_ceiling=bool(_value(args, defaults, "include_ceiling")),
             publish_mode=str(_value(args, defaults, "publish_mode")),
             on_change_republish_interval=float(_value(args, defaults, "on_change_republish_interval")),
+            **chunk_kwargs,
         )
 
     return Fake3DMapPublisherRealistic(
@@ -1381,6 +1587,7 @@ def _build_node(args: argparse.Namespace) -> Node:
         map_change_interval=float(_value(args, defaults, "map_change_interval")),
         on_change_republish_interval=float(_value(args, defaults, "on_change_republish_interval")),
         max_points=int(_value(args, defaults, "max_points")),
+        **chunk_kwargs,
     )
 
 

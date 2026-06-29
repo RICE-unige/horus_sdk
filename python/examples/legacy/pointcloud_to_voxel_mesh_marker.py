@@ -9,8 +9,11 @@ Supports two output transports:
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import os
+import struct
 import sys
 import time
 from dataclasses import dataclass
@@ -32,11 +35,221 @@ try:
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import PointCloud2, PointField
-    from std_msgs.msg import ColorRGBA, String
+    from std_msgs.msg import ColorRGBA, String, UInt8MultiArray
     from visualization_msgs.msg import Marker, MarkerArray
 except Exception as exc:
     print(f"ERROR: ROS 2 Python dependencies not available: {exc}")
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Opt-in indexed-binary mesh transport ('HMSH' v1), published as a single
+# std_msgs/UInt8MultiArray per mesh chunk on '<mesh_topic>/indexed'. This is a
+# DISTINCT transport from the HORUS_MESH_BINARY chunked-String path above. Use
+# --indexed-binary-only for HORUS MR so the bridge does not also relay the
+# heavyweight visualization_msgs/Marker triangle soup.
+# ---------------------------------------------------------------------------
+INDEXED_MESH_MAGIC = 0x484D5348  # 'HMSH' little-endian
+INDEXED_MESH_VERSION = 1
+INDEXED_MESH_HEADER_STRUCT = struct.Struct("<IIIII B 3x")
+INDEXED_MESH_HEADER_SIZE = INDEXED_MESH_HEADER_STRUCT.size  # 24 bytes
+
+
+def encode_indexed_mesh_multiarray_chunk(
+    chunk_id,
+    vertices,
+    colors,
+    fallback_rgb=(180, 184, 200),
+    quant=100000,
+):
+    """Pack one mesh chunk into the 'HMSH' v1 binary layout (little-endian).
+
+    Layout: ``[u32 magic][u32 version][u32 chunkId][u32 vertexCount][u32 indexCount]
+    [u8 hasColor][u8 pad*3]`` then ``vertexCount`` x ``(x,y,z float32[, r,g,b,a uint8])``
+    then ``indexCount`` x ``uint32``. ``hasColor`` is 1 when per-vertex RGBA is present.
+
+    Returns ``(payload_bytes, vertex_count, index_count)``. Vertices are de-duplicated by
+    quantized position+color so the encoding is ~4-6x smaller than per-vertex Marker
+    TRIANGLE_LIST while remaining lossless against the input soup.
+    """
+    n = len(vertices)
+    tri = n // 3
+    usable = tri * 3
+    has_colors = colors is not None and len(colors) >= usable
+    fr = int(fallback_rgb[0]) & 255
+    fg = int(fallback_rgb[1]) & 255
+    fb = int(fallback_rgb[2]) & 255
+
+    vmap: Dict[Tuple[int, int, int, int, int, int], int] = {}
+    uniq_pos: List[Tuple[float, float, float]] = []
+    uniq_col: List[Tuple[int, int, int, int]] = []
+    indices: List[int] = []
+    for i in range(usable):
+        x, y, z = vertices[i]
+        if has_colors:
+            c = colors[i]
+            r, g, b = int(c[0]) & 255, int(c[1]) & 255, int(c[2]) & 255
+        else:
+            r, g, b = fr, fg, fb
+        key = (int(round(x * quant)), int(round(y * quant)), int(round(z * quant)), r, g, b)
+        idx = vmap.get(key)
+        if idx is None:
+            idx = len(uniq_pos)
+            vmap[key] = idx
+            uniq_pos.append((float(x), float(y), float(z)))
+            uniq_col.append((r, g, b, 255))
+        indices.append(idx)
+
+    vcount = len(uniq_pos)
+    icount = len(indices)
+
+    if has_colors:
+        vertex_dtype = np.dtype([("p", "<f4", 3), ("c", "<u1", 4)])
+        varr = np.empty(vcount, dtype=vertex_dtype)
+        if vcount:
+            varr["p"] = np.asarray(uniq_pos, dtype="<f4")
+            varr["c"] = np.asarray(uniq_col, dtype="<u1")
+        vertex_bytes = varr.tobytes()
+    else:
+        pos = np.asarray(uniq_pos, dtype="<f4") if vcount else np.empty((0, 3), dtype="<f4")
+        vertex_bytes = pos.tobytes()
+
+    header = INDEXED_MESH_HEADER_STRUCT.pack(
+        INDEXED_MESH_MAGIC,
+        INDEXED_MESH_VERSION,
+        int(chunk_id) & 0xFFFFFFFF,
+        vcount,
+        icount,
+        1 if has_colors else 0,
+    )
+    index_bytes = np.asarray(indices, dtype="<u4").tobytes()
+    payload = header + vertex_bytes + index_bytes
+    return payload, vcount, icount
+
+
+def encode_indexed_mesh_sentinel(chunk_id):
+    """Empty (vertexCount=0/indexCount=0) 'HMSH' chunk: a clear sentinel for one chunk id."""
+    return INDEXED_MESH_HEADER_STRUCT.pack(
+        INDEXED_MESH_MAGIC, INDEXED_MESH_VERSION, int(chunk_id) & 0xFFFFFFFF, 0, 0, 0
+    )
+
+
+def _mesh_binary_enabled() -> bool:
+    """Opt-in (HORUS_MESH_BINARY=1) compact indexed-binary mesh transport alongside the Marker.
+
+    visualization_msgs/Marker TRIANGLE_LIST carries ~120 bytes/triangle (Point 24B + ColorRGBA 16B
+    per vertex, no index reuse). The indexed binary form below is ~20-30 bytes/triangle (lossless:
+    same surface), reducing the bulk-lane volume the bridge must relay. Default off keeps the Marker
+    path unchanged until the Unity decoder is built/verified.
+    """
+    return os.environ.get("HORUS_MESH_BINARY", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _mesh_chunk_size() -> int:
+    try:
+        return max(4096, int(os.environ.get("HORUS_MESH_CHUNK_SIZE", "262144")))
+    except ValueError:
+        return 262144
+
+
+def encode_indexed_mesh_binary(vertices, colors, fallback_rgb=(180, 184, 200), quant=100000):
+    """Dedup a triangle-soup mesh into ``indexed_mesh_v1`` binary bytes.
+
+    Layout (little-endian): ``[vertex_count u32][index_count u32]`` then ``vertex_count`` x
+    ``(x,y,z float32 + r,g,b,a uint8)`` (16 B) then ``index_count`` x ``uint32``. Lossless: the
+    reconstructed soup ``vertices[indices[k]]`` equals the input.
+    """
+    n = len(vertices)
+    tri = n // 3
+    usable = tri * 3
+    has_colors = colors is not None and len(colors) >= usable
+    fr, fg, fb = (int(fallback_rgb[0]) & 255, int(fallback_rgb[1]) & 255, int(fallback_rgb[2]) & 255)
+
+    vmap: Dict[Tuple[int, int, int, int, int, int], int] = {}
+    uniq_pos: List[Tuple[float, float, float]] = []
+    uniq_col: List[Tuple[int, int, int, int]] = []
+    indices: List[int] = []
+    for i in range(usable):
+        x, y, z = vertices[i]
+        if has_colors:
+            c = colors[i]
+            r, g, b = int(c[0]) & 255, int(c[1]) & 255, int(c[2]) & 255
+        else:
+            r, g, b = fr, fg, fb
+        key = (int(round(x * quant)), int(round(y * quant)), int(round(z * quant)), r, g, b)
+        idx = vmap.get(key)
+        if idx is None:
+            idx = len(uniq_pos)
+            vmap[key] = idx
+            uniq_pos.append((float(x), float(y), float(z)))
+            uniq_col.append((r, g, b, 255))
+        indices.append(idx)
+
+    vcount = len(uniq_pos)
+    icount = len(indices)
+    vertex_dtype = np.dtype([("p", "<f4", 3), ("c", "<u1", 4)])
+    varr = np.empty(vcount, dtype=vertex_dtype)
+    if vcount:
+        varr["p"] = np.asarray(uniq_pos, dtype="<f4")
+        varr["c"] = np.asarray(uniq_col, dtype="<u1")
+    payload = struct.pack("<II", vcount, icount) + varr.tobytes() + np.asarray(indices, dtype="<u4").tobytes()
+    return payload, vcount, icount
+
+
+def _publish_mesh_binary_chunked(node, base_topic, frame_id, vertices, colors, chunk_size):
+    """Publish the indexed-binary mesh as an ordered begin/item/end chunk stream on
+    ``<base_topic>/chunks_begin|_item|_end`` (Bulk lane at the bridge)."""
+    mesh_bytes, vertex_count, index_count = encode_indexed_mesh_binary(vertices, colors)
+    pubs = getattr(node, "_mesh_chunk_pubs", None)
+    if pubs is None:
+        qos = QoSProfile(depth=256)
+        qos.reliability = ReliabilityPolicy.RELIABLE
+        pubs = (
+            node.create_publisher(String, base_topic + "/chunks_begin", qos),
+            node.create_publisher(String, base_topic + "/chunks_item", qos),
+            node.create_publisher(String, base_topic + "/chunks_end", qos),
+        )
+        node._mesh_chunk_pubs = pubs
+    begin_pub, item_pub, end_pub = pubs
+
+    n = len(mesh_bytes)
+    chunk_size = max(4096, int(chunk_size))
+    total = (n + chunk_size - 1) // chunk_size if n > 0 else 0
+    asset_id = hashlib.sha256(mesh_bytes).hexdigest()[:32]
+
+    begin_msg = String()
+    begin_msg.data = json.dumps(
+        {
+            "asset_id": asset_id,
+            "total_chunks": total,
+            "content_length": n,
+            "frame_id": frame_id,
+            "format": "indexed_mesh_v1",
+            "vertex_count": vertex_count,
+            "index_count": index_count,
+        }
+    )
+    begin_pub.publish(begin_msg)
+
+    index = 0
+    offset = 0
+    while offset < n:
+        end_offset = min(offset + chunk_size, n)
+        item_msg = String()
+        item_msg.data = json.dumps(
+            {
+                "asset_id": asset_id,
+                "index": index,
+                "data": base64.b64encode(mesh_bytes[offset:end_offset]).decode("ascii"),
+            }
+        )
+        item_pub.publish(item_msg)
+        offset = end_offset
+        index += 1
+
+    end_msg = String()
+    end_msg.data = json.dumps({"asset_id": asset_id, "received_count": index, "sha256": asset_id})
+    end_pub.publish(end_msg)
 
 
 MESH_TRANSPORT_MARKER = "marker"
@@ -76,6 +289,8 @@ class PointCloudToVoxelMeshNode(Node):
         marker_text: str,
         marker_mesh_resource: str,
         on_change_republish_interval: float,
+        indexed_binary: bool = False,
+        indexed_binary_only: bool = False,
     ) -> None:
         super().__init__("horus_pointcloud_to_voxel_mesh")
 
@@ -100,6 +315,10 @@ class PointCloudToVoxelMeshNode(Node):
             marker_mesh_resource if marker_mesh_resource else "mesh://map_mesh"
         )
         self.on_change_republish_interval = max(0.0, float(on_change_republish_interval))
+        self.indexed_binary = bool(indexed_binary)
+        self.indexed_binary_only = bool(indexed_binary and indexed_binary_only)
+        self.indexed_topic = self.marker_topic + "/indexed"
+        self._last_indexed_payload: Optional[bytes] = None
 
         self._received_once = False
         self._last_signature: Optional[Tuple[int, int, int, int, int, int, str, int]] = None
@@ -127,6 +346,11 @@ class PointCloudToVoxelMeshNode(Node):
         self.sub = self.create_subscription(PointCloud2, self.cloud_topic, self._on_cloud, qos)
         self.marker_pub = self.create_publisher(Marker, self.marker_topic, qos)
         self.marker_array_pub = self.create_publisher(MarkerArray, self.marker_array_topic, qos)
+        self.indexed_pub = (
+            self.create_publisher(UInt8MultiArray, self.indexed_topic, qos)
+            if self.indexed_binary
+            else None
+        )
         self.sdk_replay_request_sub = self.create_subscription(
             String,
             SDK_REPLAY_REQUEST_TOPIC,
@@ -199,14 +423,26 @@ class PointCloudToVoxelMeshNode(Node):
                 "or increase --voxel-size."
             )
 
-        if self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
+        if self.indexed_binary_only:
+            self._last_marker = None
+            self._last_marker_array_full = None
+            self._last_chunk_signatures = {}
+            self._last_marker_point_count = len(mesh_result.vertices)
+            self._last_chunk_count = 1
+
+            if self.output_obj:
+                self._write_obj(
+                    self.output_obj,
+                    [self._to_point(v) for v in mesh_result.vertices],
+                )
+        elif self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
             full_array = self._build_chunked_marker_array(
                 msg=msg,
                 vertices=mesh_result.vertices,
                 colors=mesh_result.colors,
             )
             diff_array, chunk_count, marker_points = self._build_marker_array_diff(full_array)
-            if diff_array.markers:
+            if diff_array.markers and not _mesh_binary_enabled() and not self.indexed_binary_only:
                 self.marker_array_pub.publish(diff_array)
 
             # Compatibility fallback path: keep a single-marker payload available for
@@ -226,7 +462,11 @@ class PointCloudToVoxelMeshNode(Node):
                 colors=compat_colors,
                 action=Marker.ADD,
             )
-            if self.marker_pub.get_subscription_count() > 0:
+            if (
+                self.marker_pub.get_subscription_count() > 0
+                and not _mesh_binary_enabled()
+                and not self.indexed_binary_only
+            ):
                 self.marker_pub.publish(self._last_marker)
 
             self._last_marker_array_full = full_array
@@ -242,7 +482,8 @@ class PointCloudToVoxelMeshNode(Node):
                 colors=colors,
                 action=Marker.ADD,
             )
-            self.marker_pub.publish(marker)
+            if not _mesh_binary_enabled() and not self.indexed_binary_only:
+                self.marker_pub.publish(marker)
             self._last_marker = marker
             self._last_marker_array_full = None
             self._last_chunk_signatures = {0: self._compute_marker_chunk_signature(marker)}
@@ -251,6 +492,19 @@ class PointCloudToVoxelMeshNode(Node):
 
             if self.output_obj:
                 self._write_obj(self.output_obj, points)
+
+        if _mesh_binary_enabled():
+            _publish_mesh_binary_chunked(
+                self,
+                self.marker_topic,
+                msg.header.frame_id,
+                mesh_result.vertices,
+                mesh_result.colors,
+                _mesh_chunk_size(),
+            )
+
+        if self.indexed_pub is not None:
+            self._publish_indexed_binary(mesh_result.vertices, mesh_result.colors)
 
         self._received_once = True
         self._last_signature = signature
@@ -265,6 +519,17 @@ class PointCloudToVoxelMeshNode(Node):
         )
 
     def _publish_clear_if_needed(self, msg: PointCloud2) -> None:
+        if self.indexed_binary_only:
+            if self._last_indexed_payload is None:
+                return
+            self._publish_indexed_sentinel()
+            self._last_marker = None
+            self._last_marker_array_full = None
+            self._last_chunk_signatures = {}
+            self._last_marker_point_count = 0
+            self._last_chunk_count = 0
+            return
+
         if self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
             if not self._last_chunk_signatures:
                 return
@@ -297,10 +562,20 @@ class PointCloudToVoxelMeshNode(Node):
         clear_marker.action = Marker.DELETEALL
         clear_marker.pose.orientation.w = 1.0
         self.marker_pub.publish(clear_marker)
+        self._publish_indexed_sentinel()
         self._last_marker = None
         self._last_chunk_signatures = {}
         self._last_marker_point_count = 0
         self._last_chunk_count = 0
+
+    def _publish_indexed_sentinel(self) -> None:
+        """Emit a count=0 'HMSH' sentinel on the indexed topic to clear chunk 0."""
+        if self.indexed_pub is None:
+            return
+        out = UInt8MultiArray()
+        out.data = list(encode_indexed_mesh_sentinel(0))
+        self.indexed_pub.publish(out)
+        self._last_indexed_payload = None
 
     def _active_mesh_subscriber_count(self) -> int:
         try:
@@ -406,7 +681,48 @@ class PointCloudToVoxelMeshNode(Node):
             f"count={self._replay_burst_count}, interval={self._replay_burst_interval:.2f}s."
         )
 
+    def _publish_indexed_binary(
+        self,
+        vertices: Sequence[Tuple[float, float, float]],
+        colors: Optional[Sequence[Tuple[int, int, int]]],
+    ) -> None:
+        """Encode + publish the single-chunk (chunkId=0) 'HMSH' v1 indexed-binary mesh."""
+        if self.indexed_pub is None:
+            return
+        payload, vertex_count, index_count = encode_indexed_mesh_multiarray_chunk(
+            chunk_id=0,
+            vertices=vertices,
+            colors=colors,
+            fallback_rgb=(
+                int(round(self.color_rgb[0] * 255.0)),
+                int(round(self.color_rgb[1] * 255.0)),
+                int(round(self.color_rgb[2] * 255.0)),
+            ),
+        )
+        self._last_indexed_payload = payload
+        out = UInt8MultiArray()
+        out.data = list(payload)
+        self.indexed_pub.publish(out)
+        self.get_logger().debug(
+            f"[3D-MAP][indexed_binary] published chunk=0 vertices={vertex_count}, "
+            f"indices={index_count}, bytes={len(payload)} on {self.indexed_topic}."
+        )
+
+    def _republish_indexed_binary(self) -> None:
+        if self.indexed_pub is None or self._last_indexed_payload is None:
+            return
+        out = UInt8MultiArray()
+        out.data = list(self._last_indexed_payload)
+        self.indexed_pub.publish(out)
+
     def _publish_latest_mesh_once(self) -> bool:
+        if self.indexed_binary_only:
+            if self._last_indexed_payload is None:
+                return False
+            self._republish_indexed_binary()
+            self._last_periodic_republish_time = time.monotonic()
+            return True
+
         if self.mesh_transport == MESH_TRANSPORT_MARKER_ARRAY:
             if self._last_marker_array_full is None:
                 return False
@@ -417,6 +733,7 @@ class PointCloudToVoxelMeshNode(Node):
             if self._last_marker is None:
                 return False
             self.marker_pub.publish(self._last_marker)
+        self._republish_indexed_binary()
         self._last_periodic_republish_time = time.monotonic()
         return True
 
@@ -861,6 +1178,25 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional path to write OBJ after each conversion.",
     )
+    parser.add_argument(
+        "--indexed-binary",
+        action="store_true",
+        default=False,
+        help=(
+            "Opt-in: additionally publish a lossless 'HMSH' v1 indexed-binary mesh "
+            "(std_msgs/UInt8MultiArray, ~4-6x smaller) on '<mesh-topic>/indexed'. The "
+            "default Marker path is unchanged and remains authoritative."
+        ),
+    )
+    parser.add_argument(
+        "--indexed-binary-only",
+        action="store_true",
+        default=False,
+        help=(
+            "When --indexed-binary is enabled, suppress heavyweight Marker/MarkerArray "
+            "mesh publishes and use '<mesh-topic>/indexed' as the HORUS MR path."
+        ),
+    )
     return parser
 
 
@@ -940,6 +1276,8 @@ def main() -> None:
         marker_text=args.marker_text.strip() or "map_mesh",
         marker_mesh_resource=args.marker_mesh_resource.strip() or "mesh://map_mesh",
         on_change_republish_interval=republish_interval,
+        indexed_binary=bool(args.indexed_binary),
+        indexed_binary_only=bool(args.indexed_binary_only),
     )
 
     try:

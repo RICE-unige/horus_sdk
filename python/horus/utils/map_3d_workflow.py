@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import shlex
 import signal
@@ -11,6 +12,8 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, List, Optional, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class Map3DMode(str, Enum):
@@ -176,6 +179,17 @@ def add_map_3d_mode_arguments(parser: argparse.ArgumentParser) -> None:
         help=(
             "Republish interval in seconds for mesh marker keepalive. "
             "Default 0 disables periodic keepalive bursts."
+        ),
+    )
+    parser.add_argument(
+        "--map-3d-mesh-indexed-binary",
+        dest="map_3d_mesh_indexed_binary",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Publish the compact HORUS indexed-binary mesh sibling topic "
+            "('<mesh-topic>/indexed') for Quest/MR rendering (default: enabled). "
+            "Use --no-map-3d-mesh-indexed-binary for marker-only/RViz validation."
         ),
     )
     parser.add_argument(
@@ -373,6 +387,8 @@ def build_fake_octomap_publisher_command(
     max_triangles: int = 60000,
     republish_interval: float = 0.0,
     detailed: bool = False,
+    indexed_binary: bool = True,
+    indexed_binary_only: bool = True,
 ) -> List[str]:
     command = [
         python_executable,
@@ -392,6 +408,10 @@ def build_fake_octomap_publisher_command(
     ]
     if detailed:
         command.append("--detailed")
+    if indexed_binary:
+        command.append("--indexed-binary")
+        if indexed_binary_only:
+            command.append("--indexed-binary-only")
     return command
 
 
@@ -408,12 +428,14 @@ def build_pointcloud_to_mesh_converter_command(
     max_triangles: int = 60000,
     update_policy: str = MeshUpdatePolicy.SNAPSHOT.value,
     republish_interval: float = 0.0,
+    indexed_binary: bool = True,
+    indexed_binary_only: bool = True,
 ) -> List[str]:
     policy = resolve_mesh_update_policy(update_policy)
     update_mode, resolved_republish = resolve_converter_update_mode(policy, republish_interval)
     transport, _ = coerce_mesh_transport_to_marker(mesh_transport)
 
-    return [
+    command = [
         python_executable,
         os.path.join(script_dir, "pointcloud_to_voxel_mesh_marker.py"),
         "--cloud-topic",
@@ -439,6 +461,11 @@ def build_pointcloud_to_mesh_converter_command(
         "--on-change-republish-interval",
         str(max(0.0, float(resolved_republish))),
     ]
+    if indexed_binary:
+        command.append("--indexed-binary")
+        if indexed_binary_only:
+            command.append("--indexed-binary-only")
+    return command
 
 
 def build_map_3d_process_specs(
@@ -458,6 +485,8 @@ def build_map_3d_process_specs(
     mesh_max_triangles: int = 60000,
     mesh_update_policy: str = MeshUpdatePolicy.SNAPSHOT.value,
     mesh_republish_interval: float = 0.0,
+    mesh_indexed_binary: bool = True,
+    mesh_indexed_binary_only: bool = True,
     map_3d_octomap_topic: str = "/map_3d_octomap",
     map_3d_octomap_mesh_topic: str = "/map_3d_octomap_mesh",
     map_3d_octomap_frame: str = "map",
@@ -484,6 +513,8 @@ def build_map_3d_process_specs(
                     max_triangles=map_3d_octomap_max_triangles,
                     republish_interval=map_3d_octomap_republish_interval,
                     detailed=map_3d_detailed,
+                    indexed_binary=mesh_indexed_binary,
+                    indexed_binary_only=mesh_indexed_binary_only,
                 ),
                 cwd=script_dir,
             )
@@ -521,6 +552,8 @@ def build_map_3d_process_specs(
                     max_triangles=mesh_max_triangles,
                     update_policy=mesh_update_policy,
                     republish_interval=mesh_republish_interval,
+                    indexed_binary=mesh_indexed_binary,
+                    indexed_binary_only=mesh_indexed_binary_only,
                 ),
                 cwd=script_dir,
             )
@@ -548,6 +581,12 @@ def start_managed_processes(
                 start_new_session=True,
             )
         except Exception:
+            logger.debug(
+                "Failed to start managed process %s with command: %s",
+                spec.name,
+                command_text,
+                exc_info=True,
+            )
             stop_managed_processes(handles, log_fn=log_fn)
             raise
 
@@ -589,7 +628,11 @@ def stop_managed_processes(
             try:
                 process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
-                pass
+                logger.debug(
+                    "Managed process %s did not exit after SIGKILL",
+                    handle.name,
+                    exc_info=True,
+                )
 
 
 def _terminate_process(process: subprocess.Popen) -> None:
@@ -602,7 +645,7 @@ def _terminate_process(process: subprocess.Popen) -> None:
         try:
             process.terminate()
         except Exception:
-            pass
+            logger.debug("Failed to terminate managed process", exc_info=True)
 
 
 def _kill_process(process: subprocess.Popen) -> None:
@@ -615,4 +658,4 @@ def _kill_process(process: subprocess.Popen) -> None:
         try:
             process.kill()
         except Exception:
-            pass
+            logger.debug("Failed to kill managed process", exc_info=True)

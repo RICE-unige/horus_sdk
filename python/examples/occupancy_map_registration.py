@@ -13,7 +13,7 @@ From a source checkout:
 
 from pathlib import Path
 
-from horus.robot import Robot, RobotDimensions, RobotType, register_robots
+from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
 from horus.sensors import Camera
 
 ASSET_DIR = Path(__file__).resolve().parent / ".local_assets" / "robot_descriptions"
@@ -123,4 +123,7 @@ success, result = register_robots(
 )
 
 if not success:
+    if is_registration_cancelled(result):
+        print("HORUS registration monitor stopped.")
+        raise SystemExit(0)
     raise SystemExit(f"HORUS registration failed: {result}")
