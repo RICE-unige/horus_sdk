@@ -29,10 +29,13 @@ fn main() {
     let dataviz = robot.create_dataviz(None);
     let client = RobotRegistryClient::new();
     let payload = client.build_robot_config_dict(&robot, &dataviz, None, None);
-    if payload.robot_name.is_empty() || payload.sensors.is_empty() {
-        eprintln!("Native payload check failed");
-        std::process::exit(1);
+
+    if payload.robot_name == args.robot_name && !payload.sensors.is_empty() {
+        println!("Native registration payload check OK: {}", payload.robot_name);
+        println!("Live bridge registration is Python-only for now.");
+        std::process::exit(0);
     }
-    println!("Native payload check OK");
-    println!("Live bridge registration is Python-only for now.");
+
+    eprintln!("Native registration payload check failed");
+    std::process::exit(2);
 }

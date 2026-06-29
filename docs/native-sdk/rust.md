@@ -7,7 +7,7 @@ sidebar_position: 2
 
 The Rust SDK mirrors the Python registration payload with typed structs and `serde_json` serialization. Use it for native robot services that need predictable payload generation, low startup overhead, and build-time checks around the HORUS payload contract.
 
-Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The native Rust `register_*` calls intentionally return an unsupported-transport result instead of reporting fake local success.
+Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The Rust `register_robot`, `register_robots`, and `unregister_robot` helpers intentionally return an explicit unsupported-transport result instead of reporting fake local success. Use `RobotRegistryClient::build_robot_config_dict(...)` for native payload parity until a real Rust transport is implemented.
 
 ## What it sends
 
@@ -95,3 +95,4 @@ cargo run --example gaussian_splat_fixture_registration
 ```
 
 `rust/examples/sdk_registration_demo.rs` remains the short native equivalent of the Python ops scenario at the payload layer; the larger scenario coverage is split into focused examples so payload construction stays concise.
+The focused examples configure camera view profiles, teleop/task payloads, Robot Manager metadata, navigation safety visualizations, global 3D map payloads, semantic boxes, workspace compass/tutorial metadata, and local body model fields. They validate payload generation only; they do not contact a live HORUS bridge.

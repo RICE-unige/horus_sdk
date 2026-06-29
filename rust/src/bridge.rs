@@ -1274,9 +1274,9 @@ impl RobotRegistryClient {
         &self,
         robot: &mut Robot,
         dataviz: &DataViz,
-        _timeout_sec: f64,
-        _keep_alive: bool,
-        _show_dashboard: bool,
+        timeout_sec: f64,
+        keep_alive: bool,
+        show_dashboard: bool,
         workspace_scale: Option<f64>,
     ) -> (bool, Value) {
         if self
@@ -1292,16 +1292,19 @@ impl RobotRegistryClient {
             self.build_robot_config_dict(robot, dataviz, Some(global_payload), workspace_scale);
         self.registration_lock.store(false, Ordering::SeqCst);
 
-        let result = json!({
-            "success": false,
-            "error": "Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.",
-            "unsupported_feature": "bridge_registration",
-            "payload": payload,
-            "timeout_sec": _timeout_sec,
-            "keep_alive": _keep_alive,
-            "show_dashboard": _show_dashboard,
-        });
-        (false, result)
+        (
+            false,
+            json!({
+                "success": false,
+                "error": "Rust live registration transport is not implemented; use build_robot_config_dict to generate a payload, or use the Python SDK for live HORUS registration.",
+                "unsupported_feature": "bridge_registration",
+                "robot_name": robot.name,
+                "payload": payload,
+                "timeout_sec": timeout_sec,
+                "keep_alive": keep_alive,
+                "show_dashboard": show_dashboard,
+            }),
+        )
     }
 
     pub fn register_robots(
@@ -1343,7 +1346,7 @@ impl RobotRegistryClient {
             false,
             json!({
                 "success": false,
-                "error": "Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.",
+                "error": "Rust live registration transport is not implemented; use build_robot_config_dict to generate payloads, or use the Python SDK for live HORUS registration.",
                 "unsupported_feature": "bridge_registration",
                 "payloads": payloads,
                 "timeout_sec": timeout_sec,
@@ -1358,7 +1361,7 @@ impl RobotRegistryClient {
             false,
             json!({
                 "success": false,
-                "error": "Native HORUS unregister transport is not implemented yet.",
+                "error": "Rust live registration transport is not implemented; no HORUS backend unregister was sent.",
                 "unsupported_feature": "bridge_registration",
                 "robot_id": robot_id,
                 "timeout_sec": timeout_sec,

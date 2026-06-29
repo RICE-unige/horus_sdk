@@ -52,7 +52,7 @@ fn workspace_scale_omitted_when_invalid() {
 }
 
 #[test]
-fn robot_register_forwards_workspace_scale() {
+fn robot_register_reports_transport_unavailable_without_losing_payload() {
     let (mut robot, dataviz) = build_robot_and_dataviz();
     let (success, result) = robot.register_with_horus(Some(dataviz), false, false, Some(0.33));
     assert!(!success);
@@ -61,4 +61,5 @@ fn robot_register_forwards_workspace_scale() {
         .as_f64()
         .expect("position scale should exist");
     assert!((actual - 0.33).abs() < 1e-6);
+    assert!(!robot.is_registered_with_horus());
 }

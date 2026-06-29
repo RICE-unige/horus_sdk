@@ -1,6 +1,6 @@
 # HORUS Rust SDK
 
-Rust track for HORUS SDK parity with the implemented Python behavior.
+Rust track for HORUS SDK payload parity with the implemented Python registration contract.
 
 ## Current parity scope
 
@@ -76,4 +76,4 @@ cargo run --example e2e_registration_check -- --robot-name SdkBot_E2E
 ## Notes
 
 - ROS 2 runtime integration is feature-gated (`ros2`) and currently scaffolded without pulling runtime dependencies.
-- Registration/ACK/heartbeat transport behavior is Python-only for now; the Rust track is payload parity until native transport is implemented.
+- Live registration/ACK/heartbeat transport is owned by the Python SDK. Rust registration helpers return an explicit unsupported-transport error instead of reporting fake success.

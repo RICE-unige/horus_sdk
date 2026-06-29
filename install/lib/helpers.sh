@@ -104,6 +104,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1090
 source "$SCRIPT_DIR/horus-env"
+mkdir -p "$HORUS_HOME/state"
+echo "$$" > "$HORUS_HOME/state/horus-start.pid"
 
 if ros2 pkg prefix horus_unity_bridge >/dev/null 2>&1; then
   echo "Starting full HORUS backend stack (backend + unity bridge)"
@@ -117,14 +119,44 @@ EOM
   cat > "$bin_dir/horus-stop" <<'EOM'
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1090
+source "$SCRIPT_DIR/horus-env"
 
-pkill -f horus_backend_node 2>/dev/null || true
-pkill -f horus_unity_bridge_node 2>/dev/null || true
-pkill -f horus_unity_bridge 2>/dev/null || true
-
-if command -v lsof >/dev/null 2>&1; then
-  lsof -ti :8080,10000 | xargs -r kill -TERM 2>/dev/null || true
+pid_file="$HORUS_HOME/state/horus-start.pid"
+if [ ! -f "$pid_file" ]; then
+  echo "No HORUS launch PID recorded."
+  exit 0
 fi
+
+pid="$(cat "$pid_file" 2>/dev/null || true)"
+if [[ ! "$pid" =~ ^[0-9]+$ ]] || [ ! -d "/proc/$pid" ]; then
+  rm -f "$pid_file"
+  echo "No running HORUS launch process found."
+  exit 0
+fi
+
+cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+case "$cmdline" in
+  *"ros2 launch horus_backend "*|*"horus_backend.launch.py"*|*"horus_complete_backend.launch.py"*) ;;
+  *)
+    echo "Ignoring stale HORUS PID $pid: $cmdline" >&2
+    rm -f "$pid_file"
+    exit 1
+    ;;
+esac
+
+kill -TERM "$pid" 2>/dev/null || true
+for _ in 1 2 3 4 5 6 7 8; do
+  if ! kill -0 "$pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.25
+done
+if kill -0 "$pid" 2>/dev/null; then
+  kill -KILL "$pid" 2>/dev/null || true
+fi
+rm -f "$pid_file"
 
 echo "HORUS backend processes stopped (if running)."
 EOM
@@ -294,13 +326,22 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   esac
 fi
 
-log "Stopping running HORUS processes (if any)"
-pkill -f horus_backend_node 2>/dev/null || true
-pkill -f horus_unity_bridge_node 2>/dev/null || true
-pkill -f horus_unity_bridge 2>/dev/null || true
-
-if command -v lsof >/dev/null 2>&1; then
-  lsof -ti :8080,10000 | xargs -r kill -TERM 2>/dev/null || true
+log "Stopping SDK-owned HORUS launch process (if recorded)"
+pid_file="$HORUS_HOME/state/horus-start.pid"
+if [ -f "$pid_file" ]; then
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && [ -d "/proc/$pid" ]; then
+    cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    case "$cmdline" in
+      *"ros2 launch horus_backend "*|*"horus_backend.launch.py"*|*"horus_complete_backend.launch.py"*)
+        kill -TERM "$pid" 2>/dev/null || true
+        ;;
+      *)
+        log "Ignoring stale HORUS PID $pid: $cmdline"
+        ;;
+    esac
+  fi
+  rm -f "$pid_file"
 fi
 
 bashrc="$HOME/.bashrc"

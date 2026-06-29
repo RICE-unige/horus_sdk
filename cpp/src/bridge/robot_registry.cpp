@@ -486,19 +486,6 @@ double now_sec() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(now).count() / 1000.0;
 }
 
-std::vector<std::string> collect_topics(const robot::DataViz& dataviz) {
-    std::vector<std::string> topics;
-    for (const auto& visualization : dataviz.get_enabled_visualizations()) {
-        if (visualization.data_source.topic.empty()) {
-            continue;
-        }
-        if (std::find(topics.begin(), topics.end(), visualization.data_source.topic) == topics.end()) {
-            topics.push_back(visualization.data_source.topic);
-        }
-    }
-    return topics;
-}
-
 RosBindingPayload build_ros_binding(const robot::Robot& robot) {
     const auto binding = robot.get_ros_binding();
     RosBindingPayload payload;
@@ -700,8 +687,12 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_r
         false,
         {
             {"success", false},
-            {"error", std::string("Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.")},
+            {"error",
+             std::string(
+                 "C++ live registration transport is not implemented; use build_robot_config_dict "
+                 "to generate a payload, or use the Python SDK for live HORUS registration.")},
             {"unsupported_feature", std::string("bridge_registration")},
+            {"robot_name", robot.get_name()},
             {"payload", payload},
             {"timeout_sec", timeout_sec},
             {"keep_alive", keep_alive},
@@ -758,7 +749,10 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_r
         false,
         {
             {"success", false},
-            {"error", std::string("Native HORUS registration transport is not implemented yet; build_robot_config_dict provides payload parity only.")},
+            {"error",
+             std::string(
+                 "C++ live registration transport is not implemented; use build_robot_config_dict "
+                 "to generate payloads, or use the Python SDK for live HORUS registration.")},
             {"unsupported_feature", std::string("bridge_registration")},
             {"payloads", payloads},
             {"timeout_sec", timeout_sec},
@@ -775,7 +769,7 @@ std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::unregister
         false,
         {
             {"success", false},
-            {"error", std::string("Native HORUS unregister transport is not implemented yet.")},
+            {"error", std::string("C++ live registration transport is not implemented; no HORUS backend unregister was sent.")},
             {"unsupported_feature", std::string("bridge_registration")},
             {"robot_id", robot_id},
             {"timeout_sec", timeout_sec},

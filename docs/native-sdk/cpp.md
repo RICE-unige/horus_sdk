@@ -5,9 +5,9 @@ sidebar_position: 1
 
 # C++ SDK
 
-The C++ SDK builds the same MR registration payload contract as the Python SDK without depending on the Python runtime. Use it when your robot process is already C++ or when payload generation overhead needs to stay low.
+The C++ SDK builds the same MR registration contract as the Python SDK without depending on the Python runtime. Use it when your robot process is already C++, when registration payload generation is part of a ROS 2 node, or when startup and serialization overhead need to stay low.
 
-Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The native C++ `register_*` calls intentionally return an unsupported-transport result instead of reporting fake local success.
+Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The C++ `register_robot`, `register_robots`, and `unregister_robot` helpers intentionally return an explicit unsupported-transport result instead of reporting fake local success. Use `RobotRegistryClient::build_robot_config_dict(...)` for native payload parity until a real C++ transport is implemented.
 
 ## What it sends
 
@@ -93,3 +93,4 @@ cd ~/horus_sdk/cpp
 ```
 
 `cpp/examples/sdk_registration_demo.cpp` remains the short native equivalent of the Python ops scenario at the payload layer; the larger scenario coverage is split into focused examples so payload construction stays concise.
+The focused examples configure camera view profiles, teleop/task payloads, Robot Manager metadata, navigation safety visualizations, global 3D map payloads, semantic boxes, workspace compass/tutorial metadata, and local body model fields. They validate payload generation only; they do not contact a live HORUS bridge.

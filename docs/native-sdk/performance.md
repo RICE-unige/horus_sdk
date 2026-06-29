@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Native Performance
 
-The C++ and Rust SDKs are the preferred registration paths when payload generation runs in a native process. They avoid Python interpreter startup, dynamic object walking, and GIL contention while keeping the same HORUS MR payload contract.
+The C++ and Rust SDKs are the preferred paths when registration payload generation runs in a native process. They avoid Python interpreter startup, dynamic object walking, and GIL contention while keeping the same HORUS MR payload contract. Live bridge registration is still handled by the Python SDK until native transports are implemented.
 
 ## What to benchmark
 

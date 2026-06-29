@@ -13,7 +13,7 @@ impl Client {
     }
 
     pub async fn shutdown(&self) {
-        // TODO: Implement shutdown logic
+        // Python currently owns backend process lifecycle; Rust keeps no background task.
     }
 
     pub fn backend_type(&self) -> &str {
