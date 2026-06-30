@@ -8,6 +8,7 @@ pub mod client;
 pub mod color;
 pub mod core;
 pub mod dataviz;
+pub mod experiments;
 pub mod robot;
 pub mod sensors;
 pub mod utils;
