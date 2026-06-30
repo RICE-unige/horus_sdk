@@ -35,6 +35,7 @@ const sidebars = {
         "python-sdk/sensors",
         "python-sdk/dataviz",
         "python-sdk/registration",
+        "python-sdk/field-teammate",
         "python-sdk/topic-monitoring"
       ]
     },

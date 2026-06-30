@@ -22,6 +22,28 @@ Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitori
 | Cameras | minimap/teleop transport profiles, WebRTC settings, stereo fields, view/projection offsets |
 | DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, semantic boxes |
 | Workspace | position scale, compass metadata, tutorial preset, local body model id |
+| Field teammate | `entity_kind`, capability default-deny `capabilities`, versioned `field_teammate_config`, fail-closed `validate_field_teammate_safety` |
+
+## Field teammate
+
+A human field teammate is registered as a guidable, non-controllable entity, at parity with the Python SDK:
+
+```cpp
+auto teammate = horus::robot::make_field_teammate("field_teammate_1");
+auto dataviz = teammate.create_dataviz();
+horus::bridge::RobotRegistryClient client;
+auto payload = client.build_robot_config_dict(teammate, *dataviz);
+
+// payload.entity_kind == "field_teammate", capabilities are default-deny, and:
+if (auto error = horus::bridge::validate_field_teammate_safety(payload)) {
+    // a tampered payload that re-enables teleop/tasks/control is rejected here
+}
+```
+
+`make_field_teammate` (and `Robot::configure_field_teammate`) force the
+robot-control capabilities off and disable teleop and the navigation tasks. The
+payload carries the same `entity_kind` / `capabilities` / `field_teammate_config`
+contract as Python, verified against `contracts/fixtures/field_teammate_hololens.json`.
 
 ## Build and test
 
