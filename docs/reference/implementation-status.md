@@ -36,7 +36,7 @@ Status: **Native payload parity**
 - field teammate capability contract at parity: `make_field_teammate`, `entity_kind`/`capabilities`/`field_teammate_config` in the payload, and `validate_field_teammate_safety` as the fail-closed backstop (verified against the shared `field_teammate_hololens.json` fixture)
 - experiments subsystem: NDJSON/CSV metric writers, a monotonic-anchored clock, and the field-teammate HRI study reducer (dyad-level aggregation with t-based confidence intervals)
 - colour manager: per-scheme palettes with cached assignment and an MD5-deterministic fallback that matches Python/Rust byte-for-byte
-- robot-description manifest at structural parity (link/joint/collision counts, base frame, stable hash, `body_mesh_mode`)
+- robot-description manifest at structural parity (link/joint/collision counts, base frame, stable hash, `body_mesh_mode`) plus native STL visual-mesh baking (binary + ASCII → deduplicated base64 mesh assets, `supports_visual_meshes`)
 - `cpp/examples/` mirrors the curated Python scenarios by basename, with `sdk_registration_demo.cpp` kept as the short ops-style payload demo
 
 ## Rust track
@@ -49,16 +49,16 @@ Status: **Native payload parity**
 - robot and global DataViz payloads cover transforms, paths, velocity, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, and semantic boxes
 - field teammate capability contract at parity: `Robot::field_teammate`, `entity_kind`/`capabilities`/`field_teammate_config` in the payload, and `validate_field_teammate_safety` as the fail-closed backstop (verified against the shared `field_teammate_hololens.json` fixture)
 - experiments subsystem: NDJSON/CSV metric writers, a monotonic-anchored clock, and the field-teammate HRI study reducer (dyad-level aggregation with t-based confidence intervals); colour manager already present
-- robot-description manifest at structural parity (link/joint/collision counts, base frame, stable hash, `body_mesh_mode`)
+- robot-description manifest at structural parity (link/joint/collision counts, base frame, stable hash, `body_mesh_mode`) plus native STL visual-mesh baking (binary + ASCII → deduplicated base64 mesh assets, `supports_visual_meshes`)
 - `rust/examples/` mirrors the curated Python scenarios by basename, with `sdk_registration_demo.rs` kept as the short ops-style payload demo
 
 ## Native parity boundary (intentional)
 
 The native SDKs now match the Python SDK across the registration / DataViz / payload contract, the field-teammate capability contract, the experiments subsystem (metric writers + HRI study reducer), the colour manager, and the structural robot-description manifest (link / joint / collision counts, base frame, stable hash, `body_mesh_mode`).
 
-Three Python subsystems are deliberately **not** ported. These are documented scope decisions, not stubs:
+These Python capabilities are deliberately **not** ported. They are documented scope decisions, not stubs:
 
-- **Visual mesh baking** (`python/horus/description/robot_mesh_baker.py` and the mesh-resolution half of the resolver): bakes STL / DAE / OBJ meshes into base64 vertex/normal/index blobs using NumPy, external mesh converters, and Pillow, then chunks them for transport. Byte-exact parity would require reproducing the NumPy float packing, the decimation, and the external DAE/OBJ conversion — and the **only consumer is live bridge registration, which is Python-only in the native SDKs by design**. The native manifest therefore reports the structural fields with `supports_visual_meshes: false`; native processes that need live mesh transport use the Python path.
+- **DAE/OBJ baking, decimation, and `package://` resolution** (`python/horus/description/robot_mesh_baker.py` and the mesh-resolution half of the resolver): the native SDKs **do** bake STL visual meshes (binary and ASCII) into deduplicated base64 mesh assets, so `supports_visual_meshes` and `mesh_assets` are populated for STL. The Python baker additionally converts DAE/OBJ via external tools, decimates to a triangle budget, derives texture-colour hints (Pillow), and resolves `package://` via a mesh root / ament index. Those paths use NumPy and external converters and remain Python-only; native mesh references that are DAE/OBJ-only or `package://`-only are skipped rather than baked.
 - **Offline characterization analysis** (`python/horus/experiments/analysis.py`): a NumPy/Pandas i-RIM research-analysis script (latency percentiles, knee/saturation detection, N-run CI aggregation) run offline to produce paper figures. It is research tooling rather than SDK API, so it is not a native-SDK responsibility.
 - **3D-map authoring helpers** (`map_3d_workflow`, `voxel_mesh`): Python-only offline workflows.
 

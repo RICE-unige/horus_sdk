@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import sys
 
 
@@ -123,12 +124,69 @@ def check_installer_command() -> None:
         fail("Installation docs must include canonical one-command installer.")
 
 
+_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+
+
+def check_internal_links() -> None:
+    """Validate doc-to-doc markdown links and /docs/ routes resolve to a file.
+
+    Compensates for Docusaurus' build-time `onBrokenLinks: throw` when the site
+    cannot be built locally. Only `.md` links and `/docs/...` routes are checked;
+    external URLs, anchors, and static assets are skipped.
+    """
+    docs_dir = ROOT / "docs"
+    errors = []
+    for md in sorted(docs_dir.rglob("*.md")):
+        for match in _LINK_RE.finditer(md.read_text(encoding="utf-8")):
+            raw = match.group(1).strip().split()[0]
+            target = raw.split("#")[0]
+            if not target or target.startswith(("http://", "https://", "mailto:")):
+                continue
+            if target.startswith("/docs/"):
+                candidate = docs_dir / target[len("/docs/"):]
+                if candidate.suffix == "":
+                    candidate = candidate.with_suffix(".md")
+                if not candidate.exists():
+                    errors.append(f"{md.relative_to(ROOT)} -> {raw}")
+            elif target.endswith(".md") and not (md.parent / target).exists():
+                errors.append(f"{md.relative_to(ROOT)} -> {raw}")
+    if errors:
+        fail("Broken internal doc links:\n  " + "\n  ".join(errors))
+
+
+def check_sidebar_refs() -> None:
+    sidebars = (ROOT / "sidebars.js").read_text(encoding="utf-8")
+    errors = [
+        sid
+        for sid in re.findall(r'"([^"]+)"', sidebars)
+        if "/" in sid and not (ROOT / "docs" / f"{sid}.md").exists()
+    ]
+    if not (ROOT / "docs" / "intro.md").exists():
+        errors.append("intro")
+    if errors:
+        fail("sidebars.js references missing docs:\n  " + "\n  ".join(errors))
+
+
+def check_config_doc_links() -> None:
+    cfg = (ROOT / "docusaurus.config.js").read_text(encoding="utf-8")
+    errors = [
+        route
+        for route in re.findall(r'to:\s*"(/docs/[^"]+)"', cfg)
+        if not (ROOT / "docs" / f"{route[len('/docs/'):]}.md").exists()
+    ]
+    if errors:
+        fail("docusaurus.config.js links to missing docs:\n  " + "\n  ".join(errors))
+
+
 def main() -> None:
     check_required_docs()
     check_implemented_api_pages()
     check_integration_pages()
     check_stub_status_page()
     check_installer_command()
+    check_internal_links()
+    check_sidebar_refs()
+    check_config_doc_links()
     print("Docs quality checks passed.")
 
 

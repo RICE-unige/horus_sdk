@@ -51,8 +51,11 @@ Beyond registration payloads, the C++ SDK ports the HORUS experiments tooling
 (`horus/experiments/` — NDJSON/CSV metric writers, a monotonic-anchored clock,
 and the field-teammate study reducer with dyad-level confidence intervals) and
 the colour manager (`horus/color/` — per-scheme palettes with an MD5-deterministic
-fallback that matches Python/Rust byte-for-byte). See **Implementation Status**
-for the full native parity boundary.
+fallback that matches Python/Rust byte-for-byte). It also bakes STL visual meshes
+(binary and ASCII) referenced by a URDF's `<visual>` elements into the description
+manifest (`horus/description/mesh_baker.hpp` — `bake_visual_meshes`, populating
+`mesh_assets` and `supports_visual_meshes`). See **Implementation Status** for the
+full native parity boundary.
 
 ## Build and test
 

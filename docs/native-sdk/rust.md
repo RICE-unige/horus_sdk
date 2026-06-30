@@ -52,7 +52,10 @@ contract as Python, verified against `contracts/fixtures/field_teammate_hololens
 Beyond registration payloads, the Rust SDK provides the HORUS experiments tooling
 (`horus::experiments` — NDJSON/CSV metric writers, a monotonic-anchored clock, and
 the field-teammate study reducer with dyad-level confidence intervals) and the
-colour manager (`horus::color`). See **Implementation Status** for the full native
+colour manager (`horus::color`). It also bakes STL visual meshes (binary and
+ASCII) referenced by a URDF's `<visual>` elements into the description manifest
+(`horus::description::bake_visual_meshes`, populating `mesh_assets` and
+`supports_visual_meshes`). See **Implementation Status** for the full native
 parity boundary.
 
 ## Build and test
