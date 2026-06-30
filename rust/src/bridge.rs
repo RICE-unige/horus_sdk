@@ -1303,6 +1303,15 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
     if !["collision_only", "preview_mesh", "runtime_high_mesh"].contains(&body_mesh_mode.as_str()) {
         body_mesh_mode = "preview_mesh".to_string();
     }
+    let include_visual_meshes =
+        coerce_bool(config.get("include_visual_meshes"), true) && body_mesh_mode != "collision_only";
+    let mesh_assets = if include_visual_meshes {
+        crate::description::bake_visual_meshes(&urdf, &urdf_path)
+    } else {
+        Vec::new()
+    };
+    let mesh_asset_encoded_bytes: usize = mesh_assets.iter().map(|asset| asset.encoded_bytes()).sum();
+    let supports_visual_meshes = !mesh_assets.is_empty();
     let base_frame = coerce_text(config.get("base_frame"), "base_link");
     let source = coerce_text(config.get("source"), "ros");
     let chunk_size = clamp_i32(
@@ -1310,7 +1319,7 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         1024,
         64000,
     );
-    let payload = json!({
+    let mut payload = json!({
         "base_frame": base_frame.clone(),
         "joints": joints.iter().map(|joint| json!({
             "axis_xyz": [0.0, 0.0, 1.0],
@@ -1328,6 +1337,14 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         "robot_name": robot.name.clone(),
         "version": "v2",
     });
+    if !mesh_assets.is_empty() {
+        if let Some(map) = payload.as_object_mut() {
+            map.insert(
+                "mesh_assets".to_string(),
+                Value::Array(mesh_assets.iter().map(|asset| asset.to_value()).collect()),
+            );
+        }
+    }
     let payload_json = serde_json::to_string(&payload).ok()?;
     let description_hash = Sha256::digest(payload_json.as_bytes());
 
@@ -1341,9 +1358,9 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         "collision_count": collision_count as i64,
         "supports_collision": collision_count > 0,
         "supports_joints": !joints.is_empty(),
-        "supports_visual_meshes": false,
-        "mesh_asset_count": 0,
-        "mesh_asset_encoded_bytes": 0,
+        "supports_visual_meshes": supports_visual_meshes,
+        "mesh_asset_count": mesh_assets.len() as i64,
+        "mesh_asset_encoded_bytes": mesh_asset_encoded_bytes as i64,
         "is_transparent": coerce_bool(config.get("is_transparent"), false),
         "encoding": "json+gzip+base64",
         "chunk_size_bytes": chunk_size,
