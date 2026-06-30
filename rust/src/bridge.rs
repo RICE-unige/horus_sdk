@@ -153,6 +153,17 @@ pub struct RobotManagerConfigPayload {
     pub sections: RobotManagerSectionsPayload,
 }
 
+/// Capability-driven, default-deny safety contract carried in the payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitiesPayload {
+    pub controllable: bool,
+    pub teleoperable: bool,
+    pub taskable: bool,
+    pub guidable: bool,
+    pub observable: bool,
+    pub communicative: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionsPayload {
     pub length: f32,
@@ -219,6 +230,8 @@ pub struct RobotRegistrationPayload {
     pub global_visualizations: Vec<VisualizationPayload>,
     pub control: ControlPayload,
     pub robot_manager_config: RobotManagerConfigPayload,
+    pub entity_kind: String,
+    pub capabilities: CapabilitiesPayload,
     pub timestamp: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimensions: Option<DimensionsPayload>,
@@ -232,6 +245,77 @@ pub struct RobotRegistrationPayload {
     pub robot_description_manifest: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub robot_description_payload_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_teammate_config: Option<Value>,
+}
+
+/// Resolve the entity capability contract from robot metadata, defaulting by
+/// entity kind and applying any explicit per-flag overrides.
+fn resolve_entity_capabilities(robot: &Robot, entity_kind: &str) -> CapabilitiesPayload {
+    let mut caps = if entity_kind == "field_teammate" {
+        CapabilitiesPayload {
+            controllable: false,
+            teleoperable: false,
+            taskable: false,
+            guidable: true,
+            observable: true,
+            communicative: true,
+        }
+    } else {
+        CapabilitiesPayload {
+            controllable: true,
+            teleoperable: true,
+            taskable: true,
+            guidable: false,
+            observable: true,
+            communicative: false,
+        }
+    };
+    if let Some(obj) = robot
+        .metadata
+        .get("entity_capabilities")
+        .and_then(Value::as_object)
+    {
+        let pick = |key: &str, current: bool| -> bool {
+            obj.get(key).and_then(Value::as_bool).unwrap_or(current)
+        };
+        caps.controllable = pick("controllable", caps.controllable);
+        caps.teleoperable = pick("teleoperable", caps.teleoperable);
+        caps.taskable = pick("taskable", caps.taskable);
+        caps.guidable = pick("guidable", caps.guidable);
+        caps.observable = pick("observable", caps.observable);
+        caps.communicative = pick("communicative", caps.communicative);
+    }
+    caps
+}
+
+/// Fail-closed check: reject any field-teammate payload that would expose a
+/// robot-control affordance. Mirrors the Python serializer's safety backstop.
+pub fn validate_field_teammate_safety(payload: &RobotRegistrationPayload) -> Result<(), String> {
+    if payload.entity_kind != "field_teammate" {
+        return Ok(());
+    }
+    let name = &payload.robot_name;
+    let caps = &payload.capabilities;
+    if caps.controllable || caps.teleoperable || caps.taskable {
+        return Err(format!(
+            "field_teammate '{name}' must not be controllable/teleoperable/taskable"
+        ));
+    }
+    if payload.control.teleop.enabled {
+        return Err(format!("field_teammate '{name}' must not enable teleop"));
+    }
+    for (task_name, task) in [
+        ("go_to_point", &payload.control.tasks.go_to_point),
+        ("waypoint", &payload.control.tasks.waypoint),
+    ] {
+        if task.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+            return Err(format!(
+                "field_teammate '{name}' must not enable the {task_name} task"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn now_sec() -> f64 {
@@ -1529,6 +1613,22 @@ impl RobotRegistryClient {
             })
             .unwrap_or(false);
 
+        let entity_kind = match robot
+            .metadata
+            .get("entity_kind")
+            .and_then(Value::as_str)
+            .map(str::trim)
+        {
+            Some("field_teammate") => "field_teammate".to_string(),
+            _ => "robot".to_string(),
+        };
+        let capabilities = resolve_entity_capabilities(robot, &entity_kind);
+        let field_teammate_config = robot
+            .metadata
+            .get("field_teammate_config")
+            .filter(|value| value.is_object())
+            .cloned();
+
         RobotRegistrationPayload {
             action: "register".to_string(),
             robot_name: robot.name.clone(),
@@ -1561,6 +1661,8 @@ impl RobotRegistryClient {
                     tasks: coerce_bool(sections.get("tasks"), true),
                 },
             },
+            entity_kind,
+            capabilities,
             timestamp: now_sec(),
             dimensions,
             workspace_config,
@@ -1588,6 +1690,7 @@ impl RobotRegistryClient {
             },
             robot_description_manifest,
             robot_description_payload_json,
+            field_teammate_config,
         }
     }
 
