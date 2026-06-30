@@ -47,6 +47,14 @@ robot-control capabilities off and disable teleop and the navigation tasks. The
 payload carries the same `entity_kind` / `capabilities` / `field_teammate_config`
 contract as Python, verified against `contracts/fixtures/field_teammate_hololens.json`.
 
+## Other subsystems
+
+Beyond registration payloads, the Rust SDK provides the HORUS experiments tooling
+(`horus::experiments` — NDJSON/CSV metric writers, a monotonic-anchored clock, and
+the field-teammate study reducer with dyad-level confidence intervals) and the
+colour manager (`horus::color`). See **Implementation Status** for the full native
+parity boundary.
+
 ## Build and test
 
 ```bash
