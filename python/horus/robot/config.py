@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -577,3 +577,222 @@ class LocalBodyModelConfig:
 
     def to_payload(self) -> Dict[str, Any]:
         return {"enabled": self.enabled, "robot_model_id": self.robot_model_id}
+
+
+# ---------------------------------------------------------------------------
+# Entity capability contract (capability-driven, default-deny safety)
+# ---------------------------------------------------------------------------
+
+ENTITY_KIND_ROBOT = "robot"
+ENTITY_KIND_FIELD_TEAMMATE = "field_teammate"
+_VALID_ENTITY_KINDS = {ENTITY_KIND_ROBOT, ENTITY_KIND_FIELD_TEAMMATE}
+
+
+def normalize_entity_kind(value: Any, default: str = ENTITY_KIND_ROBOT) -> str:
+    """Normalize an entity-kind token to a known value (default-safe)."""
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in _VALID_ENTITY_KINDS else default
+
+
+@dataclass(frozen=True)
+class EntityCapabilities:
+    """What an entity is permitted to do inside HORUS MR.
+
+    Safety is **capability-driven and default-deny**: consumers must gate every
+    command path on these flags rather than inferring permission from
+    ``robot_type``. A robot is controllable; a human field teammate is not —
+    they are *guidable*. The flags travel in the registration payload so the MR
+    runtime never has to guess.
+    """
+
+    controllable: bool = True
+    teleoperable: bool = True
+    taskable: bool = True
+    guidable: bool = False
+    observable: bool = True
+    communicative: bool = False
+
+    @classmethod
+    def for_robot(cls) -> "EntityCapabilities":
+        """Capabilities for a controllable robot (the SDK default)."""
+        return cls()
+
+    @classmethod
+    def for_field_teammate(cls) -> "EntityCapabilities":
+        """Default-deny capabilities for a human field teammate.
+
+        Robot-control affordances are denied; guidance/observation/communication
+        are granted. These are the *only* safe defaults for a human entity.
+        """
+        return cls(
+            controllable=False,
+            teleoperable=False,
+            taskable=False,
+            guidable=True,
+            observable=True,
+            communicative=True,
+        )
+
+    @classmethod
+    def from_values(
+        cls,
+        base: Optional["EntityCapabilities"] = None,
+        **overrides: Any,
+    ) -> "EntityCapabilities":
+        """Build capabilities from a base set plus explicit boolean overrides."""
+        resolved = base if isinstance(base, cls) else cls()
+        merged = asdict(resolved)
+        for key, value in overrides.items():
+            if key in merged and value is not None:
+                merged[key] = bool(value)
+        return cls(**merged)
+
+    def to_payload(self) -> Dict[str, bool]:
+        return {
+            "controllable": self.controllable,
+            "teleoperable": self.teleoperable,
+            "taskable": self.taskable,
+            "guidable": self.guidable,
+            "observable": self.observable,
+            "communicative": self.communicative,
+        }
+
+
+def _field_teammate_topic_prefix(name: Any) -> str:
+    leaf = normalize_topic_leaf(name, "field_teammate")
+    return "/" + leaf
+
+
+@dataclass(frozen=True)
+class FieldTeammateConfig:
+    """Typed contract for a HoloLens-class field teammate represented in HORUS.
+
+    Mirrors the existing ``*Config`` style: ``from_values`` normalizes inputs and
+    derives sensible per-entity topic defaults, ``to_payload`` emits the
+    versioned dict embedded under ``field_teammate_config`` in the registration
+    payload. The HoloLens is the first wearable; the same contract accepts other
+    glasses later.
+    """
+
+    wearable_type: str = "hololens2"
+    base_frame: str = "field_teammate/base"
+    camera_frame: str = "field_teammate/camera"
+    first_person_video_topic: str = ""
+    localization_confidence_topic: str = ""
+    guidance_request_topic: str = ""
+    guidance_response_topic: str = ""
+    guidance_state_topic: str = ""
+    guidance_annotation_topic: str = ""
+    guidance_route_topic: str = ""
+    guidance_warning_topic: str = ""
+    status_topic: str = ""
+    audio_topic: str = ""
+    can_acknowledge: bool = True
+    can_clarify: bool = True
+    can_reject: bool = True
+    can_complete: bool = True
+    contract_version: str = "field_teammate.v1"
+
+    _SUPPORTED_WEARABLES = ("hololens2", "aria", "quest_pro", "generic")
+
+    @classmethod
+    def from_values(
+        cls,
+        name: Any = "field_teammate",
+        *,
+        wearable_type: Any = "hololens2",
+        base_frame: Any = None,
+        camera_frame: Any = None,
+        first_person_video_topic: Any = None,
+        localization_confidence_topic: Any = None,
+        guidance_request_topic: Any = None,
+        guidance_response_topic: Any = None,
+        guidance_state_topic: Any = None,
+        guidance_annotation_topic: Any = None,
+        guidance_route_topic: Any = None,
+        guidance_warning_topic: Any = None,
+        status_topic: Any = None,
+        audio_topic: Any = None,
+        can_acknowledge: Any = True,
+        can_clarify: Any = True,
+        can_reject: Any = True,
+        can_complete: Any = True,
+        contract_version: Any = "field_teammate.v1",
+    ) -> "FieldTeammateConfig":
+        prefix = _field_teammate_topic_prefix(name)
+        leaf = prefix.lstrip("/")
+
+        normalized_wearable = str(wearable_type or "hololens2").strip().lower()
+        if normalized_wearable not in cls._SUPPORTED_WEARABLES:
+            normalized_wearable = "hololens2"
+
+        normalized_contract = str(contract_version or "field_teammate.v1").strip()
+        if not normalized_contract:
+            normalized_contract = "field_teammate.v1"
+
+        def _topic(value: Any, default: str) -> str:
+            text = str(value or "").strip()
+            return text if text else default
+
+        return cls(
+            wearable_type=normalized_wearable,
+            base_frame=normalize_frame_token(base_frame, f"{leaf}/base"),
+            camera_frame=normalize_frame_token(camera_frame, f"{leaf}/camera"),
+            first_person_video_topic=_topic(
+                first_person_video_topic, f"{prefix}/fpv/image_raw/compressed"
+            ),
+            localization_confidence_topic=_topic(
+                localization_confidence_topic, f"{prefix}/localization_confidence"
+            ),
+            guidance_request_topic=_topic(
+                guidance_request_topic, f"{prefix}/guidance/request"
+            ),
+            guidance_response_topic=_topic(
+                guidance_response_topic, f"{prefix}/guidance/response"
+            ),
+            guidance_state_topic=_topic(
+                guidance_state_topic, f"{prefix}/guidance/state"
+            ),
+            guidance_annotation_topic=_topic(
+                guidance_annotation_topic, f"{prefix}/guidance/annotation"
+            ),
+            guidance_route_topic=_topic(
+                guidance_route_topic, f"{prefix}/guidance/route"
+            ),
+            guidance_warning_topic=_topic(
+                guidance_warning_topic, f"{prefix}/guidance/warning"
+            ),
+            status_topic=_topic(status_topic, f"{prefix}/status"),
+            audio_topic=_topic(audio_topic, f"{prefix}/audio/message"),
+            can_acknowledge=bool(can_acknowledge),
+            can_clarify=bool(can_clarify),
+            can_reject=bool(can_reject),
+            can_complete=bool(can_complete),
+            contract_version=normalized_contract,
+        )
+
+    def to_payload(self) -> Dict[str, Any]:
+        return {
+            "wearable_type": self.wearable_type,
+            "base_frame": self.base_frame,
+            "camera_frame": self.camera_frame,
+            "topics": {
+                "first_person_video": self.first_person_video_topic,
+                "localization_confidence": self.localization_confidence_topic,
+                "guidance_request": self.guidance_request_topic,
+                "guidance_response": self.guidance_response_topic,
+                "guidance_state": self.guidance_state_topic,
+                "guidance_annotation": self.guidance_annotation_topic,
+                "guidance_route": self.guidance_route_topic,
+                "guidance_warning": self.guidance_warning_topic,
+                "status": self.status_topic,
+                "audio": self.audio_topic,
+            },
+            "interactions": {
+                "can_acknowledge": self.can_acknowledge,
+                "can_clarify": self.can_clarify,
+                "can_reject": self.can_reject,
+                "can_complete": self.can_complete,
+            },
+            "contract_version": self.contract_version,
+        }

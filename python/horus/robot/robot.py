@@ -10,6 +10,10 @@ import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from .config import (
+    ENTITY_KIND_FIELD_TEAMMATE,
+    ENTITY_KIND_ROBOT,
+    EntityCapabilities,
+    FieldTeammateConfig,
     GoToPointTaskConfig,
     LocalBodyModelConfig,
     NavigationTasksConfig,
@@ -22,6 +26,7 @@ from .config import (
     WorkspaceExperimentConfig,
     WorkspaceTutorialConfig,
     normalize_binding_mode,
+    normalize_entity_kind,
     normalize_frame_token,
     normalize_topic_leaf,
     normalize_topic_prefix,
@@ -36,12 +41,20 @@ logger = logging.getLogger(__name__)
 
 
 class RobotType(Enum):
-    """Robot type classifications"""
+    """Robot type classifications.
+
+    ``HUMAN`` represents a person carried into the workspace as a *field
+    teammate* (for example, someone wearing a HoloLens). It reuses the robot
+    registration pipeline for transport, but it is never a controllable robot:
+    safety is enforced by the capability contract (see ``EntityCapabilities``),
+    not by this type tag.
+    """
 
     WHEELED = "wheeled"
     LEGGED = "legged"
     AERIAL = "aerial"
     DRONE = "drone"
+    HUMAN = "human"
 
 
 @dataclass
@@ -77,6 +90,9 @@ class Robot:
     _WORKSPACE_TUTORIAL_METADATA_KEY = "workspace_tutorial_config"
     _WORKSPACE_COMPASS_METADATA_KEY = "workspace_compass_config"
     _WORKSPACE_EXPERIMENT_METADATA_KEY = "workspace_experiment_config"
+    _ENTITY_KIND_METADATA_KEY = "entity_kind"
+    _ENTITY_CAPABILITIES_METADATA_KEY = "entity_capabilities"
+    _FIELD_TEAMMATE_METADATA_KEY = "field_teammate_config"
 
     def __post_init__(self):
         """Validate robot configuration after initialization"""
@@ -693,6 +709,149 @@ class Robot:
             LocalBodyModelConfig.from_values(robot_model_id, enabled=enabled).to_payload(),
         )
 
+    def configure_capabilities(
+        self,
+        *,
+        controllable: Optional[bool] = None,
+        teleoperable: Optional[bool] = None,
+        taskable: Optional[bool] = None,
+        guidable: Optional[bool] = None,
+        observable: Optional[bool] = None,
+        communicative: Optional[bool] = None,
+        base: Optional[EntityCapabilities] = None,
+    ) -> None:
+        """Set the capability contract that gates what HORUS MR exposes.
+
+        Safety is capability-driven and default-deny: the MR runtime checks these
+        flags rather than inferring permission from ``robot_type``.
+        """
+        capabilities = EntityCapabilities.from_values(
+            base=base,
+            controllable=controllable,
+            teleoperable=teleoperable,
+            taskable=taskable,
+            guidable=guidable,
+            observable=observable,
+            communicative=communicative,
+        )
+        self.add_metadata(
+            self._ENTITY_CAPABILITIES_METADATA_KEY, capabilities.to_payload()
+        )
+
+    def get_entity_kind(self) -> str:
+        """Return the normalized entity kind (``robot`` or ``field_teammate``)."""
+        return normalize_entity_kind(
+            self.get_metadata(self._ENTITY_KIND_METADATA_KEY), ENTITY_KIND_ROBOT
+        )
+
+    def get_capabilities(self) -> Dict[str, bool]:
+        """Return the resolved capability contract for this entity."""
+        default = (
+            EntityCapabilities.for_field_teammate()
+            if self.get_entity_kind() == ENTITY_KIND_FIELD_TEAMMATE
+            else EntityCapabilities.for_robot()
+        )
+        raw = self.get_metadata(self._ENTITY_CAPABILITIES_METADATA_KEY)
+        if isinstance(raw, dict):
+            return EntityCapabilities.from_values(base=default, **raw).to_payload()
+        return default.to_payload()
+
+    def get_field_teammate_config(self) -> Optional[Dict[str, Any]]:
+        """Return the field-teammate contract dict if this entity is one."""
+        raw = self.get_metadata(self._FIELD_TEAMMATE_METADATA_KEY)
+        return raw if isinstance(raw, dict) else None
+
+    def configure_field_teammate(
+        self,
+        *,
+        wearable_type: str = "hololens2",
+        base_frame: Optional[str] = None,
+        camera_frame: Optional[str] = None,
+        first_person_video_topic: Optional[str] = None,
+        localization_confidence_topic: Optional[str] = None,
+        guidance_request_topic: Optional[str] = None,
+        guidance_response_topic: Optional[str] = None,
+        guidance_state_topic: Optional[str] = None,
+        guidance_annotation_topic: Optional[str] = None,
+        guidance_route_topic: Optional[str] = None,
+        guidance_warning_topic: Optional[str] = None,
+        status_topic: Optional[str] = None,
+        audio_topic: Optional[str] = None,
+        can_acknowledge: bool = True,
+        can_clarify: bool = True,
+        can_reject: bool = True,
+        can_complete: bool = True,
+        guidable: bool = True,
+        observable: bool = True,
+        communicative: bool = True,
+        apply_safe_defaults: bool = True,
+    ) -> None:
+        """Represent this entity as a human field teammate (default-deny safety).
+
+        This is the single entry point that turns an entity into a *guidable,
+        non-controllable* teammate. It stamps ``entity_kind``, forces the
+        robot-control capabilities off (regardless of caller input), records the
+        wearable/topic contract, and — by default — disables teleop and the
+        navigation tasks so an incomplete config can never expose a robot-control
+        affordance for a person. The registration serializer adds a fail-closed
+        check on top, so the guarantee holds even if metadata is later mutated.
+        """
+        self.add_metadata(self._ENTITY_KIND_METADATA_KEY, ENTITY_KIND_FIELD_TEAMMATE)
+
+        capabilities = EntityCapabilities.from_values(
+            base=EntityCapabilities.for_field_teammate(),
+            guidable=guidable,
+            observable=observable,
+            communicative=communicative,
+        )
+        # Robot-control affordances are always denied for a human. Fail closed.
+        capabilities = EntityCapabilities.from_values(
+            base=capabilities,
+            controllable=False,
+            teleoperable=False,
+            taskable=False,
+        )
+        self.add_metadata(
+            self._ENTITY_CAPABILITIES_METADATA_KEY, capabilities.to_payload()
+        )
+
+        self.add_metadata(
+            self._FIELD_TEAMMATE_METADATA_KEY,
+            FieldTeammateConfig.from_values(
+                name=self.name,
+                wearable_type=wearable_type,
+                base_frame=base_frame,
+                camera_frame=camera_frame,
+                first_person_video_topic=first_person_video_topic,
+                localization_confidence_topic=localization_confidence_topic,
+                guidance_request_topic=guidance_request_topic,
+                guidance_response_topic=guidance_response_topic,
+                guidance_state_topic=guidance_state_topic,
+                guidance_annotation_topic=guidance_annotation_topic,
+                guidance_route_topic=guidance_route_topic,
+                guidance_warning_topic=guidance_warning_topic,
+                status_topic=status_topic,
+                audio_topic=audio_topic,
+                can_acknowledge=can_acknowledge,
+                can_clarify=can_clarify,
+                can_reject=can_reject,
+                can_complete=can_complete,
+            ).to_payload(),
+        )
+
+        if apply_safe_defaults:
+            self.configure_teleop(enabled=False)
+            self.configure_navigation_tasks(
+                go_to_point_enabled=False,
+                waypoint_enabled=False,
+            )
+            self.configure_robot_manager(
+                status=True,
+                data_viz=True,
+                teleop=False,
+                tasks=False,
+            )
+
     def create_full_dataviz(
         self,
         dataviz_name: Optional[str] = None,
@@ -852,6 +1011,88 @@ class Robot:
         """Get HORUS-assigned color"""
         result = self.get_metadata("horus_color")
         return result if isinstance(result, str) else None
+
+
+class FieldTeammate(Robot):
+    """A human field teammate represented inside the HORUS workspace.
+
+    A field teammate (for example, a person wearing a HoloLens) is registered
+    through the same pipeline as a robot, but is a *guidable, non-controllable*
+    entity. Construction applies the capability default-deny contract and the
+    safe teleop/task defaults; the registration serializer enforces a
+    fail-closed check on top.
+
+    The HoloLens is the first supported wearable; the same interface accepts
+    other glasses by passing ``wearable_type``.
+
+    Example::
+
+        teammate = FieldTeammate("field_teammate_1")
+        teammate.register_with_horus()
+    """
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        wearable_type: str = "hololens2",
+        base_frame: Optional[str] = None,
+        camera_frame: Optional[str] = None,
+        dimensions: Optional[RobotDimensions] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        first_person_video_topic: Optional[str] = None,
+        localization_confidence_topic: Optional[str] = None,
+        guidance_request_topic: Optional[str] = None,
+        guidance_response_topic: Optional[str] = None,
+        guidance_state_topic: Optional[str] = None,
+        guidance_annotation_topic: Optional[str] = None,
+        guidance_route_topic: Optional[str] = None,
+        guidance_warning_topic: Optional[str] = None,
+        status_topic: Optional[str] = None,
+        audio_topic: Optional[str] = None,
+        can_acknowledge: bool = True,
+        can_clarify: bool = True,
+        can_reject: bool = True,
+        can_complete: bool = True,
+        guidable: bool = True,
+        observable: bool = True,
+        communicative: bool = True,
+    ) -> None:
+        super().__init__(
+            name=name,
+            robot_type=RobotType.HUMAN,
+            metadata=dict(metadata or {}),
+            dimensions=dimensions,
+        )
+        resolved_base_frame = self._normalize_frame_token(
+            base_frame, f"{self.name}/base"
+        )
+        self.configure_ros_binding(base_frame=resolved_base_frame)
+        self.configure_field_teammate(
+            wearable_type=wearable_type,
+            base_frame=resolved_base_frame,
+            camera_frame=camera_frame,
+            first_person_video_topic=first_person_video_topic,
+            localization_confidence_topic=localization_confidence_topic,
+            guidance_request_topic=guidance_request_topic,
+            guidance_response_topic=guidance_response_topic,
+            guidance_state_topic=guidance_state_topic,
+            guidance_annotation_topic=guidance_annotation_topic,
+            guidance_route_topic=guidance_route_topic,
+            guidance_warning_topic=guidance_warning_topic,
+            status_topic=status_topic,
+            audio_topic=audio_topic,
+            can_acknowledge=can_acknowledge,
+            can_clarify=can_clarify,
+            can_reject=can_reject,
+            can_complete=can_complete,
+            guidable=guidable,
+            observable=observable,
+            communicative=communicative,
+        )
+
+    def __str__(self) -> str:
+        return f"FieldTeammate(name='{self.name}')"
 
 
 def register_robots(

@@ -1,0 +1,59 @@
+{
+  "action": "register",
+  "robot_name": "field_teammate_1",
+  "robot_type": "human",
+  "entity_kind": "field_teammate",
+  "capabilities": {
+    "controllable": false,
+    "teleoperable": false,
+    "taskable": false,
+    "guidable": true,
+    "observable": true,
+    "communicative": true
+  },
+  "control": {
+    "teleop": {
+      "enabled": false
+    },
+    "tasks": {
+      "go_to_point": {
+        "enabled": false
+      },
+      "waypoint": {
+        "enabled": false
+      }
+    }
+  },
+  "robot_manager_config": {
+    "sections": {
+      "status": true,
+      "data_viz": true,
+      "teleop": false,
+      "tasks": false
+    }
+  },
+  "field_teammate_config": {
+    "wearable_type": "hololens2",
+    "base_frame": "field_teammate_1/base",
+    "camera_frame": "field_teammate_1/camera",
+    "topics": {
+      "first_person_video": "/field_teammate_1/fpv/image_raw/compressed",
+      "localization_confidence": "/field_teammate_1/localization_confidence",
+      "guidance_request": "/field_teammate_1/guidance/request",
+      "guidance_response": "/field_teammate_1/guidance/response",
+      "guidance_state": "/field_teammate_1/guidance/state",
+      "guidance_annotation": "/field_teammate_1/guidance/annotation",
+      "guidance_route": "/field_teammate_1/guidance/route",
+      "guidance_warning": "/field_teammate_1/guidance/warning",
+      "status": "/field_teammate_1/status",
+      "audio": "/field_teammate_1/audio/message"
+    },
+    "interactions": {
+      "can_acknowledge": true,
+      "can_clarify": true,
+      "can_reject": true,
+      "can_complete": true
+    },
+    "contract_version": "field_teammate.v1"
+  }
+}

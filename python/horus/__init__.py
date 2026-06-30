@@ -17,7 +17,16 @@ from .core import (
     unsubscribe,
 )
 from .dataviz import DataSourceType, DataViz, VisualizationType
-from .robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
+from .robot import (
+    EntityCapabilities,
+    FieldTeammate,
+    FieldTeammateConfig,
+    Robot,
+    RobotDimensions,
+    RobotType,
+    is_registration_cancelled,
+    register_robots,
+)
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
 import os
 
@@ -32,6 +41,9 @@ __all__ = [
     "__version__",
     "show_ascii_art",
     "Robot",
+    "FieldTeammate",
+    "EntityCapabilities",
+    "FieldTeammateConfig",
     "RobotDimensions",
     "RobotType",
     "SensorType",
