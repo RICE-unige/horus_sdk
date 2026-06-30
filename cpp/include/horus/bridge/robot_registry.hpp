@@ -126,6 +126,16 @@ struct RobotManagerConfigPayload {
     RobotManagerSectionsPayload sections;
 };
 
+// Capability-driven, default-deny safety contract carried in the payload.
+struct EntityCapabilitiesPayload {
+    bool controllable{true};
+    bool teleoperable{true};
+    bool taskable{true};
+    bool guidable{false};
+    bool observable{true};
+    bool communicative{false};
+};
+
 struct DimensionsPayload {
     float length{0.0f};
     float width{0.0f};
@@ -182,6 +192,8 @@ struct RobotRegistrationPayload {
     std::vector<VisualizationPayload> global_visualizations;
     ControlPayload control;
     RobotManagerConfigPayload robot_manager_config;
+    std::string entity_kind{"robot"};
+    EntityCapabilitiesPayload capabilities;
     double timestamp{0.0};
     std::optional<DimensionsPayload> dimensions;
     std::optional<WorkspaceConfigPayload> workspace_config;
@@ -189,6 +201,7 @@ struct RobotRegistrationPayload {
     std::optional<bool> has_visual_mesh_model;
     std::map<std::string, std::any> robot_description_manifest;
     std::optional<std::string> robot_description_payload_json;
+    std::optional<std::map<std::string, std::any>> field_teammate_config;
 };
 
 class RobotRegistryClient {
@@ -244,6 +257,11 @@ RobotRegistrationPayload build_robot_config_dict(
     std::optional<double> workspace_scale = std::nullopt);
 
 std::optional<std::string> queued_reason_from_ack(const std::map<std::string, std::any>& ack);
+
+// Fail-closed check: returns an error message if a field-teammate payload would
+// expose a robot-control affordance (teleop, a navigation task, or a
+// robot-control capability), or std::nullopt when the payload is safe.
+std::optional<std::string> validate_field_teammate_safety(const RobotRegistrationPayload& payload);
 
 } // namespace bridge
 } // namespace horus

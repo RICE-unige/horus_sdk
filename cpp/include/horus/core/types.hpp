@@ -16,7 +16,11 @@ enum class RobotType {
     WHEELED,
     LEGGED,
     AERIAL,
-    DRONE
+    DRONE,
+    // A person carried into the workspace as a field teammate (e.g. wearing a
+    // HoloLens). Never controllable: safety is enforced by the capability
+    // contract, not by this tag.
+    HUMAN
 };
 
 /**

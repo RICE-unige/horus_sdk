@@ -1422,6 +1422,36 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
     }
 
+    // Entity capability contract (capability-driven, default-deny safety). The
+    // MR runtime gates command paths on these flags rather than inferring
+    // permission from robot_type.
+    payload.entity_kind = "robot";
+    if (const auto kind_value = robot.get_metadata("entity_kind")) {
+        if (kind_value->type() == typeid(std::string) &&
+            std::any_cast<std::string>(*kind_value) == "field_teammate") {
+            payload.entity_kind = "field_teammate";
+        }
+    }
+
+    payload.capabilities = payload.entity_kind == "field_teammate"
+                               ? EntityCapabilitiesPayload{false, false, false, true, true, true}
+                               : EntityCapabilitiesPayload{};
+    if (const auto caps_value = robot.get_metadata("entity_capabilities")) {
+        const auto caps_map = any_to_map(*caps_value).value_or(std::map<std::string, std::any>{});
+        payload.capabilities.controllable = coerce_bool(map_get(caps_map, "controllable"), payload.capabilities.controllable);
+        payload.capabilities.teleoperable = coerce_bool(map_get(caps_map, "teleoperable"), payload.capabilities.teleoperable);
+        payload.capabilities.taskable = coerce_bool(map_get(caps_map, "taskable"), payload.capabilities.taskable);
+        payload.capabilities.guidable = coerce_bool(map_get(caps_map, "guidable"), payload.capabilities.guidable);
+        payload.capabilities.observable = coerce_bool(map_get(caps_map, "observable"), payload.capabilities.observable);
+        payload.capabilities.communicative = coerce_bool(map_get(caps_map, "communicative"), payload.capabilities.communicative);
+    }
+
+    if (const auto ft_value = robot.get_metadata("field_teammate_config")) {
+        if (auto ft_map = any_to_map(*ft_value)) {
+            payload.field_teammate_config = std::move(*ft_map);
+        }
+    }
+
     return payload;
 }
 
@@ -1686,6 +1716,27 @@ RobotRegistryClient& get_robot_registry_client() {
 std::vector<VisualizationPayload> build_global_visualizations_payload(
     const std::vector<robot::DataViz>& datavizs) {
     return get_robot_registry_client().build_global_visualizations_payload(datavizs);
+}
+
+std::optional<std::string> validate_field_teammate_safety(const RobotRegistrationPayload& payload) {
+    if (payload.entity_kind != "field_teammate") {
+        return std::nullopt;
+    }
+    const auto& caps = payload.capabilities;
+    if (caps.controllable || caps.teleoperable || caps.taskable) {
+        return "field_teammate '" + payload.robot_name +
+               "' must not be controllable/teleoperable/taskable";
+    }
+    if (payload.control.teleop.enabled) {
+        return "field_teammate '" + payload.robot_name + "' must not enable teleop";
+    }
+    if (coerce_bool(map_get(payload.control.tasks.go_to_point, "enabled"), false)) {
+        return "field_teammate '" + payload.robot_name + "' must not enable the go_to_point task";
+    }
+    if (coerce_bool(map_get(payload.control.tasks.waypoint, "enabled"), false)) {
+        return "field_teammate '" + payload.robot_name + "' must not enable the waypoint task";
+    }
+    return std::nullopt;
 }
 
 RobotRegistrationPayload build_robot_config_dict(

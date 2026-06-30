@@ -9,6 +9,7 @@ std::string robot_type_to_string(RobotType type) {
         case RobotType::LEGGED: return "legged";
         case RobotType::AERIAL: return "aerial";
         case RobotType::DRONE: return "drone";
+        case RobotType::HUMAN: return "human";
         default: return "unknown";
     }
 }

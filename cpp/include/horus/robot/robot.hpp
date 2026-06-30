@@ -84,6 +84,42 @@ struct RobotDescriptionOptions {
     bool enabled{true};
 };
 
+// Capability-driven, default-deny safety contract. Consumers gate command
+// paths on these flags rather than inferring permission from RobotType.
+struct EntityCapabilities {
+    bool controllable{true};
+    bool teleoperable{true};
+    bool taskable{true};
+    bool guidable{false};
+    bool observable{true};
+    bool communicative{false};
+
+    static EntityCapabilities for_robot() { return EntityCapabilities{}; }
+    static EntityCapabilities for_field_teammate() {
+        return EntityCapabilities{false, false, false, true, true, true};
+    }
+};
+
+struct FieldTeammateOptions {
+    std::string wearable_type{"hololens2"};
+    std::optional<std::string> base_frame;
+    std::optional<std::string> camera_frame;
+    std::optional<std::string> first_person_video_topic;
+    std::optional<std::string> localization_confidence_topic;
+    std::optional<std::string> guidance_request_topic;
+    std::optional<std::string> guidance_response_topic;
+    std::optional<std::string> guidance_state_topic;
+    std::optional<std::string> guidance_annotation_topic;
+    std::optional<std::string> guidance_route_topic;
+    std::optional<std::string> guidance_warning_topic;
+    std::optional<std::string> status_topic;
+    std::optional<std::string> audio_topic;
+    bool can_acknowledge{true};
+    bool can_clarify{true};
+    bool can_reject{true};
+    bool can_complete{true};
+};
+
 class Robot {
 public:
     Robot(std::string name, core::RobotType robot_type, std::optional<RobotDimensions> dimensions = std::nullopt);
@@ -111,6 +147,8 @@ public:
     void configure_local_body_model(const std::string& robot_model_id, bool enabled = true);
     void configure_workspace_compass(bool enabled, int gateway_port = 8088, const std::string& voice_mode = "auto");
     void configure_workspace_tutorial(const std::string& preset_id, bool enabled = true);
+    void configure_field_teammate(const FieldTeammateOptions& options = {});
+    std::string get_entity_kind() const;
 
     void add_sensor(const std::shared_ptr<Sensor>& sensor);
     bool remove_sensor(const std::string& sensor_name);
@@ -161,6 +199,10 @@ std::pair<bool, std::map<std::string, std::any>> register_robots(
     bool keep_alive = true,
     bool show_dashboard = true,
     std::optional<double> workspace_scale = std::nullopt);
+
+// Construct a human field teammate: a RobotType::HUMAN entity with the
+// capability default-deny contract and safe teleop/task defaults applied.
+Robot make_field_teammate(const std::string& name, const FieldTeammateOptions& options = {});
 
 } // namespace robot
 } // namespace horus

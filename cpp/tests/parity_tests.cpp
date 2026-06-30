@@ -338,9 +338,57 @@ static void test_visualization_payloads() {
     assert(any_value<std::string>(semantic_box->semantic_box, "id") == "dock");
 }
 
+static void test_field_teammate_capability_contract() {
+    auto teammate = horus::robot::make_field_teammate("field_teammate_1");
+    assert(teammate.get_type_str() == "human");
+    assert(teammate.get_entity_kind() == "field_teammate");
+
+    auto dataviz = teammate.create_dataviz();
+    horus::bridge::RobotRegistryClient client;
+    auto payload = client.build_robot_config_dict(teammate, *dataviz);
+
+    assert(payload.robot_type == "human");
+    assert(payload.entity_kind == "field_teammate");
+    assert(payload.capabilities.controllable == false);
+    assert(payload.capabilities.teleoperable == false);
+    assert(payload.capabilities.taskable == false);
+    assert(payload.capabilities.guidable == true);
+    assert(payload.capabilities.communicative == true);
+    assert(payload.control.teleop.enabled == false);
+    assert(any_value<bool>(payload.control.tasks.go_to_point, "enabled") == false);
+    assert(any_value<bool>(payload.control.tasks.waypoint, "enabled") == false);
+
+    assert(payload.field_teammate_config.has_value());
+    const auto& ft = *payload.field_teammate_config;
+    assert(any_value<std::string>(ft, "wearable_type") == "hololens2");
+    assert(any_value<std::string>(ft, "contract_version") == "field_teammate.v1");
+    const auto topics = any_value<std::map<std::string, std::any>>(ft, "topics");
+    assert(any_value<std::string>(topics, "first_person_video") ==
+           "/field_teammate_1/fpv/image_raw/compressed");
+    assert(any_value<std::string>(topics, "guidance_request") ==
+           "/field_teammate_1/guidance/request");
+
+    // A correctly built teammate is safe.
+    assert(!horus::bridge::validate_field_teammate_safety(payload).has_value());
+
+    // Tampering to re-enable teleop is rejected, fail-closed.
+    auto tampered = payload;
+    tampered.control.teleop.enabled = true;
+    assert(horus::bridge::validate_field_teammate_safety(tampered).has_value());
+
+    // A regular robot stays controllable and is marked as a robot.
+    horus::robot::Robot rover("rover", horus::core::RobotType::WHEELED);
+    auto rover_dataviz = rover.create_dataviz();
+    auto rover_payload = client.build_robot_config_dict(rover, *rover_dataviz);
+    assert(rover_payload.entity_kind == "robot");
+    assert(rover_payload.capabilities.controllable == true);
+    assert(!horus::bridge::validate_field_teammate_safety(rover_payload).has_value());
+}
+
 int main() {
     test_camera_defaults_and_validation();
     test_payload_parity_rules();
+    test_field_teammate_capability_contract();
     test_legacy_streaming_fallback();
     test_camera_topic_profiles();
     test_control_overrides_and_ros_binding();
