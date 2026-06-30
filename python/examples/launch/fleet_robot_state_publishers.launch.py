@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Bring up a heterogeneous 4-robot fleet as a normal ROS 2 robot_description workflow.
+"""Bring up a heterogeneous 5-robot showroom as a normal ROS 2 workflow.
 
-For each robot this launches, under its own namespace:
-  * robot_state_publisher  -- loads the URDF (expanding xacro when needed), publishes the
-                              latched ``/<ns>/robot_description`` topic + the
-                              ``robot_description`` parameter, and broadcasts ``/tf`` with a
-                              per-robot ``frame_prefix`` so frames are ``<ns>/<link>``.
-  * joint_state_publisher  -- publishes default joint states so every movable link gets TF.
-  * static_transform_publisher -- anchors ``world -> <ns>/<root_link>`` at an x-offset so the
-                              robots are spaced apart (handy in RViz; HORUS anchors per robot).
+By default this launches one static TF anchor per robot:
+``world -> <ns>/<base>``. HORUS MR gets the detailed robot body from the
+SDK-baked URDF payload, so publishing every URDF link frame is unnecessary for
+the Quest showroom and can create hundreds of frame labels/axes.
 
-Fleet (heterogeneous): jackal (wheeled), go1 + anymal_c (legged), h1 (humanoid).
+Set ``publish_full_tf:=true`` to also launch one robot_state_publisher per robot.
+That opt-in path publishes ``/<ns>/robot_description`` and the full prefixed TF tree
+for RViz-style validation.
+
+Fleet: Unitree G1/H1, ANYmal C, Boston Dynamics Spot, and Jackal.
 
 Run (ROS 2 sourced):
     ros2 launch python/examples/launch/fleet_robot_state_publishers.launch.py
@@ -23,19 +23,23 @@ Then register the fleet with HORUS MR in another terminal:
 """
 
 from pathlib import Path
+import sys
 
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import LaunchConfiguration
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
-ASSETS_DIR = Path(__file__).resolve().parents[1] / ".local_assets" / "robot_descriptions"
+EXAMPLES_DIR = Path(__file__).resolve().parents[1]
+if str(EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(EXAMPLES_DIR))
 
-# (namespace, urdf basename, xacro fallback basename, root link, x-offset metres)
-FLEET = [
-    ("jackal", "jackal.urdf", "jackal.urdf.xacro", "base_link", 0.0),
-    ("go1", "go1.urdf", None, "base", 1.5),
-    ("anymal_c", "anymal_c.urdf", None, "base", 3.0),
-    ("h1", "h1.urdf", None, "pelvis", 4.5),
-]
+from robot_description_showroom_specs import SHOWROOM_FLEET
+
+ASSETS_DIR = Path(__file__).resolve().parents[1] / ".local_assets" / "robot_descriptions"
+SUPPORT_NODE = Path(__file__).resolve().parents[1] / "tools" / "showroom_tf_support_node.py"
+FLEET = SHOWROOM_FLEET
 
 
 def _load_robot_description(urdf_name: str, xacro_name) -> str:
@@ -58,16 +62,50 @@ def _load_robot_description(urdf_name: str, xacro_name) -> str:
 
 
 def generate_launch_description() -> LaunchDescription:
-    actions = []
-    for namespace, urdf_name, xacro_name, root_link, x_offset in FLEET:
-        robot_description = _load_robot_description(urdf_name, xacro_name)
-        frame_prefix = f"{namespace}/"
+    publish_full_tf = LaunchConfiguration("publish_full_tf")
+    actions = [
+        DeclareLaunchArgument(
+            "publish_full_tf",
+            default_value="false",
+            description="Launch robot_state_publisher for every showroom robot and publish the full URDF TF tree.",
+        ),
+        ExecuteProcess(
+            cmd=[sys.executable, str(SUPPORT_NODE)],
+            name="showroom_tf_support",
+            output="screen",
+            condition=IfCondition(publish_full_tf),
+        )
+    ]
+    for spec in FLEET:
+        robot_description = _load_robot_description(spec.urdf_name, spec.xacro_name)
+        frame_prefix = f"{spec.name}/"
+
+        actions.append(
+            Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name=f"{spec.name}_showroom_anchor",
+                output="screen",
+                arguments=[
+                    "--x", f"{float(spec.x):.6f}",
+                    "--y", f"{float(spec.y):.6f}",
+                    "--z", f"{float(spec.z):.6f}",
+                    "--qx", "0.0",
+                    "--qy", "0.0",
+                    "--qz", "0.0",
+                    "--qw", "1.0",
+                    "--frame-id", "world",
+                    "--child-frame-id", f"{spec.name}/{spec.urdf_root_frame}",
+                ],
+                condition=UnlessCondition(publish_full_tf),
+            )
+        )
 
         actions.append(
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
-                namespace=namespace,
+                namespace=spec.name,
                 name="robot_state_publisher",
                 output="screen",
                 parameters=[
@@ -78,31 +116,7 @@ def generate_launch_description() -> LaunchDescription:
                         "publish_frequency": 30.0,
                     }
                 ],
-            )
-        )
-        actions.append(
-            Node(
-                package="joint_state_publisher",
-                executable="joint_state_publisher",
-                namespace=namespace,
-                name="joint_state_publisher",
-                output="screen",
-                parameters=[{"robot_description": robot_description}],
-            )
-        )
-        actions.append(
-            Node(
-                package="tf2_ros",
-                executable="static_transform_publisher",
-                name=f"{namespace}_world_anchor",
-                output="log",
-                arguments=[
-                    "--x", str(x_offset),
-                    "--y", "0",
-                    "--z", "0",
-                    "--frame-id", "world",
-                    "--child-frame-id", f"{frame_prefix}{root_link}",
-                ],
+                condition=IfCondition(publish_full_tf),
             )
         )
 

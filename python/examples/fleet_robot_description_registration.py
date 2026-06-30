@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Register a heterogeneous 4-robot fleet in HORUS MR via the robot_description workflow.
+"""Register a heterogeneous 5-robot showroom fleet in HORUS MR.
 
-This demonstrates the robot-model upgrade: the SDK resolves each robot's URDF straight
-from a normal ROS source -- the latched ``/<ns>/robot_description`` topic (default) or the
-``robot_state_publisher`` parameter (``--source ros``) -- and bakes the real visual meshes
-referenced by the URDF (``package://``), resolving them via the ament index or a local
-``mesh_root`` tree. No per-robot URDF path is hand-fed to the SDK.
+This demonstrates the robot-model upgrade with a static showroom fleet. By default the
+SDK resolves each robot's URDF from the cached local assets fetched by
+``fetch_robot_description_assets.py`` and bakes the real visual meshes referenced by the
+URDF (``package://``), resolving them via the ament index or a local ``mesh_root`` tree.
+The live ROS graph is still used for TF. Pass ``--source topic`` or ``--source ros`` when
+you specifically want to prove the RViz-style robot_description transport path.
 
-Fleet: jackal (wheeled), go1 + anymal_c (legged), h1 (humanoid).
+Fleet: Unitree G1/H1, ANYmal C, Boston Dynamics Spot, and Jackal.
 
 Typical run:
     # 1) one-time: fetch URDFs + meshes
     python3 python/examples/tools/fetch_robot_description_assets.py
-    # 2) bring up the ROS robot_description graph
+    # 2) bring up the base-anchor TF graph
     ros2 launch python/examples/launch/fleet_robot_state_publishers.launch.py
     # 3) register with HORUS MR (this script)
     PYTHONPATH=python:$PYTHONPATH python3 python/examples/fleet_robot_description_registration.py
 
 Validate offline (no ROS graph, no HORUS bridge) -- resolves + bakes each robot from the
-local files and prints the baked manifest:
+same local files and prints the baked manifest:
     PYTHONPATH=python:$PYTHONPATH python3 python/examples/fleet_robot_description_registration.py --dry-run
 """
 
@@ -26,6 +27,8 @@ import argparse
 import os
 import sys
 from pathlib import Path
+
+from robot_description_showroom_specs import SHOWROOM_FLEET, ShowroomRobotSpec
 
 from horus.robot import (
     Robot,
@@ -39,18 +42,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ASSETS_DIR = SCRIPT_DIR / ".local_assets" / "robot_descriptions"
 DEFAULT_MESH_ROOT = ASSETS_DIR / "meshes_root"
 
-# name == launch namespace == default tf_prefix (tf_mode="prefixed" defaults prefix to name).
-# (name, RobotType, root link, (length,width,height), body_mesh_mode, urdf basename, xacro basename)
-FLEET = [
-    ("jackal", RobotType.WHEELED, "base_link", (0.508, 0.430, 0.250), "preview_mesh", "jackal.urdf", "jackal.urdf.xacro"),
-    ("go1", RobotType.LEGGED, "base", (0.540, 0.300, 0.180), "runtime_high_mesh", "go1.urdf", None),
-    ("anymal_c", RobotType.LEGGED, "base", (0.930, 0.530, 0.700), "preview_mesh", "anymal_c.urdf", None),
-    # HORUS RobotType has no HUMANOID; LEGGED is the closest classification for H1.
-    ("h1", RobotType.LEGGED, "pelvis", (0.300, 0.400, 1.800), "runtime_high_mesh", "h1.urdf", None),
-]
+ROBOT_TYPE_BY_KEY = {
+    "wheeled": RobotType.WHEELED,
+    "legged": RobotType.LEGGED,
+}
+FLEET = SHOWROOM_FLEET
 
-HIGH_MESH_TRIANGLE_BUDGET = 220000
-PREVIEW_MESH_TRIANGLE_BUDGET = 90000
+HIGH_MESH_TRIANGLE_BUDGET = 500000
+PREVIEW_MESH_TRIANGLE_BUDGET = 25000
 
 
 def _local_urdf_path(urdf_name: str, xacro_name) -> str:
@@ -63,35 +62,45 @@ def _local_urdf_path(urdf_name: str, xacro_name) -> str:
     return ""
 
 
-def build_robot(spec, args):
-    name, robot_type, root_link, dims, default_mode, urdf_name, xacro_name = spec
-    body_mesh_mode = args.body_mesh_mode or default_mode
-    triangle_budget = (
-        HIGH_MESH_TRIANGLE_BUDGET if body_mesh_mode == "runtime_high_mesh" else PREVIEW_MESH_TRIANGLE_BUDGET
-    )
+def build_robot(spec: ShowroomRobotSpec, args):
+    body_mesh_mode = args.body_mesh_mode or spec.body_mesh_mode
+    triangle_budget = args.visual_mesh_triangle_budget
+    if triangle_budget <= 0:
+        triangle_budget = (
+            HIGH_MESH_TRIANGLE_BUDGET if body_mesh_mode == "runtime_high_mesh" else PREVIEW_MESH_TRIANGLE_BUDGET
+        )
 
-    robot = Robot(name=name, robot_type=robot_type, dimensions=RobotDimensions(*dims))
+    robot_type = ROBOT_TYPE_BY_KEY.get(spec.robot_type, RobotType.LEGGED)
+    robot = Robot(name=spec.name, robot_type=robot_type, dimensions=RobotDimensions(*spec.dimensions))
     # tf_mode="prefixed" with empty tf_prefix -> prefix defaults to the robot name,
     # matching robot_state_publisher's frame_prefix "<name>/".
-    robot.configure_ros_binding(base_frame=root_link)
+    robot.configure_ros_binding(base_frame=spec.base_frame)
+
+    use_local_urdf = args.source == "local" or args.dry_run
 
     description_kwargs = dict(
         source=args.source,
-        robot_description_topic=f"/{name}/robot_description",
-        ros_param_node=f"/{name}/robot_state_publisher",
-        base_frame=root_link,
+        robot_description_topic=f"/{spec.name}/robot_description",
+        ros_param_node=f"/{spec.name}/robot_state_publisher",
+        base_frame=spec.base_frame,
         mesh_root=("" if args.no_meshes else str(args.mesh_root)),
         include_visual_meshes=not args.no_meshes,
         visual_mesh_triangle_budget=triangle_budget,
         body_mesh_mode=("collision_only" if args.no_meshes else body_mesh_mode),
         chunk_size_bytes=64000,
     )
-    if args.dry_run:
-        # Offline validation reads the local file directly (urdf_path takes precedence),
-        # so it proves URDF + mesh resolution without a live ROS graph.
-        description_kwargs["urdf_path"] = _local_urdf_path(urdf_name, xacro_name)
+    if use_local_urdf:
+        # The showroom bodies are static. Reading the local URDF avoids creating a burst
+        # of ROS CLI participants just to fetch ten robot_description strings.
+        description_kwargs["urdf_path"] = _local_urdf_path(spec.urdf_name, spec.xacro_name)
 
     robot.configure_robot_description(**description_kwargs)
+    robot.configure_robot_manager(
+        status=True,
+        data_viz=True,
+        teleop=False,
+        tasks=False,
+    )
     return robot
 
 
@@ -123,10 +132,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--source",
-        choices=["topic", "ros"],
-        default="topic",
-        help="Where the SDK reads each URDF: latched /<ns>/robot_description topic (default) "
-        "or the robot_state_publisher parameter (ros).",
+        choices=["local", "topic", "ros"],
+        default="local",
+        help="Where the SDK reads each URDF: cached local assets (default), latched "
+        "/<ns>/robot_description topic, or the robot_state_publisher parameter (ros).",
     )
     parser.add_argument(
         "--mesh-root",
@@ -139,6 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["collision_only", "preview_mesh", "runtime_high_mesh"],
         default="",
         help="Override the per-robot body mesh mode for all robots.",
+    )
+    parser.add_argument(
+        "--visual-mesh-triangle-budget",
+        type=int,
+        default=0,
+        help=f"Override the visual mesh triangle budget per robot. Default high-detail budget is {HIGH_MESH_TRIANGLE_BUDGET}.",
     )
     parser.add_argument("--no-meshes", action="store_true", help="Register collision-only (skip visual meshes).")
     parser.add_argument("--workspace-scale", type=float, default=0.1, help="HORUS workspace scale.")
@@ -160,8 +175,10 @@ def main() -> int:
     if args.dry_run:
         return run_dry_run(robots)
 
-    print(f"[fleet] registering {len(robots)} robots via source='{args.source}' "
-          f"(mesh_root={'<disabled>' if args.no_meshes else args.mesh_root})")
+    print(
+        f"[showroom] registering {len(robots)} robots via source='{args.source}' "
+        f"(mesh_root={'<disabled>' if args.no_meshes else args.mesh_root})"
+    )
     datavizs = [robot.create_dataviz() for robot in robots]
 
     success, result = register_robots(
@@ -174,11 +191,11 @@ def main() -> int:
     )
     if not success:
         if is_registration_cancelled(result):
-            print("[fleet] registration monitor stopped.")
+            print("[showroom] registration monitor stopped.")
             return 0
-        print(f"[fleet] registration failed: {result}")
+        print(f"[showroom] registration failed: {result}")
         return 1
-    print("[fleet] registration complete.")
+    print("[showroom] registration complete.")
     return 0
 
 
