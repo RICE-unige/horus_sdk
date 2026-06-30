@@ -23,6 +23,11 @@ from .robot_description_models import MeshAsset
 
 logger = logging.getLogger(__name__)
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - Pillow is optional for texture color hints.
+    Image = None
+
 
 def _float_list(values: np.ndarray) -> List[float]:
     return [float(value) for value in values.tolist()]
@@ -84,6 +89,7 @@ class SourceMeshData:
     faces: np.ndarray
     normals: Optional[np.ndarray]
     color_rgb: Optional[np.ndarray]
+    colors: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +117,7 @@ class RobotMeshBaker:
         self._cache_root.mkdir(parents=True, exist_ok=True)
         self._source_cache: Dict[str, SourceMeshData] = {}
         self._decimated_cache: Dict[str, SourceMeshData] = {}
+        self._texture_color_cache: Dict[str, Optional[np.ndarray]] = {}
 
     def build_combined_asset(
         self,
@@ -219,11 +226,21 @@ class RobotMeshBaker:
             vertex_offset += len(world_vertices)
 
             entry_color = entry.get("color_rgb")
+            entry_fallback_color = entry.get("fallback_color_rgb")
             source_color = None
+            source_colors = None
             if isinstance(entry_color, (list, tuple)) and len(entry_color) >= 3:
                 source_color = np.asarray(entry_color[:3], dtype=np.float32)
+            elif source_mesh.colors is not None and len(source_mesh.colors) == len(vertices):
+                source_colors = np.asarray(source_mesh.colors, dtype=np.float32)
+                if source_colors.ndim == 2 and source_colors.shape[1] >= 3:
+                    source_color = np.clip(source_colors[:, :3].mean(axis=0), 0.0, 1.0).astype(np.float32)
+                else:
+                    source_colors = None
             elif source_mesh.color_rgb is not None and len(source_mesh.color_rgb) >= 3:
                 source_color = np.asarray(source_mesh.color_rgb[:3], dtype=np.float32)
+            elif isinstance(entry_fallback_color, (list, tuple)) and len(entry_fallback_color) >= 3:
+                source_color = np.asarray(entry_fallback_color[:3], dtype=np.float32)
 
             if source_color is None:
                 source_color = np.asarray([0.78, 0.78, 0.76], dtype=np.float32)
@@ -231,7 +248,23 @@ class RobotMeshBaker:
                 color_accumulator += source_color.astype(np.float64)
                 color_samples += 1
 
-            entry_colors = np.tile(np.concatenate([np.clip(source_color, 0.0, 1.0), np.array([1.0], dtype=np.float32)]), (len(world_vertices), 1))
+            if source_colors is not None:
+                if source_colors.shape[1] >= 4:
+                    entry_colors = source_colors[:, :4]
+                else:
+                    alpha = np.ones((len(source_colors), 1), dtype=np.float32)
+                    entry_colors = np.concatenate((source_colors[:, :3], alpha), axis=1)
+                entry_colors = np.clip(entry_colors, 0.0, 1.0)
+            else:
+                entry_colors = np.tile(
+                    np.concatenate(
+                        [
+                            np.clip(source_color, 0.0, 1.0),
+                            np.array([1.0], dtype=np.float32),
+                        ]
+                    ),
+                    (len(world_vertices), 1),
+                )
             combined_colors.append(entry_colors.astype(np.float32, copy=False))
 
         if not combined_vertices or not combined_faces:
@@ -249,6 +282,7 @@ class RobotMeshBaker:
 
         payload_seed = {
             "description_id_seed": description_id_seed,
+            "mesh_baker_version": "visual_materials_v2",
             "mesh_mode": normalized_mode,
             "target_triangles": int(target_triangles) if target_triangles is not None else 0,
             "mesh_entries": [
@@ -261,6 +295,8 @@ class RobotMeshBaker:
                     "link_xyz": list(entry.get("link_xyz") or [0.0, 0.0, 0.0]),
                     "link_rpy": list(entry.get("link_rpy") or [0.0, 0.0, 0.0]),
                     "mesh_scale_xyz": list(entry.get("mesh_scale_xyz") or [1.0, 1.0, 1.0]),
+                    "color_rgb": list(entry.get("color_rgb") or []),
+                    "fallback_color_rgb": list(entry.get("fallback_color_rgb") or []),
                 }
                 for entry in mesh_entries
             ],
@@ -645,7 +681,186 @@ class RobotMeshBaker:
                             matrix = matrix @ rotation
             return matrix
 
-        geometry_meshes: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        def parse_color(color_text: Optional[str]) -> Optional[np.ndarray]:
+            values = np.fromstring(color_text or "", sep=" ", dtype=np.float32)
+            if values.size < 3:
+                return None
+            return np.clip(values[:3], 0.0, 1.0).astype(np.float32, copy=False)
+
+        def srgb_to_linear(values: np.ndarray) -> np.ndarray:
+            clipped = np.clip(values, 0.0, 1.0)
+            return np.where(
+                clipped <= 0.04045,
+                clipped / 12.92,
+                np.power((clipped + 0.055) / 1.055, 2.4),
+            ).astype(np.float32, copy=False)
+
+        def resolve_image_path(raw_path: Optional[str]) -> Optional[Path]:
+            path_text = str(raw_path or "").strip()
+            if not path_text:
+                return None
+            if path_text.startswith("file://"):
+                path_text = path_text[7:]
+            candidate = Path(path_text)
+            if not candidate.is_absolute():
+                candidate = source_path.parent / candidate
+            return candidate
+
+        def texture_mean_color(texture_path: Optional[Path]) -> Optional[np.ndarray]:
+            if texture_path is None or Image is None:
+                return None
+            cache_key = str(texture_path)
+            if cache_key in self._texture_color_cache:
+                return self._texture_color_cache[cache_key]
+            color = None
+            if texture_path.is_file():
+                try:
+                    with Image.open(texture_path) as image:
+                        rgba = image.convert("RGBA")
+                        rgba.thumbnail((128, 128))
+                        pixels = np.asarray(rgba, dtype=np.float32) / 255.0
+                        if pixels.size > 0:
+                            rgb = pixels[..., :3].reshape((-1, 3))
+                            rgb_linear = srgb_to_linear(rgb)
+                            alpha = pixels[..., 3].reshape((-1, 1))
+                            total_alpha = float(alpha.sum())
+                            if total_alpha > 1e-6:
+                                color = np.clip((rgb_linear * alpha).sum(axis=0) / total_alpha, 0.0, 1.0).astype(np.float32)
+                            else:
+                                color = np.clip(rgb_linear.mean(axis=0), 0.0, 1.0).astype(np.float32)
+                except Exception:
+                    logger.debug("Failed to sample DAE texture color %s", texture_path, exc_info=True)
+            self._texture_color_cache[cache_key] = color
+            return color
+
+        image_paths: Dict[str, Path] = {}
+        for image_el in root.findall(f".//{tag('image')}"):
+            image_ref = str(image_el.attrib.get("id", "")).strip()
+            image_name = str(image_el.attrib.get("name", "")).strip()
+            init_from_el = image_el.find(tag("init_from"))
+            image_path = resolve_image_path(init_from_el.text if init_from_el is not None else "")
+            if image_path is None:
+                continue
+            if image_ref:
+                image_paths[image_ref] = image_path
+            if image_name:
+                image_paths[image_name] = image_path
+
+        effect_colors: Dict[str, np.ndarray] = {}
+        effect_texture_colors: Dict[str, np.ndarray] = {}
+        for effect_el in root.findall(f".//{tag('effect')}"):
+            effect_id = str(effect_el.attrib.get("id", "")).strip()
+            if not effect_id:
+                continue
+
+            surface_images: Dict[str, str] = {}
+            sampler_surfaces: Dict[str, str] = {}
+            for newparam_el in effect_el.findall(f".//{tag('newparam')}"):
+                sid = str(newparam_el.attrib.get("sid", "")).strip()
+                if not sid:
+                    continue
+                surface_el = newparam_el.find(tag("surface"))
+                if surface_el is not None:
+                    init_from_el = surface_el.find(tag("init_from"))
+                    image_ref = str(init_from_el.text or "").strip() if init_from_el is not None else ""
+                    if image_ref:
+                        surface_images[sid] = image_ref
+                sampler_el = newparam_el.find(tag("sampler2D"))
+                if sampler_el is not None:
+                    source_el = sampler_el.find(tag("source"))
+                    surface_ref = str(source_el.text or "").strip() if source_el is not None else ""
+                    if surface_ref:
+                        sampler_surfaces[sid] = surface_ref
+
+            color = None
+            diffuse_el = effect_el.find(f".//{tag('diffuse')}")
+            if diffuse_el is not None:
+                color_el = diffuse_el.find(tag("color"))
+                color = parse_color(color_el.text if color_el is not None else None)
+                if color is None:
+                    texture_el = diffuse_el.find(tag("texture"))
+                    texture_ref = str(texture_el.attrib.get("texture", "")).strip() if texture_el is not None else ""
+                    surface_ref = sampler_surfaces.get(texture_ref, texture_ref)
+                    image_ref = surface_images.get(surface_ref, surface_ref)
+                    texture_path = image_paths.get(image_ref)
+                    texture_color = texture_mean_color(texture_path)
+                    if texture_color is not None:
+                        effect_texture_colors[effect_id] = texture_color
+            if color is None:
+                emission_el = effect_el.find(f".//{tag('emission')}/{tag('color')}")
+                emission_color = parse_color(emission_el.text if emission_el is not None else None)
+                if emission_color is not None and float(np.max(emission_color)) > 1e-4:
+                    color = emission_color
+            if color is not None:
+                effect_colors[effect_id] = color
+
+        material_colors: Dict[str, np.ndarray] = {}
+        for material_el in root.findall(f".//{tag('material')}"):
+            material_id = str(material_el.attrib.get("id", "")).strip()
+            if not material_id:
+                continue
+            instance_effect_el = material_el.find(f".//{tag('instance_effect')}")
+            effect_ref = ""
+            if instance_effect_el is not None:
+                effect_ref = str(instance_effect_el.attrib.get("url", "")).strip().lstrip("#")
+            if effect_ref and effect_ref in effect_colors:
+                material_colors[material_id] = effect_colors[effect_ref]
+            elif effect_ref and effect_ref in effect_texture_colors:
+                material_colors[material_id] = effect_texture_colors[effect_ref]
+
+        def instance_material_colors(
+            instance_el: ET.Element,
+        ) -> Tuple[Dict[str, np.ndarray], Optional[np.ndarray]]:
+            symbol_colors: Dict[str, np.ndarray] = {}
+            fallback_color = None
+            for material_el in instance_el.findall(f".//{tag('instance_material')}"):
+                symbol = str(material_el.attrib.get("symbol", "")).strip()
+                target = str(material_el.attrib.get("target", "")).strip().lstrip("#")
+                if target and target in material_colors:
+                    color = material_colors[target]
+                    if symbol:
+                        symbol_colors[symbol] = color
+                    symbol_colors[target] = color
+                    if fallback_color is None:
+                        fallback_color = color
+            return symbol_colors, fallback_color
+
+        def vertex_colors_from_face_materials(
+            vertex_count: int,
+            faces: np.ndarray,
+            face_materials: List[str],
+            symbol_colors: Dict[str, np.ndarray],
+            fallback_color: Optional[np.ndarray],
+        ) -> Optional[np.ndarray]:
+            if vertex_count <= 0 or len(faces) == 0:
+                return None
+            if not face_materials and fallback_color is None:
+                return None
+            color_sums = np.zeros((vertex_count, 3), dtype=np.float64)
+            color_counts = np.zeros(vertex_count, dtype=np.float64)
+            for face_index, face in enumerate(faces):
+                material_symbol = face_materials[face_index] if face_index < len(face_materials) else ""
+                color = symbol_colors.get(material_symbol)
+                if color is None:
+                    color = fallback_color
+                if color is None:
+                    continue
+                for vertex_index in face:
+                    if 0 <= int(vertex_index) < vertex_count:
+                        color_sums[int(vertex_index)] += color.astype(np.float64)
+                        color_counts[int(vertex_index)] += 1.0
+            if not np.any(color_counts > 0.0):
+                return None
+            safe_counts = np.where(color_counts > 0.0, color_counts, 1.0)
+            colors = color_sums / safe_counts[:, None]
+            if fallback_color is not None:
+                missing = color_counts <= 0.0
+                if np.any(missing):
+                    colors[missing] = fallback_color.astype(np.float64)
+            alpha = np.ones((vertex_count, 1), dtype=np.float32)
+            return np.concatenate((np.clip(colors, 0.0, 1.0).astype(np.float32), alpha), axis=1)
+
+        geometry_meshes: Dict[str, Tuple[np.ndarray, np.ndarray, List[str]]] = {}
 
         for geometry_el in root.findall(f".//{tag('geometry')}"):
             geometry_id = str(geometry_el.attrib.get("id", "")).strip()
@@ -689,12 +904,14 @@ class RobotMeshBaker:
 
             geometry_vertices: Optional[np.ndarray] = None
             geometry_faces: List[Tuple[int, int, int]] = []
+            geometry_face_materials: List[str] = []
 
             for primitive_name in ("triangles", "polylist"):
                 for primitive_el in mesh_el.findall(tag(primitive_name)):
                     inputs = primitive_el.findall(tag("input"))
                     if not inputs:
                         continue
+                    primitive_material = str(primitive_el.attrib.get("material", "")).strip()
 
                     stride = 1
                     vertex_offset_in_primitive = 0
@@ -740,6 +957,7 @@ class RobotMeshBaker:
                         usable = (vertex_indices.size // 3) * 3
                         for tri in vertex_indices[:usable].reshape((-1, 3)):
                             geometry_faces.append((int(tri[0]), int(tri[1]), int(tri[2])))
+                            geometry_face_materials.append(primitive_material)
                     else:
                         vcount_el = primitive_el.find(tag("vcount"))
                         if vcount_el is None or not (vcount_el.text or "").strip():
@@ -752,7 +970,9 @@ class RobotMeshBaker:
                                 cursor += max(0, count_value)
                                 continue
                             polygon = [int(value) for value in vertex_indices[cursor: cursor + count_value]]
-                            geometry_faces.extend(_triangulate_face(polygon))
+                            triangles = _triangulate_face(polygon)
+                            geometry_faces.extend(triangles)
+                            geometry_face_materials.extend([primitive_material] * len(triangles))
                             cursor += count_value
 
             if geometry_vertices is None or not geometry_faces:
@@ -761,19 +981,21 @@ class RobotMeshBaker:
             geometry_meshes[geometry_id] = (
                 geometry_vertices.astype(np.float32, copy=False),
                 np.asarray(geometry_faces, dtype=np.int32),
+                geometry_face_materials,
             )
 
         if not geometry_meshes:
             return None
 
-        instances: List[Tuple[str, np.ndarray]] = []
+        instances: List[Tuple[str, np.ndarray, Dict[str, np.ndarray], Optional[np.ndarray]]] = []
 
         def visit_node(node_el: ET.Element, parent_matrix: np.ndarray) -> None:
             node_matrix = parent_matrix @ local_node_matrix(node_el)
             for instance_el in node_el.findall(tag("instance_geometry")):
                 geometry_ref = str(instance_el.attrib.get("url", "")).strip().lstrip("#")
                 if geometry_ref:
-                    instances.append((geometry_ref, node_matrix.copy()))
+                    symbol_colors, fallback_color = instance_material_colors(instance_el)
+                    instances.append((geometry_ref, node_matrix.copy(), symbol_colors, fallback_color))
             for child_node_el in node_el.findall(tag("node")):
                 visit_node(child_node_el, node_matrix)
 
@@ -783,16 +1005,22 @@ class RobotMeshBaker:
                 visit_node(node_el, np.eye(4, dtype=np.float32))
 
         if not instances:
-            instances = [(geometry_id, np.eye(4, dtype=np.float32)) for geometry_id in geometry_meshes.keys()]
+            instances = [
+                (geometry_id, np.eye(4, dtype=np.float32), {}, None)
+                for geometry_id in geometry_meshes.keys()
+            ]
 
         all_vertices: List[np.ndarray] = []
         all_faces: List[np.ndarray] = []
+        all_colors: List[np.ndarray] = []
+        color_accumulator = np.zeros(3, dtype=np.float64)
+        color_samples = 0
         vertex_offset = 0
-        for geometry_id, transform in instances:
+        for geometry_id, transform, symbol_colors, fallback_color in instances:
             source_mesh = geometry_meshes.get(geometry_id)
             if source_mesh is None:
                 continue
-            source_vertices, source_faces = source_mesh
+            source_vertices, source_faces, source_face_materials = source_mesh
             homogeneous = np.concatenate(
                 (
                     source_vertices.astype(np.float32, copy=False),
@@ -804,13 +1032,30 @@ class RobotMeshBaker:
             all_vertices.append(transformed)
             all_faces.append(source_faces.astype(np.int32, copy=False) + vertex_offset)
             vertex_offset += int(len(transformed))
+            source_colors = vertex_colors_from_face_materials(
+                len(source_vertices),
+                source_faces,
+                source_face_materials,
+                symbol_colors,
+                fallback_color,
+            )
+            if source_colors is not None and len(source_colors) == len(source_vertices):
+                color_accumulator += source_colors[:, :3].mean(axis=0).astype(np.float64)
+                color_samples += 1
+                all_colors.append(source_colors.astype(np.float32, copy=False))
 
         if not all_vertices or not all_faces:
             return None
 
         vertices = np.vstack(all_vertices).astype(np.float32, copy=False)
         faces = np.vstack(all_faces).astype(np.int32, copy=False)
-        return SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=None)
+        colors = None
+        if all_colors and sum(len(color_rows) for color_rows in all_colors) == len(vertices):
+            colors = np.vstack(all_colors).astype(np.float32, copy=False)
+        mean_color = None
+        if color_samples > 0:
+            mean_color = np.clip(color_accumulator / float(color_samples), 0.0, 1.0).astype(np.float32)
+        return SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=mean_color, colors=colors)
 
     def _decimate_source_mesh(self, source_mesh: SourceMeshData, target_faces: int) -> SourceMeshData:
         face_count = int(len(source_mesh.faces))
@@ -843,6 +1088,14 @@ class RobotMeshBaker:
         counts = np.bincount(inverse, minlength=len(unique_keys)).astype(np.float64)
         counts[counts <= 0.0] = 1.0
         clustered_vertices = (clustered_vertices / counts[:, None]).astype(np.float32, copy=False)
+        clustered_colors = None
+        if source_mesh.colors is not None and len(source_mesh.colors) == len(vertices):
+            raw_colors = np.asarray(source_mesh.colors, dtype=np.float32)
+            if raw_colors.ndim == 2 and raw_colors.shape[1] >= 3:
+                color_width = 4 if raw_colors.shape[1] >= 4 else 3
+                clustered_colors = np.zeros((len(unique_keys), color_width), dtype=np.float64)
+                np.add.at(clustered_colors, inverse, raw_colors[:, :color_width].astype(np.float64, copy=False))
+                clustered_colors = (clustered_colors / counts[:, None]).astype(np.float32, copy=False)
 
         remapped_faces = inverse[faces].astype(np.int32, copy=False)
         non_degenerate = (
@@ -863,11 +1116,15 @@ class RobotMeshBaker:
         vertices = clustered_vertices[unique_vertices].astype(np.float32, copy=False)
         faces = compact_inverse.reshape((-1, 3)).astype(np.int32, copy=False)
         normals = self._compute_vertex_normals(vertices, faces)
+        colors = None
+        if clustered_colors is not None:
+            colors = np.clip(clustered_colors[unique_vertices], 0.0, 1.0).astype(np.float32, copy=False)
         return SourceMeshData(
             vertices=vertices,
             faces=faces,
             normals=normals,
             color_rgb=source_mesh.color_rgb,
+            colors=colors,
         )
 
     def _parse_obj_mesh(

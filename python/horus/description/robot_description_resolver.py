@@ -47,6 +47,50 @@ def _parse_vec3(raw_value: Optional[str], default_xyz: Tuple[float, float, float
     return parsed
 
 
+def _parse_rgba_color(raw_value: Optional[str]) -> List[float]:
+    if not raw_value:
+        return []
+    tokens = str(raw_value).replace(",", " ").split()
+    if len(tokens) < 3:
+        return []
+    try:
+        return [
+            max(0.0, min(1.0, float(tokens[0]))),
+            max(0.0, min(1.0, float(tokens[1]))),
+            max(0.0, min(1.0, float(tokens[2]))),
+        ]
+    except (TypeError, ValueError):
+        return []
+
+
+_NAMED_MATERIAL_COLORS: Dict[str, List[float]] = {
+    "black": [0.0, 0.0, 0.0],
+    "dark_grey": [0.15, 0.15, 0.15],
+    "darkgrey": [0.15, 0.15, 0.15],
+    "dark_gray": [0.15, 0.15, 0.15],
+    "darkgray": [0.15, 0.15, 0.15],
+    "grey": [0.4, 0.4, 0.4],
+    "gray": [0.4, 0.4, 0.4],
+    "light_grey": [0.65, 0.65, 0.65],
+    "lightgrey": [0.65, 0.65, 0.65],
+    "light_gray": [0.65, 0.65, 0.65],
+    "lightgray": [0.65, 0.65, 0.65],
+    "silver": [0.91, 0.91, 0.85],
+    "white": [1.0, 1.0, 1.0],
+    "red": [0.8, 0.0, 0.0],
+    "green": [0.0, 0.8, 0.0],
+    "blue": [0.0, 0.0, 0.8],
+    "yellow": [0.8, 0.8, 0.0],
+    "orange": [1.0, 0.42, 0.04],
+    "brown": [0.87, 0.81, 0.76],
+}
+
+
+def _fallback_named_material_color(name: str) -> List[float]:
+    normalized = str(name or "").strip().lower().replace("gazebo/", "").replace(" ", "_")
+    return list(_NAMED_MATERIAL_COLORS.get(normalized, []))
+
+
 def _normalize_joint_axis(axis_xyz: List[float]) -> List[float]:
     x, y, z = axis_xyz
     magnitude = math.sqrt((x * x) + (y * y) + (z * z))
@@ -193,6 +237,7 @@ class _VisualSourceData:
     origin_rpy: List[float]
     mesh_scale_xyz: List[float]
     color_rgb: List[float]
+    fallback_color_rgb: List[float]
 
 
 @dataclass
@@ -385,7 +430,7 @@ class RobotDescriptionResolver:
         is_transparent = _coerce_bool(config.get("is_transparent", False), False)
         include_visual_meshes = _coerce_bool(config.get("include_visual_meshes", True), True)
         source = str(config.get("source", "ros") or "ros").strip().lower()
-        if source not in {"ros", "topic"}:
+        if source not in {"local", "ros", "topic"}:
             source = "ros"
 
         chunk_size = config.get("chunk_size_bytes", 12000)
@@ -445,6 +490,9 @@ class RobotDescriptionResolver:
 
         if config.source == "topic":
             return self._resolve_urdf_xml_from_topic(config)
+
+        if config.source == "local":
+            return "", "No URDF path configured for source='local'."
 
         if not config.ros_param_node:
             return "", "No URDF path and no ros_param_node configured for source='ros'."
@@ -603,6 +651,8 @@ class RobotDescriptionResolver:
         if package_root is None and config.urdf_package:
             package_root = self._resolve_package_share(config.urdf_package)
         mesh_root = Path(config.mesh_root).expanduser() if config.mesh_root else None
+        material_colors = self._parse_material_colors(root)
+        link_material_colors = self._parse_link_material_colors(root, material_colors)
 
         links_local: Dict[str, List[CompiledCollision]] = {}
         visuals_local: Dict[str, List[_VisualSourceData]] = {}
@@ -620,7 +670,12 @@ class RobotDescriptionResolver:
 
             compiled_visuals: List[_VisualSourceData] = []
             for visual_el in link_el.findall("visual"):
-                compiled_visual = self._parse_visual(visual_el, link_name)
+                compiled_visual = self._parse_visual(
+                    visual_el,
+                    link_name,
+                    material_colors,
+                    link_material_colors,
+                )
                 if compiled_visual is not None:
                     compiled_visuals.append(compiled_visual)
 
@@ -743,6 +798,7 @@ class RobotDescriptionResolver:
                             "link_rpy": _matrix_to_rpy(relative_link_rotation),
                             "mesh_scale_xyz": visual.mesh_scale_xyz,
                             "color_rgb": visual.color_rgb,
+                            "fallback_color_rgb": visual.fallback_color_rgb,
                         }
                     )
 
@@ -804,7 +860,7 @@ class RobotDescriptionResolver:
                         proportional = int(
                             math.ceil(total_budget * (float(source_triangles) / float(max(1, total_source_triangles))))
                         )
-                        target_triangles = max(2000, min(60000, proportional))
+                        target_triangles = max(500, min(60000, proportional))
                     elif total_budget is not None and config.body_mesh_mode == "runtime_high_mesh":
                         source_triangles = max(0, group_source_triangles.get(visual_group_root, 0))
                         proportional = int(
@@ -829,11 +885,15 @@ class RobotDescriptionResolver:
                         if config.body_mesh_mode == "runtime_high_mesh":
                             attempt_target = max(5000, int(math.floor(attempt_target * 0.85)))
                         else:
-                            attempt_target = max(2000, int(math.floor(attempt_target * 0.85)))
+                            attempt_target = max(500, int(math.floor(attempt_target * 0.85)))
                     if combined_asset is None:
                         continue
 
                     asset, _, _ = combined_asset
+                    group_rotation, group_translation = link_transforms.get(
+                        visual_group_root,
+                        (_identity_rotation(), [0.0, 0.0, 0.0]),
+                    )
                     actual_total_triangles += int(asset.triangle_count)
                     attempt_mesh_assets.append(asset)
                     attempt_visual_links.append(
@@ -841,8 +901,8 @@ class RobotDescriptionResolver:
                             name=visual_group_root,
                             frame_id=visual_group_root,
                             mesh_id=asset.mesh_id,
-                            origin_xyz=[0.0, 0.0, 0.0],
-                            origin_rpy=[0.0, 0.0, 0.0],
+                            origin_xyz=list(group_translation),
+                            origin_rpy=_matrix_to_rpy(group_rotation),
                             color_rgb=list(asset.color_rgb),
                         )
                     )
@@ -853,7 +913,7 @@ class RobotDescriptionResolver:
                 if total_budget is None or actual_total_triangles <= int(math.ceil(max(1, total_budget) * 1.05)):
                     break
 
-                per_group_floor = 5000 if config.body_mesh_mode == "runtime_high_mesh" else 2000
+                per_group_floor = 5000 if config.body_mesh_mode == "runtime_high_mesh" else 500
                 next_budget = int(
                     math.floor(float(total_budget) * (float(total_budget) / float(max(1, actual_total_triangles))) * 0.98)
                 )
@@ -1020,6 +1080,8 @@ class RobotDescriptionResolver:
         self,
         visual_el: ET.Element,
         link_name: str,
+        material_colors: Dict[str, List[float]],
+        link_material_colors: Dict[str, List[float]],
     ) -> Optional[_VisualSourceData]:
         geometry_el = visual_el.find("geometry")
         if geometry_el is None:
@@ -1043,16 +1105,14 @@ class RobotDescriptionResolver:
         if material_el is not None:
             color_el = material_el.find("color")
             if color_el is not None:
-                rgba_tokens = str(color_el.attrib.get("rgba", "")).replace(",", " ").split()
-                if len(rgba_tokens) >= 3:
-                    try:
-                        color_rgb = [
-                            max(0.0, min(1.0, float(rgba_tokens[0]))),
-                            max(0.0, min(1.0, float(rgba_tokens[1]))),
-                            max(0.0, min(1.0, float(rgba_tokens[2]))),
-                        ]
-                    except (TypeError, ValueError):
-                        color_rgb = []
+                color_rgb = _parse_rgba_color(color_el.attrib.get("rgba", ""))
+            if not color_rgb:
+                material_name = str(material_el.attrib.get("name", "") or "").strip()
+                if material_name and material_name in material_colors:
+                    color_rgb = list(material_colors[material_name])
+                elif material_name:
+                    color_rgb = _fallback_named_material_color(material_name)
+        fallback_color_rgb = list(link_material_colors.get(link_name, []))
 
         return _VisualSourceData(
             link_name=link_name,
@@ -1061,7 +1121,45 @@ class RobotDescriptionResolver:
             origin_rpy=origin_rpy,
             mesh_scale_xyz=mesh_scale,
             color_rgb=color_rgb,
+            fallback_color_rgb=fallback_color_rgb,
         )
+
+    def _parse_material_colors(self, root: ET.Element) -> Dict[str, List[float]]:
+        material_colors: Dict[str, List[float]] = {}
+        for material_el in root.findall("material"):
+            material_name = str(material_el.attrib.get("name", "") or "").strip()
+            if not material_name:
+                continue
+            color_el = material_el.find("color")
+            color_rgb = _parse_rgba_color(color_el.attrib.get("rgba", "") if color_el is not None else "")
+            if color_rgb:
+                material_colors[material_name] = color_rgb
+                continue
+            fallback_color = _fallback_named_material_color(material_name)
+            if fallback_color:
+                material_colors[material_name] = fallback_color
+        return material_colors
+
+    def _parse_link_material_colors(
+        self,
+        root: ET.Element,
+        material_colors: Dict[str, List[float]],
+    ) -> Dict[str, List[float]]:
+        link_material_colors: Dict[str, List[float]] = {}
+        for gazebo_el in root.findall("gazebo"):
+            link_name = str(gazebo_el.attrib.get("reference", "") or "").strip()
+            if not link_name:
+                continue
+            material_el = gazebo_el.find("material")
+            material_name = str(material_el.text or "").strip() if material_el is not None else ""
+            if not material_name:
+                continue
+            color_rgb = list(material_colors.get(material_name, []))
+            if not color_rgb:
+                color_rgb = _fallback_named_material_color(material_name)
+            if color_rgb:
+                link_material_colors[link_name] = color_rgb
+        return link_material_colors
 
     def _resolve_package_root(self, urdf_path: str) -> Optional[Path]:
         candidate = Path(str(urdf_path or "")).expanduser()

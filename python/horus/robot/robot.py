@@ -642,6 +642,7 @@ class Robot:
         """Configure robot description resolution for MR collision/joint visualization.
 
         Sources:
+            ``source="local"``  -- read the URDF/xacro from ``urdf_path``.
             ``source="ros"``    -- read the URDF from a node parameter
                                    (``ros2 param get <ros_param_node> <ros_param_name>``).
             ``source="topic"``  -- read the URDF from a latched ``std_msgs/String``

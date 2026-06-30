@@ -523,7 +523,7 @@ class RobotDescriptionConfig:
             resolved_include_visual_meshes = False
 
         normalized_source = str(source or "ros").strip().lower()
-        if normalized_source not in {"ros", "topic"}:
+        if normalized_source not in {"local", "ros", "topic"}:
             normalized_source = "ros"
 
         return cls(
