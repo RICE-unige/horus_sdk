@@ -48,6 +48,7 @@ add_library(${PROJECT_NAME} SHARED
   src/utils/logging.cpp
   src/experiments/metrics.cpp
   src/experiments/field_teammate_study.cpp
+  src/color/color_manager.cpp
 )
 
 target_include_directories(${PROJECT_NAME}

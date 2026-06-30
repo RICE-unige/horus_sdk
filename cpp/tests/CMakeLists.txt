@@ -6,3 +6,7 @@ add_executable(cpp_experiments_tests experiments_tests.cpp)
 target_link_libraries(cpp_experiments_tests PRIVATE horus_cpp_sdk)
 add_test(NAME cpp_experiments_tests COMMAND cpp_experiments_tests)
 
+add_executable(cpp_color_tests color_tests.cpp)
+target_link_libraries(cpp_color_tests PRIVATE horus_cpp_sdk)
+add_test(NAME cpp_color_tests COMMAND cpp_color_tests)
+
