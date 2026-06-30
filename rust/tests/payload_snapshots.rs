@@ -160,5 +160,33 @@ fn robot_description_manifest_uses_stable_payload_hash() {
         .expect("description id")
         .starts_with("sha256:"));
     assert_eq!(manifest["supports_visual_meshes"], false);
+    assert_eq!(manifest["collision_count"].as_i64(), Some(0));
+    assert_eq!(manifest["supports_collision"], false);
+    assert_eq!(manifest["body_mesh_mode"], "preview_mesh");
     assert!(payload.robot_description_payload_json.is_some());
+}
+
+#[test]
+fn robot_description_manifest_counts_collisions() {
+    let urdf_path = std::env::temp_dir().join("horus_rust_parity_collisions.urdf");
+    fs::write(
+        &urdf_path,
+        r#"<robot name="c"><link name="base_link"><collision><geometry><box size="1 1 1"/></geometry></collision></link><link name="arm"><collision><geometry><cylinder radius="0.1" length="0.5"/></geometry></collision></link><joint name="j" type="revolute"><parent link="base_link"/><child link="arm"/></joint></robot>"#,
+    )
+    .expect("write urdf fixture");
+
+    let mut robot = Robot::new("collision_bot", RobotType::Wheeled);
+    robot.configure_robot_description(RobotDescriptionConfig::new(
+        urdf_path.display().to_string(),
+        "base_link",
+    ));
+    let dataviz = robot.create_dataviz(None);
+    let client = RobotRegistryClient::new();
+    let payload = client.build_robot_config_dict(&robot, &dataviz, None, None);
+    let manifest = payload.robot_description_manifest.expect("manifest");
+
+    assert_eq!(manifest["collision_count"].as_i64(), Some(2));
+    assert_eq!(manifest["supports_collision"], true);
+    assert_eq!(manifest["link_count"].as_i64(), Some(2));
+    assert_eq!(manifest["joint_count"].as_i64(), Some(1));
 }

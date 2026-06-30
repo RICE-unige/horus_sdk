@@ -1294,6 +1294,15 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
     }
     let links = extract_urdf_link_names(&urdf);
     let joints = extract_urdf_joints(&urdf);
+    let collision_count = Regex::new(r#"<collision\b"#)
+        .map(|re| re.find_iter(&urdf).count())
+        .unwrap_or(0);
+    let mut body_mesh_mode = coerce_text(config.get("body_mesh_mode"), "preview_mesh")
+        .trim()
+        .to_ascii_lowercase();
+    if !["collision_only", "preview_mesh", "runtime_high_mesh"].contains(&body_mesh_mode.as_str()) {
+        body_mesh_mode = "preview_mesh".to_string();
+    }
     let base_frame = coerce_text(config.get("base_frame"), "base_link");
     let source = coerce_text(config.get("source"), "ros");
     let chunk_size = clamp_i32(
@@ -1329,8 +1338,8 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         "base_frame": base_frame,
         "link_count": links.len() as i64,
         "joint_count": joints.len() as i64,
-        "collision_count": 0,
-        "supports_collision": false,
+        "collision_count": collision_count as i64,
+        "supports_collision": collision_count > 0,
         "supports_joints": !joints.is_empty(),
         "supports_visual_meshes": false,
         "mesh_asset_count": 0,
@@ -1338,6 +1347,7 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         "is_transparent": coerce_bool(config.get("is_transparent"), false),
         "encoding": "json+gzip+base64",
         "chunk_size_bytes": chunk_size,
+        "body_mesh_mode": body_mesh_mode,
     });
     Some((manifest, payload_json))
 }

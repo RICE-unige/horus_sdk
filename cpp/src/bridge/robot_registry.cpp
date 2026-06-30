@@ -430,6 +430,17 @@ std::vector<NativeJoint> extract_urdf_joints(const std::string& urdf) {
     return joints;
 }
 
+int count_urdf_collisions(const std::string& urdf) {
+    int count = 0;
+    const std::regex pattern("<collision\\b");
+    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), pattern);
+         it != std::sregex_iterator();
+         ++it) {
+        ++count;
+    }
+    return count;
+}
+
 std::string build_native_robot_description_payload_json(
     const robot::Robot& robot,
     const std::string& urdf,
@@ -638,6 +649,12 @@ std::map<std::string, std::any> build_robot_description_manifest(
     const auto description_payload = build_native_robot_description_payload_json(robot, urdf, base_frame);
     const auto links = extract_urdf_link_names(urdf);
     const auto joints = extract_urdf_joints(urdf);
+    const auto collision_count = count_urdf_collisions(urdf);
+    auto body_mesh_mode = to_lower(coerce_text(map_get(config, "body_mesh_mode"), "preview_mesh"));
+    if (body_mesh_mode != "collision_only" && body_mesh_mode != "preview_mesh" &&
+        body_mesh_mode != "runtime_high_mesh") {
+        body_mesh_mode = "preview_mesh";
+    }
 
     if (payload_json != nullptr && description_payload.size() <= 250000U) {
         *payload_json = description_payload;
@@ -650,8 +667,8 @@ std::map<std::string, std::any> build_robot_description_manifest(
         {"base_frame", base_frame},
         {"link_count", static_cast<int>(links.size())},
         {"joint_count", static_cast<int>(joints.size())},
-        {"collision_count", 0},
-        {"supports_collision", false},
+        {"collision_count", collision_count},
+        {"supports_collision", collision_count > 0},
         {"supports_joints", !joints.empty()},
         {"supports_visual_meshes", false},
         {"mesh_asset_count", 0},
@@ -659,6 +676,7 @@ std::map<std::string, std::any> build_robot_description_manifest(
         {"is_transparent", coerce_bool(map_get(config, "is_transparent"), false)},
         {"encoding", std::string("json+gzip+base64")},
         {"chunk_size_bytes", chunk_size},
+        {"body_mesh_mode", body_mesh_mode},
     };
 }
 

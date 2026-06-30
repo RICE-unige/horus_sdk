@@ -275,7 +275,31 @@ static void test_robot_description_manifest_uses_stable_payload_hash() {
     const auto description_id = any_value<std::string>(payload.robot_description_manifest, "description_id");
     assert(description_id.rfind("sha256:", 0) == 0);
     assert(any_value<bool>(payload.robot_description_manifest, "supports_visual_meshes") == false);
+    assert(any_value<int>(payload.robot_description_manifest, "collision_count") == 0);
+    assert(any_value<bool>(payload.robot_description_manifest, "supports_collision") == false);
+    assert(any_value<std::string>(payload.robot_description_manifest, "body_mesh_mode") == "preview_mesh");
     assert(payload.robot_description_payload_json.has_value());
+}
+
+static void test_robot_description_manifest_counts_collisions() {
+    const std::string urdf_path = "/tmp/horus_cpp_parity_collisions.urdf";
+    std::ofstream urdf(urdf_path);
+    urdf << R"(<robot name="c"><link name="base_link"><collision><geometry><box size="1 1 1"/></geometry></collision></link><link name="arm"><collision><geometry><cylinder radius="0.1" length="0.5"/></geometry></collision></link><joint name="j" type="revolute"><parent link="base_link"/><child link="arm"/></joint></robot>)";
+    urdf.close();
+
+    horus::robot::Robot robot("collision_bot", horus::core::RobotType::WHEELED);
+    robot.configure_robot_description({
+        .urdf_path = urdf_path,
+        .base_frame = "base_link",
+    });
+    auto dataviz = robot.create_dataviz();
+    horus::bridge::RobotRegistryClient client;
+    auto payload = client.build_robot_config_dict(robot, *dataviz);
+
+    assert(any_value<int>(payload.robot_description_manifest, "collision_count") == 2);
+    assert(any_value<bool>(payload.robot_description_manifest, "supports_collision") == true);
+    assert(any_value<int>(payload.robot_description_manifest, "link_count") == 2);
+    assert(any_value<int>(payload.robot_description_manifest, "joint_count") == 1);
 }
 
 static void test_visualization_payloads() {
@@ -395,6 +419,7 @@ int main() {
     test_workspace_scale();
     test_registration_transport_is_explicitly_unsupported();
     test_robot_description_manifest_uses_stable_payload_hash();
+    test_robot_description_manifest_counts_collisions();
     test_visualization_payloads();
     std::cout << "cpp_parity_tests passed" << std::endl;
     return 0;
