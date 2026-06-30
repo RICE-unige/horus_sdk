@@ -1,5 +1,6 @@
 #include "horus/bridge/robot_registry.hpp"
 
+#include "horus/description/mesh_baker.hpp"
 #include "horus/topics.hpp"
 #include <algorithm>
 #include <array>
@@ -444,7 +445,8 @@ int count_urdf_collisions(const std::string& urdf) {
 std::string build_native_robot_description_payload_json(
     const robot::Robot& robot,
     const std::string& urdf,
-    const std::string& base_frame) {
+    const std::string& base_frame,
+    const std::vector<description::MeshAsset>& mesh_assets) {
     const auto links = extract_urdf_link_names(urdf);
     const auto joints = extract_urdf_joints(urdf);
 
@@ -467,7 +469,25 @@ std::string build_native_robot_description_payload_json(
         }
         out << "{\"collisions\":[],\"name\":\"" << json_escape(links[i]) << "\"}";
     }
-    out << "],\"robot_name\":\"" << json_escape(robot.get_name()) << "\",\"version\":\"v2\"}";
+    out << "],\"robot_name\":\"" << json_escape(robot.get_name()) << "\",\"version\":\"v2\"";
+    if (!mesh_assets.empty()) {
+        out << ",\"mesh_assets\":[";
+        for (std::size_t i = 0; i < mesh_assets.size(); ++i) {
+            if (i > 0U) {
+                out << ",";
+            }
+            const auto& asset = mesh_assets[i];
+            out << "{\"bounds_max\":[" << asset.bounds_max[0] << "," << asset.bounds_max[1] << ","
+                << asset.bounds_max[2] << "],\"bounds_min\":[" << asset.bounds_min[0] << ","
+                << asset.bounds_min[1] << "," << asset.bounds_min[2] << "],\"indices_b64\":\""
+                << asset.indices_b64 << "\",\"mesh_id\":\"" << json_escape(asset.mesh_id)
+                << "\",\"normals_b64\":\"" << asset.normals_b64 << "\",\"positions_b64\":\""
+                << asset.positions_b64 << "\",\"triangle_count\":" << asset.triangle_count
+                << ",\"vertex_count\":" << asset.vertex_count << "}";
+        }
+        out << "]";
+    }
+    out << "}";
     return out.str();
 }
 
@@ -646,7 +666,6 @@ std::map<std::string, std::any> build_robot_description_manifest(
     const auto base_frame = coerce_text(map_get(config, "base_frame"), "base_link");
     const auto source = coerce_text(map_get(config, "source"), "ros");
     const auto chunk_size = clamp_int(coerce_int(map_get(config, "chunk_size_bytes"), 12000), 1024, 64000);
-    const auto description_payload = build_native_robot_description_payload_json(robot, urdf, base_frame);
     const auto links = extract_urdf_link_names(urdf);
     const auto joints = extract_urdf_joints(urdf);
     const auto collision_count = count_urdf_collisions(urdf);
@@ -655,6 +674,20 @@ std::map<std::string, std::any> build_robot_description_manifest(
         body_mesh_mode != "runtime_high_mesh") {
         body_mesh_mode = "preview_mesh";
     }
+
+    const bool include_visual_meshes =
+        coerce_bool(map_get(config, "include_visual_meshes"), true) && body_mesh_mode != "collision_only";
+    std::vector<description::MeshAsset> mesh_assets;
+    if (include_visual_meshes) {
+        mesh_assets = description::bake_visual_meshes(urdf, urdf_path);
+    }
+    std::size_t mesh_asset_encoded_bytes = 0;
+    for (const auto& asset : mesh_assets) {
+        mesh_asset_encoded_bytes += asset.encoded_bytes();
+    }
+
+    const auto description_payload =
+        build_native_robot_description_payload_json(robot, urdf, base_frame, mesh_assets);
 
     if (payload_json != nullptr && description_payload.size() <= 250000U) {
         *payload_json = description_payload;
@@ -670,9 +703,9 @@ std::map<std::string, std::any> build_robot_description_manifest(
         {"collision_count", collision_count},
         {"supports_collision", collision_count > 0},
         {"supports_joints", !joints.empty()},
-        {"supports_visual_meshes", false},
-        {"mesh_asset_count", 0},
-        {"mesh_asset_encoded_bytes", 0},
+        {"supports_visual_meshes", !mesh_assets.empty()},
+        {"mesh_asset_count", static_cast<int>(mesh_assets.size())},
+        {"mesh_asset_encoded_bytes", static_cast<int>(mesh_asset_encoded_bytes)},
         {"is_transparent", coerce_bool(map_get(config, "is_transparent"), false)},
         {"encoding", std::string("json+gzip+base64")},
         {"chunk_size_bytes", chunk_size},

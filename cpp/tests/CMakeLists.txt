@@ -10,3 +10,7 @@ add_executable(cpp_color_tests color_tests.cpp)
 target_link_libraries(cpp_color_tests PRIVATE horus_cpp_sdk)
 add_test(NAME cpp_color_tests COMMAND cpp_color_tests)
 
+add_executable(cpp_stl_mesh_tests stl_mesh_tests.cpp)
+target_link_libraries(cpp_stl_mesh_tests PRIVATE horus_cpp_sdk)
+add_test(NAME cpp_stl_mesh_tests COMMAND cpp_stl_mesh_tests)
+
