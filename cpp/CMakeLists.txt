@@ -46,6 +46,8 @@ add_library(${PROJECT_NAME} SHARED
   src/topics.cpp
   src/utils/branding.cpp
   src/utils/logging.cpp
+  src/experiments/metrics.cpp
+  src/experiments/field_teammate_study.cpp
 )
 
 target_include_directories(${PROJECT_NAME}
