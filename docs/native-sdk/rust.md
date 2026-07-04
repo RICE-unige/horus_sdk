@@ -22,6 +22,41 @@ Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitori
 | Cameras | minimap/teleop transport profiles, WebRTC settings, stereo fields, view/projection offsets |
 | DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, semantic boxes |
 | Workspace | position scale, compass metadata, tutorial preset, local body model id |
+| Field teammate | `entity_kind`, capability default-deny `capabilities`, versioned `field_teammate_config`, fail-closed `validate_field_teammate_safety` |
+
+## Field teammate
+
+A human field teammate is registered as a guidable, non-controllable entity, at parity with the Python SDK:
+
+```rust
+use horus::bridge::{build_robot_config_dict, validate_field_teammate_safety};
+use horus::robot::Robot;
+
+let teammate = Robot::field_teammate("field_teammate_1");
+let dataviz = teammate.create_dataviz(None);
+let payload = build_robot_config_dict(&teammate, &dataviz, None);
+
+assert_eq!(payload.entity_kind, "field_teammate");
+assert!(!payload.capabilities.controllable);
+// A tampered payload that re-enables teleop/tasks/control is rejected here:
+validate_field_teammate_safety(&payload).expect("default teammate is safe");
+```
+
+`Robot::field_teammate` (and `Robot::configure_field_teammate`) force the
+robot-control capabilities off and disable teleop and the navigation tasks. The
+payload carries the same `entity_kind` / `capabilities` / `field_teammate_config`
+contract as Python, verified against `contracts/fixtures/field_teammate_hololens.json`.
+
+## Other subsystems
+
+Beyond registration payloads, the Rust SDK provides the HORUS experiments tooling
+(`horus::experiments` — NDJSON/CSV metric writers, a monotonic-anchored clock, and
+the field-teammate study reducer with dyad-level confidence intervals) and the
+colour manager (`horus::color`). It also bakes STL visual meshes (binary and
+ASCII) referenced by a URDF's `<visual>` elements into the description manifest
+(`horus::description::bake_visual_meshes`, populating `mesh_assets` and
+`supports_visual_meshes`). See **Implementation Status** for the full native
+parity boundary.
 
 ## Build and test
 

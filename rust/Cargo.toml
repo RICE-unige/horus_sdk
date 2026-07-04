@@ -58,6 +58,10 @@ path = "examples/fake_tf_publisher.rs"
 name = "e2e_registration_check"
 path = "examples/e2e_registration_check.rs"
 
+[[example]]
+name = "throughput_benchmark"
+path = "examples/throughput_benchmark.rs"
+
 [[bench]]
 name = "payload_micro"
 harness = false

@@ -7,6 +7,73 @@ import time
 from typing import Any, Dict, Optional, Tuple
 
 
+_CAPABILITY_KEYS = (
+    "controllable",
+    "teleoperable",
+    "taskable",
+    "guidable",
+    "observable",
+    "communicative",
+)
+
+_ROBOT_CAPABILITY_DEFAULTS: Dict[str, bool] = {
+    "controllable": True,
+    "teleoperable": True,
+    "taskable": True,
+    "guidable": False,
+    "observable": True,
+    "communicative": False,
+}
+
+_FIELD_TEAMMATE_CAPABILITY_DEFAULTS: Dict[str, bool] = {
+    "controllable": False,
+    "teleoperable": False,
+    "taskable": False,
+    "guidable": True,
+    "observable": True,
+    "communicative": True,
+}
+
+
+class FieldTeammateSafetyError(ValueError):
+    """Raised when a field-teammate payload would expose a robot-control path.
+
+    This is the fail-closed backstop: even if metadata is mutated directly to
+    re-enable teleop, the navigation tasks, or a robot-control capability, the
+    serialized payload is rejected before it can reach the MR runtime.
+    """
+
+
+def _validate_entity_safety(config: Dict[str, Any]) -> None:
+    """Reject any field-teammate payload that exposes a robot-control affordance."""
+    if config.get("entity_kind") != "field_teammate":
+        return
+
+    name = config.get("robot_name", "field_teammate")
+    capabilities = config.get("capabilities") or {}
+    for denied in ("controllable", "teleoperable", "taskable"):
+        if capabilities.get(denied):
+            raise FieldTeammateSafetyError(
+                f"field_teammate '{name}' must not be {denied}; robot-control "
+                "capabilities are denied for human entities."
+            )
+
+    control = config.get("control") or {}
+    teleop = control.get("teleop") or {}
+    if teleop.get("enabled"):
+        raise FieldTeammateSafetyError(
+            f"field_teammate '{name}' must not enable teleop."
+        )
+
+    tasks = control.get("tasks") or {}
+    for task_name in ("go_to_point", "waypoint"):
+        task = tasks.get(task_name) or {}
+        if task.get("enabled"):
+            raise FieldTeammateSafetyError(
+                f"field_teammate '{name}' must not enable the {task_name} task."
+            )
+
+
 def build_robot_config_dict(
     client,
     robot,
@@ -755,5 +822,38 @@ def build_robot_config_dict(
 
     if workspace_config:
         config["workspace_config"] = workspace_config
+
+    # Entity capability contract (capability-driven, default-deny safety).
+    # Emitted for every entity so the MR runtime gates command paths on
+    # capabilities instead of inferring permission from robot_type.
+    raw_entity_kind = robot.get_metadata("entity_kind")
+    entity_kind = (
+        "field_teammate"
+        if isinstance(raw_entity_kind, str)
+        and raw_entity_kind.strip().lower() == "field_teammate"
+        else "robot"
+    )
+    config["entity_kind"] = entity_kind
+
+    capability_defaults = (
+        _FIELD_TEAMMATE_CAPABILITY_DEFAULTS
+        if entity_kind == "field_teammate"
+        else _ROBOT_CAPABILITY_DEFAULTS
+    )
+    capabilities = dict(capability_defaults)
+    raw_capabilities = robot.get_metadata("entity_capabilities")
+    if isinstance(raw_capabilities, dict):
+        for key in _CAPABILITY_KEYS:
+            if key in raw_capabilities:
+                capabilities[key] = _coerce_bool(
+                    raw_capabilities.get(key), capability_defaults[key]
+                )
+    config["capabilities"] = capabilities
+
+    field_teammate_meta = robot.get_metadata("field_teammate_config")
+    if isinstance(field_teammate_meta, dict) and field_teammate_meta:
+        config["field_teammate_config"] = field_teammate_meta
+
+    _validate_entity_safety(config)
 
     return config

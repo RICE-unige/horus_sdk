@@ -7,6 +7,8 @@ sidebar_position: 1
 
 `horus_sdk` is the registration and contract layer for HORUS. It lets you describe robots, sensors, teleop topics, task topics, robot-description assets, and DataViz layers, then publish that configuration into the HORUS ROS 2 runtime and mixed-reality application.
 
+The SDK ships in three language tracks that share one payload contract: a **Python** reference (the full-featured, live-registration path), and high-performance **C++** and **Rust** SDKs that build the same registration payloads natively. See the [Native SDK reference](native-sdk/cpp.md) and [Native Performance](native-sdk/performance.md).
+
 ## Who this documentation is for
 
 - robotics developers integrating ROS 2 robots into HORUS MR
@@ -22,6 +24,8 @@ sidebar_position: 1
 | Sensor registration | Camera, lidar, and per-view transport or rendering metadata |
 | DataViz contract | Robot-scoped overlays, global maps, semantic layers, safety signals |
 | Runtime observability | Registration ACK handling, keep-alive, topic and dashboard state |
+| Field teammates | Human (HoloLens-class) entities with capability-driven, default-deny safety |
+| Research tooling | Experiment metric writers and the HRI study analysis reducer |
 
 ## What the SDK does not own
 
@@ -35,8 +39,9 @@ sidebar_position: 1
 2. [Quickstart](getting-started/quickstart.md)
 3. [Tutorial summary](tutorials/summary.md)
 4. [Curated examples](examples/registration-flows.md)
-5. [Python SDK reference](python-sdk/robot-model.md)
-6. [Integration](integration/horus-ros2.md)
+5. [Python SDK reference](python-sdk/robot-model.md), including the [field teammate](python-sdk/field-teammate.md) contract
+6. [Native SDK reference](native-sdk/cpp.md) (C++ / Rust) and [performance](native-sdk/performance.md)
+7. [Integration](integration/horus-ros2.md)
 
 ## Project stance
 

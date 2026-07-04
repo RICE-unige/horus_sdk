@@ -87,6 +87,7 @@ const config = {
         { to: "/docs/examples/registration-flows", label: "Examples", position: "left" },
         { to: "/docs/examples/gaussian-splat-fixture", label: "Gaussian Splat", position: "left" },
         { to: "/docs/python-sdk/registration", label: "Python SDK", position: "left" },
+        { to: "/docs/native-sdk/cpp", label: "Native SDK", position: "left" },
         { to: "/docs/integration/horus-ros2", label: "Integration", position: "left" },
         {
           href: "https://github.com/RICE-unige/horus_sdk",
@@ -117,10 +118,11 @@ const config = {
         {
           title: "Reference",
           items: [
-            { label: "Curated examples", to: "/docs/examples/registration-flows" },
-            { label: "Gaussian splat fixture", to: "/docs/examples/gaussian-splat-fixture" },
-            { label: "Robot model", to: "/docs/python-sdk/robot-model" },
-            { label: "DataViz", to: "/docs/python-sdk/dataviz" }
+            { label: "Field teammate", to: "/docs/python-sdk/field-teammate" },
+            { label: "Native SDK (C++/Rust)", to: "/docs/native-sdk/cpp" },
+            { label: "Native performance", to: "/docs/native-sdk/performance" },
+            { label: "Implementation status", to: "/docs/reference/implementation-status" },
+            { label: "Curated examples", to: "/docs/examples/registration-flows" }
           ]
         }
       ],

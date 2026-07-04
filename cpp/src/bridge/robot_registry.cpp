@@ -1,5 +1,6 @@
 #include "horus/bridge/robot_registry.hpp"
 
+#include "horus/description/mesh_baker.hpp"
 #include "horus/topics.hpp"
 #include <algorithm>
 #include <array>
@@ -430,10 +431,22 @@ std::vector<NativeJoint> extract_urdf_joints(const std::string& urdf) {
     return joints;
 }
 
+int count_urdf_collisions(const std::string& urdf) {
+    int count = 0;
+    const std::regex pattern("<collision\\b");
+    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), pattern);
+         it != std::sregex_iterator();
+         ++it) {
+        ++count;
+    }
+    return count;
+}
+
 std::string build_native_robot_description_payload_json(
     const robot::Robot& robot,
     const std::string& urdf,
-    const std::string& base_frame) {
+    const std::string& base_frame,
+    const std::vector<description::MeshAsset>& mesh_assets) {
     const auto links = extract_urdf_link_names(urdf);
     const auto joints = extract_urdf_joints(urdf);
 
@@ -456,7 +469,25 @@ std::string build_native_robot_description_payload_json(
         }
         out << "{\"collisions\":[],\"name\":\"" << json_escape(links[i]) << "\"}";
     }
-    out << "],\"robot_name\":\"" << json_escape(robot.get_name()) << "\",\"version\":\"v2\"}";
+    out << "],\"robot_name\":\"" << json_escape(robot.get_name()) << "\",\"version\":\"v2\"";
+    if (!mesh_assets.empty()) {
+        out << ",\"mesh_assets\":[";
+        for (std::size_t i = 0; i < mesh_assets.size(); ++i) {
+            if (i > 0U) {
+                out << ",";
+            }
+            const auto& asset = mesh_assets[i];
+            out << "{\"bounds_max\":[" << asset.bounds_max[0] << "," << asset.bounds_max[1] << ","
+                << asset.bounds_max[2] << "],\"bounds_min\":[" << asset.bounds_min[0] << ","
+                << asset.bounds_min[1] << "," << asset.bounds_min[2] << "],\"indices_b64\":\""
+                << asset.indices_b64 << "\",\"mesh_id\":\"" << json_escape(asset.mesh_id)
+                << "\",\"normals_b64\":\"" << asset.normals_b64 << "\",\"positions_b64\":\""
+                << asset.positions_b64 << "\",\"triangle_count\":" << asset.triangle_count
+                << ",\"vertex_count\":" << asset.vertex_count << "}";
+        }
+        out << "]";
+    }
+    out << "}";
     return out.str();
 }
 
@@ -635,9 +666,28 @@ std::map<std::string, std::any> build_robot_description_manifest(
     const auto base_frame = coerce_text(map_get(config, "base_frame"), "base_link");
     const auto source = coerce_text(map_get(config, "source"), "ros");
     const auto chunk_size = clamp_int(coerce_int(map_get(config, "chunk_size_bytes"), 12000), 1024, 64000);
-    const auto description_payload = build_native_robot_description_payload_json(robot, urdf, base_frame);
     const auto links = extract_urdf_link_names(urdf);
     const auto joints = extract_urdf_joints(urdf);
+    const auto collision_count = count_urdf_collisions(urdf);
+    auto body_mesh_mode = to_lower(coerce_text(map_get(config, "body_mesh_mode"), "preview_mesh"));
+    if (body_mesh_mode != "collision_only" && body_mesh_mode != "preview_mesh" &&
+        body_mesh_mode != "runtime_high_mesh") {
+        body_mesh_mode = "preview_mesh";
+    }
+
+    const bool include_visual_meshes =
+        coerce_bool(map_get(config, "include_visual_meshes"), true) && body_mesh_mode != "collision_only";
+    std::vector<description::MeshAsset> mesh_assets;
+    if (include_visual_meshes) {
+        mesh_assets = description::bake_visual_meshes(urdf, urdf_path);
+    }
+    std::size_t mesh_asset_encoded_bytes = 0;
+    for (const auto& asset : mesh_assets) {
+        mesh_asset_encoded_bytes += asset.encoded_bytes();
+    }
+
+    const auto description_payload =
+        build_native_robot_description_payload_json(robot, urdf, base_frame, mesh_assets);
 
     if (payload_json != nullptr && description_payload.size() <= 250000U) {
         *payload_json = description_payload;
@@ -650,15 +700,16 @@ std::map<std::string, std::any> build_robot_description_manifest(
         {"base_frame", base_frame},
         {"link_count", static_cast<int>(links.size())},
         {"joint_count", static_cast<int>(joints.size())},
-        {"collision_count", 0},
-        {"supports_collision", false},
+        {"collision_count", collision_count},
+        {"supports_collision", collision_count > 0},
         {"supports_joints", !joints.empty()},
-        {"supports_visual_meshes", false},
-        {"mesh_asset_count", 0},
-        {"mesh_asset_encoded_bytes", 0},
+        {"supports_visual_meshes", !mesh_assets.empty()},
+        {"mesh_asset_count", static_cast<int>(mesh_assets.size())},
+        {"mesh_asset_encoded_bytes", static_cast<int>(mesh_asset_encoded_bytes)},
         {"is_transparent", coerce_bool(map_get(config, "is_transparent"), false)},
         {"encoding", std::string("json+gzip+base64")},
         {"chunk_size_bytes", chunk_size},
+        {"body_mesh_mode", body_mesh_mode},
     };
 }
 
@@ -1422,6 +1473,36 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
     }
 
+    // Entity capability contract (capability-driven, default-deny safety). The
+    // MR runtime gates command paths on these flags rather than inferring
+    // permission from robot_type.
+    payload.entity_kind = "robot";
+    if (const auto kind_value = robot.get_metadata("entity_kind")) {
+        if (kind_value->type() == typeid(std::string) &&
+            std::any_cast<std::string>(*kind_value) == "field_teammate") {
+            payload.entity_kind = "field_teammate";
+        }
+    }
+
+    payload.capabilities = payload.entity_kind == "field_teammate"
+                               ? EntityCapabilitiesPayload{false, false, false, true, true, true}
+                               : EntityCapabilitiesPayload{};
+    if (const auto caps_value = robot.get_metadata("entity_capabilities")) {
+        const auto caps_map = any_to_map(*caps_value).value_or(std::map<std::string, std::any>{});
+        payload.capabilities.controllable = coerce_bool(map_get(caps_map, "controllable"), payload.capabilities.controllable);
+        payload.capabilities.teleoperable = coerce_bool(map_get(caps_map, "teleoperable"), payload.capabilities.teleoperable);
+        payload.capabilities.taskable = coerce_bool(map_get(caps_map, "taskable"), payload.capabilities.taskable);
+        payload.capabilities.guidable = coerce_bool(map_get(caps_map, "guidable"), payload.capabilities.guidable);
+        payload.capabilities.observable = coerce_bool(map_get(caps_map, "observable"), payload.capabilities.observable);
+        payload.capabilities.communicative = coerce_bool(map_get(caps_map, "communicative"), payload.capabilities.communicative);
+    }
+
+    if (const auto ft_value = robot.get_metadata("field_teammate_config")) {
+        if (auto ft_map = any_to_map(*ft_value)) {
+            payload.field_teammate_config = std::move(*ft_map);
+        }
+    }
+
     return payload;
 }
 
@@ -1686,6 +1767,27 @@ RobotRegistryClient& get_robot_registry_client() {
 std::vector<VisualizationPayload> build_global_visualizations_payload(
     const std::vector<robot::DataViz>& datavizs) {
     return get_robot_registry_client().build_global_visualizations_payload(datavizs);
+}
+
+std::optional<std::string> validate_field_teammate_safety(const RobotRegistrationPayload& payload) {
+    if (payload.entity_kind != "field_teammate") {
+        return std::nullopt;
+    }
+    const auto& caps = payload.capabilities;
+    if (caps.controllable || caps.teleoperable || caps.taskable) {
+        return "field_teammate '" + payload.robot_name +
+               "' must not be controllable/teleoperable/taskable";
+    }
+    if (payload.control.teleop.enabled) {
+        return "field_teammate '" + payload.robot_name + "' must not enable teleop";
+    }
+    if (coerce_bool(map_get(payload.control.tasks.go_to_point, "enabled"), false)) {
+        return "field_teammate '" + payload.robot_name + "' must not enable the go_to_point task";
+    }
+    if (coerce_bool(map_get(payload.control.tasks.waypoint, "enabled"), false)) {
+        return "field_teammate '" + payload.robot_name + "' must not enable the waypoint task";
+    }
+    return std::nullopt;
 }
 
 RobotRegistrationPayload build_robot_config_dict(

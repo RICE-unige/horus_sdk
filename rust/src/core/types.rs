@@ -13,6 +13,11 @@ pub enum RobotType {
     Aerial,
     #[serde(rename = "drone")]
     Drone,
+    /// A person carried into the workspace as a field teammate (e.g. wearing a
+    /// HoloLens). Never controllable: safety is enforced by the capability
+    /// contract, not by this tag.
+    #[serde(rename = "human")]
+    Human,
 }
 
 impl RobotType {
@@ -22,6 +27,7 @@ impl RobotType {
             Self::Legged => "legged",
             Self::Aerial => "aerial",
             Self::Drone => "drone",
+            Self::Human => "human",
         }
     }
 }

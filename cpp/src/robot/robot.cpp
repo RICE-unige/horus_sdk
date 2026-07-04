@@ -304,6 +304,120 @@ void Robot::configure_workspace_tutorial(const std::string& preset_id, bool enab
     };
 }
 
+void Robot::configure_field_teammate(const FieldTeammateOptions& options) {
+    metadata_["entity_kind"] = std::string("field_teammate");
+
+    const auto caps = EntityCapabilities::for_field_teammate();
+    metadata_["entity_capabilities"] = std::map<std::string, std::any>{
+        {"controllable", caps.controllable},
+        {"teleoperable", caps.teleoperable},
+        {"taskable", caps.taskable},
+        {"guidable", caps.guidable},
+        {"observable", caps.observable},
+        {"communicative", caps.communicative},
+    };
+
+    auto trim_token = [](const std::string& value) {
+        const std::size_t start = value.find_first_not_of(" \t/");
+        if (start == std::string::npos) {
+            return std::string();
+        }
+        const std::size_t end = value.find_last_not_of(" \t/");
+        return value.substr(start, end - start + 1);
+    };
+
+    std::string leaf = trim_token(name_);
+    if (leaf.empty()) {
+        leaf = "field_teammate";
+    }
+    const std::string prefix = "/" + leaf;
+
+    auto topic_or = [](const std::optional<std::string>& value, const std::string& fallback) {
+        if (value && !value->empty()) {
+            return *value;
+        }
+        return fallback;
+    };
+    auto frame_or = [&](const std::optional<std::string>& value, const std::string& fallback) {
+        if (value) {
+            const auto trimmed = trim_token(*value);
+            if (!trimmed.empty()) {
+                return trimmed;
+            }
+        }
+        return fallback;
+    };
+
+    std::string wearable = options.wearable_type;
+    std::transform(wearable.begin(), wearable.end(), wearable.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (wearable != "hololens2" && wearable != "aria" && wearable != "quest_pro" && wearable != "generic") {
+        wearable = "hololens2";
+    }
+
+    std::map<std::string, std::any> topics{
+        {"first_person_video", topic_or(options.first_person_video_topic, prefix + "/fpv/image_raw/compressed")},
+        {"localization_confidence", topic_or(options.localization_confidence_topic, prefix + "/localization_confidence")},
+        {"guidance_request", topic_or(options.guidance_request_topic, prefix + "/guidance/request")},
+        {"guidance_response", topic_or(options.guidance_response_topic, prefix + "/guidance/response")},
+        {"guidance_state", topic_or(options.guidance_state_topic, prefix + "/guidance/state")},
+        {"guidance_annotation", topic_or(options.guidance_annotation_topic, prefix + "/guidance/annotation")},
+        {"guidance_route", topic_or(options.guidance_route_topic, prefix + "/guidance/route")},
+        {"guidance_warning", topic_or(options.guidance_warning_topic, prefix + "/guidance/warning")},
+        {"status", topic_or(options.status_topic, prefix + "/status")},
+        {"audio", topic_or(options.audio_topic, prefix + "/audio/message")},
+    };
+
+    std::map<std::string, std::any> interactions{
+        {"can_acknowledge", options.can_acknowledge},
+        {"can_clarify", options.can_clarify},
+        {"can_reject", options.can_reject},
+        {"can_complete", options.can_complete},
+    };
+
+    metadata_["field_teammate_config"] = std::map<std::string, std::any>{
+        {"wearable_type", wearable},
+        {"base_frame", frame_or(options.base_frame, leaf + "/base")},
+        {"camera_frame", frame_or(options.camera_frame, leaf + "/camera")},
+        {"topics", topics},
+        {"interactions", interactions},
+        {"contract_version", std::string("field_teammate.v1")},
+    };
+
+    // Safe defaults: a human is never controllable. Deny teleop and the
+    // navigation tasks so an incomplete config cannot expose a robot-control
+    // affordance; the serializer re-asserts this fail-closed.
+    configure_teleop(TeleopOptions{.enabled = false});
+    configure_navigation_tasks(NavigationTaskOptions{
+        .go_to_point_enabled = false,
+        .waypoint_enabled = false,
+    });
+    configure_robot_manager(true, true, false, false);
+}
+
+std::string Robot::get_entity_kind() const {
+    if (const auto value = get_metadata("entity_kind")) {
+        if (value->type() == typeid(std::string) &&
+            std::any_cast<std::string>(*value) == "field_teammate") {
+            return "field_teammate";
+        }
+    }
+    return "robot";
+}
+
+Robot make_field_teammate(const std::string& name, const FieldTeammateOptions& options) {
+    Robot robot(name, core::RobotType::HUMAN);
+    std::string base_frame = robot.get_name() + "/base";
+    if (options.base_frame && !options.base_frame->empty()) {
+        base_frame = *options.base_frame;
+    }
+    robot.configure_ros_binding("prefixed", "prefixed", base_frame);
+    FieldTeammateOptions resolved = options;
+    resolved.base_frame = base_frame;
+    robot.configure_field_teammate(resolved);
+    return robot;
+}
+
 void Robot::add_sensor(const std::shared_ptr<Sensor>& sensor) {
     if (!sensor) {
         throw std::invalid_argument("Sensor cannot be null");

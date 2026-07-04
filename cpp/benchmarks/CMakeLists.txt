@@ -4,3 +4,7 @@ target_link_libraries(payload_micro PRIVATE horus_cpp_sdk)
 add_executable(registration_scenario registration_scenario.cpp)
 target_link_libraries(registration_scenario PRIVATE horus_cpp_sdk)
 
+find_package(Threads REQUIRED)
+add_executable(throughput_benchmark throughput_benchmark.cpp)
+target_link_libraries(throughput_benchmark PRIVATE horus_cpp_sdk Threads::Threads)
+

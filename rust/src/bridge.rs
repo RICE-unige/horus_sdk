@@ -153,6 +153,17 @@ pub struct RobotManagerConfigPayload {
     pub sections: RobotManagerSectionsPayload,
 }
 
+/// Capability-driven, default-deny safety contract carried in the payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilitiesPayload {
+    pub controllable: bool,
+    pub teleoperable: bool,
+    pub taskable: bool,
+    pub guidable: bool,
+    pub observable: bool,
+    pub communicative: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionsPayload {
     pub length: f32,
@@ -219,6 +230,8 @@ pub struct RobotRegistrationPayload {
     pub global_visualizations: Vec<VisualizationPayload>,
     pub control: ControlPayload,
     pub robot_manager_config: RobotManagerConfigPayload,
+    pub entity_kind: String,
+    pub capabilities: CapabilitiesPayload,
     pub timestamp: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dimensions: Option<DimensionsPayload>,
@@ -232,6 +245,77 @@ pub struct RobotRegistrationPayload {
     pub robot_description_manifest: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub robot_description_payload_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_teammate_config: Option<Value>,
+}
+
+/// Resolve the entity capability contract from robot metadata, defaulting by
+/// entity kind and applying any explicit per-flag overrides.
+fn resolve_entity_capabilities(robot: &Robot, entity_kind: &str) -> CapabilitiesPayload {
+    let mut caps = if entity_kind == "field_teammate" {
+        CapabilitiesPayload {
+            controllable: false,
+            teleoperable: false,
+            taskable: false,
+            guidable: true,
+            observable: true,
+            communicative: true,
+        }
+    } else {
+        CapabilitiesPayload {
+            controllable: true,
+            teleoperable: true,
+            taskable: true,
+            guidable: false,
+            observable: true,
+            communicative: false,
+        }
+    };
+    if let Some(obj) = robot
+        .metadata
+        .get("entity_capabilities")
+        .and_then(Value::as_object)
+    {
+        let pick = |key: &str, current: bool| -> bool {
+            obj.get(key).and_then(Value::as_bool).unwrap_or(current)
+        };
+        caps.controllable = pick("controllable", caps.controllable);
+        caps.teleoperable = pick("teleoperable", caps.teleoperable);
+        caps.taskable = pick("taskable", caps.taskable);
+        caps.guidable = pick("guidable", caps.guidable);
+        caps.observable = pick("observable", caps.observable);
+        caps.communicative = pick("communicative", caps.communicative);
+    }
+    caps
+}
+
+/// Fail-closed check: reject any field-teammate payload that would expose a
+/// robot-control affordance. Mirrors the Python serializer's safety backstop.
+pub fn validate_field_teammate_safety(payload: &RobotRegistrationPayload) -> Result<(), String> {
+    if payload.entity_kind != "field_teammate" {
+        return Ok(());
+    }
+    let name = &payload.robot_name;
+    let caps = &payload.capabilities;
+    if caps.controllable || caps.teleoperable || caps.taskable {
+        return Err(format!(
+            "field_teammate '{name}' must not be controllable/teleoperable/taskable"
+        ));
+    }
+    if payload.control.teleop.enabled {
+        return Err(format!("field_teammate '{name}' must not enable teleop"));
+    }
+    for (task_name, task) in [
+        ("go_to_point", &payload.control.tasks.go_to_point),
+        ("waypoint", &payload.control.tasks.waypoint),
+    ] {
+        if task.get("enabled").and_then(Value::as_bool).unwrap_or(false) {
+            return Err(format!(
+                "field_teammate '{name}' must not enable the {task_name} task"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn now_sec() -> f64 {
@@ -1210,6 +1294,24 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
     }
     let links = extract_urdf_link_names(&urdf);
     let joints = extract_urdf_joints(&urdf);
+    let collision_count = Regex::new(r#"<collision\b"#)
+        .map(|re| re.find_iter(&urdf).count())
+        .unwrap_or(0);
+    let mut body_mesh_mode = coerce_text(config.get("body_mesh_mode"), "preview_mesh")
+        .trim()
+        .to_ascii_lowercase();
+    if !["collision_only", "preview_mesh", "runtime_high_mesh"].contains(&body_mesh_mode.as_str()) {
+        body_mesh_mode = "preview_mesh".to_string();
+    }
+    let include_visual_meshes =
+        coerce_bool(config.get("include_visual_meshes"), true) && body_mesh_mode != "collision_only";
+    let mesh_assets = if include_visual_meshes {
+        crate::description::bake_visual_meshes(&urdf, &urdf_path)
+    } else {
+        Vec::new()
+    };
+    let mesh_asset_encoded_bytes: usize = mesh_assets.iter().map(|asset| asset.encoded_bytes()).sum();
+    let supports_visual_meshes = !mesh_assets.is_empty();
     let base_frame = coerce_text(config.get("base_frame"), "base_link");
     let source = coerce_text(config.get("source"), "ros");
     let chunk_size = clamp_i32(
@@ -1217,7 +1319,7 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         1024,
         64000,
     );
-    let payload = json!({
+    let mut payload = json!({
         "base_frame": base_frame.clone(),
         "joints": joints.iter().map(|joint| json!({
             "axis_xyz": [0.0, 0.0, 1.0],
@@ -1235,6 +1337,14 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         "robot_name": robot.name.clone(),
         "version": "v2",
     });
+    if !mesh_assets.is_empty() {
+        if let Some(map) = payload.as_object_mut() {
+            map.insert(
+                "mesh_assets".to_string(),
+                Value::Array(mesh_assets.iter().map(|asset| asset.to_value()).collect()),
+            );
+        }
+    }
     let payload_json = serde_json::to_string(&payload).ok()?;
     let description_hash = Sha256::digest(payload_json.as_bytes());
 
@@ -1245,15 +1355,16 @@ fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
         "base_frame": base_frame,
         "link_count": links.len() as i64,
         "joint_count": joints.len() as i64,
-        "collision_count": 0,
-        "supports_collision": false,
+        "collision_count": collision_count as i64,
+        "supports_collision": collision_count > 0,
         "supports_joints": !joints.is_empty(),
-        "supports_visual_meshes": false,
-        "mesh_asset_count": 0,
-        "mesh_asset_encoded_bytes": 0,
+        "supports_visual_meshes": supports_visual_meshes,
+        "mesh_asset_count": mesh_assets.len() as i64,
+        "mesh_asset_encoded_bytes": mesh_asset_encoded_bytes as i64,
         "is_transparent": coerce_bool(config.get("is_transparent"), false),
         "encoding": "json+gzip+base64",
         "chunk_size_bytes": chunk_size,
+        "body_mesh_mode": body_mesh_mode,
     });
     Some((manifest, payload_json))
 }
@@ -1529,6 +1640,22 @@ impl RobotRegistryClient {
             })
             .unwrap_or(false);
 
+        let entity_kind = match robot
+            .metadata
+            .get("entity_kind")
+            .and_then(Value::as_str)
+            .map(str::trim)
+        {
+            Some("field_teammate") => "field_teammate".to_string(),
+            _ => "robot".to_string(),
+        };
+        let capabilities = resolve_entity_capabilities(robot, &entity_kind);
+        let field_teammate_config = robot
+            .metadata
+            .get("field_teammate_config")
+            .filter(|value| value.is_object())
+            .cloned();
+
         RobotRegistrationPayload {
             action: "register".to_string(),
             robot_name: robot.name.clone(),
@@ -1561,6 +1688,8 @@ impl RobotRegistryClient {
                     tasks: coerce_bool(sections.get("tasks"), true),
                 },
             },
+            entity_kind,
+            capabilities,
             timestamp: now_sec(),
             dimensions,
             workspace_config,
@@ -1588,6 +1717,7 @@ impl RobotRegistryClient {
             },
             robot_description_manifest,
             robot_description_payload_json,
+            field_teammate_config,
         }
     }
 

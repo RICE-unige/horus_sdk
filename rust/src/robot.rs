@@ -131,6 +131,172 @@ impl Default for NavigationTaskConfig {
     }
 }
 
+/// Entity kind tokens used by the capability contract.
+pub const ENTITY_KIND_ROBOT: &str = "robot";
+pub const ENTITY_KIND_FIELD_TEAMMATE: &str = "field_teammate";
+
+/// What an entity is permitted to do inside HORUS MR.
+///
+/// Safety is capability-driven and default-deny: consumers gate command paths
+/// on these flags rather than inferring permission from `RobotType`. A robot is
+/// controllable; a human field teammate is not — they are *guidable*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityCapabilities {
+    pub controllable: bool,
+    pub teleoperable: bool,
+    pub taskable: bool,
+    pub guidable: bool,
+    pub observable: bool,
+    pub communicative: bool,
+}
+
+impl EntityCapabilities {
+    pub fn for_robot() -> Self {
+        Self {
+            controllable: true,
+            teleoperable: true,
+            taskable: true,
+            guidable: false,
+            observable: true,
+            communicative: false,
+        }
+    }
+
+    pub fn for_field_teammate() -> Self {
+        Self {
+            controllable: false,
+            teleoperable: false,
+            taskable: false,
+            guidable: true,
+            observable: true,
+            communicative: true,
+        }
+    }
+
+    pub fn to_value(self) -> Value {
+        json!({
+            "controllable": self.controllable,
+            "teleoperable": self.teleoperable,
+            "taskable": self.taskable,
+            "guidable": self.guidable,
+            "observable": self.observable,
+            "communicative": self.communicative,
+        })
+    }
+}
+
+impl Default for EntityCapabilities {
+    fn default() -> Self {
+        Self::for_robot()
+    }
+}
+
+/// Typed contract for a HoloLens-class field teammate. Topics default to
+/// per-entity names derived from the teammate's logical name.
+#[derive(Debug, Clone)]
+pub struct FieldTeammateConfig {
+    pub wearable_type: String,
+    pub base_frame: Option<String>,
+    pub camera_frame: Option<String>,
+    pub first_person_video_topic: Option<String>,
+    pub localization_confidence_topic: Option<String>,
+    pub guidance_request_topic: Option<String>,
+    pub guidance_response_topic: Option<String>,
+    pub guidance_state_topic: Option<String>,
+    pub guidance_annotation_topic: Option<String>,
+    pub guidance_route_topic: Option<String>,
+    pub guidance_warning_topic: Option<String>,
+    pub status_topic: Option<String>,
+    pub audio_topic: Option<String>,
+    pub can_acknowledge: bool,
+    pub can_clarify: bool,
+    pub can_reject: bool,
+    pub can_complete: bool,
+}
+
+impl Default for FieldTeammateConfig {
+    fn default() -> Self {
+        Self {
+            wearable_type: "hololens2".to_string(),
+            base_frame: None,
+            camera_frame: None,
+            first_person_video_topic: None,
+            localization_confidence_topic: None,
+            guidance_request_topic: None,
+            guidance_response_topic: None,
+            guidance_state_topic: None,
+            guidance_annotation_topic: None,
+            guidance_route_topic: None,
+            guidance_warning_topic: None,
+            status_topic: None,
+            audio_topic: None,
+            can_acknowledge: true,
+            can_clarify: true,
+            can_reject: true,
+            can_complete: true,
+        }
+    }
+}
+
+impl FieldTeammateConfig {
+    fn to_value(&self, name: &str) -> Value {
+        let leaf = {
+            let trimmed = name.trim().trim_matches('/');
+            if trimmed.is_empty() {
+                "field_teammate"
+            } else {
+                trimmed
+            }
+        };
+        let prefix = format!("/{leaf}");
+        let topic = |value: &Option<String>, default: String| -> String {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .unwrap_or(default)
+        };
+        let frame = |value: &Option<String>, default: String| -> String {
+            value
+                .as_deref()
+                .map(|v| v.trim().trim_matches('/'))
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+                .unwrap_or(default)
+        };
+        let wearable = match self.wearable_type.trim().to_ascii_lowercase().as_str() {
+            w @ ("hololens2" | "aria" | "quest_pro" | "generic") => w.to_string(),
+            _ => "hololens2".to_string(),
+        };
+
+        json!({
+            "wearable_type": wearable,
+            "base_frame": frame(&self.base_frame, format!("{leaf}/base")),
+            "camera_frame": frame(&self.camera_frame, format!("{leaf}/camera")),
+            "topics": {
+                "first_person_video": topic(&self.first_person_video_topic, format!("{prefix}/fpv/image_raw/compressed")),
+                "localization_confidence": topic(&self.localization_confidence_topic, format!("{prefix}/localization_confidence")),
+                "guidance_request": topic(&self.guidance_request_topic, format!("{prefix}/guidance/request")),
+                "guidance_response": topic(&self.guidance_response_topic, format!("{prefix}/guidance/response")),
+                "guidance_state": topic(&self.guidance_state_topic, format!("{prefix}/guidance/state")),
+                "guidance_annotation": topic(&self.guidance_annotation_topic, format!("{prefix}/guidance/annotation")),
+                "guidance_route": topic(&self.guidance_route_topic, format!("{prefix}/guidance/route")),
+                "guidance_warning": topic(&self.guidance_warning_topic, format!("{prefix}/guidance/warning")),
+                "status": topic(&self.status_topic, format!("{prefix}/status")),
+                "audio": topic(&self.audio_topic, format!("{prefix}/audio/message")),
+            },
+            "interactions": {
+                "can_acknowledge": self.can_acknowledge,
+                "can_clarify": self.can_clarify,
+                "can_reject": self.can_reject,
+                "can_complete": self.can_complete,
+            },
+            "contract_version": "field_teammate.v1",
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RobotDescriptionConfig {
     pub urdf_path: String,
@@ -438,6 +604,59 @@ impl Robot {
                 }
             }),
         );
+    }
+
+    /// Construct a human field teammate: a `RobotType::Human` entity with the
+    /// capability default-deny contract and safe teleop/task defaults applied.
+    pub fn field_teammate(name: impl Into<String>) -> Self {
+        let mut robot = Self::new(name, RobotType::Human);
+        let base = format!("{}/base", robot.name);
+        robot.configure_ros_binding("prefixed", "prefixed", Some(&base));
+        robot.configure_field_teammate(FieldTeammateConfig::default());
+        robot
+    }
+
+    /// Represent this entity as a human field teammate (default-deny safety).
+    ///
+    /// Stamps `entity_kind`, forces robot-control capabilities off, records the
+    /// wearable/topic contract, and disables teleop and the navigation tasks so
+    /// an incomplete config can never expose a robot-control affordance for a
+    /// person. The registration serializer re-asserts this, fail-closed.
+    pub fn configure_field_teammate(&mut self, config: FieldTeammateConfig) {
+        self.metadata.insert(
+            "entity_kind".to_string(),
+            json!(ENTITY_KIND_FIELD_TEAMMATE),
+        );
+        self.metadata.insert(
+            "entity_capabilities".to_string(),
+            EntityCapabilities::for_field_teammate().to_value(),
+        );
+        self.metadata.insert(
+            "field_teammate_config".to_string(),
+            config.to_value(&self.name),
+        );
+        self.configure_teleop(TeleopConfig {
+            enabled: false,
+            ..Default::default()
+        });
+        self.configure_navigation_tasks(NavigationTaskConfig {
+            go_to_point_enabled: false,
+            waypoint_enabled: false,
+            ..Default::default()
+        });
+        self.configure_robot_manager(true, true, false, false);
+    }
+
+    pub fn get_entity_kind(&self) -> String {
+        match self
+            .metadata
+            .get("entity_kind")
+            .and_then(Value::as_str)
+            .map(str::trim)
+        {
+            Some(ENTITY_KIND_FIELD_TEAMMATE) => ENTITY_KIND_FIELD_TEAMMATE.to_string(),
+            _ => ENTITY_KIND_ROBOT.to_string(),
+        }
     }
 
     pub fn configure_robot_description(&mut self, config: RobotDescriptionConfig) {

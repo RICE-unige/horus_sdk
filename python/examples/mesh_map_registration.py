@@ -4,16 +4,67 @@
 Fetch the sample URDFs once:
     python3 python/examples/tools/fetch_robot_description_assets.py
 
-Pair this with:
-    python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-profile realistic --map-3d-mesh-voxel-size 0.07 --map-3d-mesh-max-voxels 220000 --map-3d-mesh-max-triangles 220000 --map-3d-mesh-update-policy snapshot
+Synthetic mesh source:
+    python3 python/examples/legacy/fake_tf_robot_description_suite.py \
+        --robot-profile real_models \
+        --map-3d-mode mesh \
+        --map-3d-profile realistic \
+        --map-3d-mesh-voxel-size 0.07 \
+        --map-3d-mesh-max-voxels 220000 \
+        --map-3d-mesh-max-triangles 220000 \
+        --map-3d-mesh-update-policy snapshot
+
+Real Voxblox Cow & Lady source:
+    python3 python/examples/tools/fetch_voxblox_cow_lady.py
+
+ROS 2-native Cow & Lady ground-truth PLY path:
+    source /opt/ros/jazzy/setup.bash
+    python3 python/examples/tools/ply_to_horus_mesh_marker.py \
+        --topic /map_3d_mesh \
+        --frame-id map \
+        --mode voxel_surface \
+        --voxel-size 0.02 \
+        --republish-interval 0
+    The publisher waits for the HORUS bridge/headset subscriber before sending the map.
+    It does not publish DELETEALL by default, so late clear messages cannot erase dense
+    chunks after loading.
+    Use --voxel-size 0.03 for a lighter balanced profile if Quest performance becomes
+    the limiting factor.
+
+Maximum-density point-map preview:
+    python3 python/examples/tools/ply_to_horus_mesh_marker.py \
+        --topic /map_3d_mesh \
+        --frame-id map \
+        --mode triangle_shell \
+        --shape triad \
+        --triangle-size 0.025 \
+        --max-triangles 0 \
+        --republish-interval 0
+
+Run upstream Voxblox on the downloaded data.bag, then relay its mesh topic:
+    python3 python/examples/tools/voxblox_mesh_to_horus_marker.py \
+        --ros-api ros1 \
+        --input-topic /voxblox_node/mesh \
+        --output-topic /map_3d_mesh \
+        --republish-interval 2.0
+
+Bridge /map_3d_mesh into ROS 2 if Voxblox is running in ROS 1.
 
 From a source checkout:
-    PYTHONPATH=python:$PYTHONPATH python3 python/examples/mesh_map_registration.py
+    PYTHONPATH=python:$PYTHONPATH python3 python/examples/mesh_map_registration.py \
+        workspace_scale=0,2
 """
 
+import argparse
 from pathlib import Path
 
-from horus.robot import Robot, RobotDimensions, RobotType, is_registration_cancelled, register_robots
+from horus.robot import (
+    Robot,
+    RobotDimensions,
+    RobotType,
+    is_registration_cancelled,
+    register_robots,
+)
 from horus.sensors import Camera
 
 ASSET_DIR = Path(__file__).resolve().parent / ".local_assets" / "robot_descriptions"
@@ -23,6 +74,34 @@ ROBOT_MODELS = [
     ("go1", RobotType.LEGGED, RobotDimensions(0.65, 0.32, 0.45), "base", "go1.urdf"),
     ("h1", RobotType.LEGGED, RobotDimensions(0.55, 0.38, 1.25), "pelvis", "h1.urdf"),
 ]
+
+
+def parse_float(value: str) -> float:
+    return float(str(value).strip().replace(",", "."))
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--workspace-scale", type=parse_float, default=0.1)
+    parser.add_argument("--mesh-max-triangles", type=int, default=2_000_000)
+    parser.add_argument(
+        "overrides",
+        nargs="*",
+        help="Optional key=value overrides, e.g. workspace_scale=0,2.",
+    )
+    args = parser.parse_args()
+    for override in args.overrides:
+        if "=" not in override:
+            raise SystemExit(f"Expected key=value override, got: {override}")
+        key, value = override.split("=", 1)
+        normalized_key = key.strip().replace("-", "_")
+        if normalized_key == "workspace_scale":
+            args.workspace_scale = parse_float(value)
+        elif normalized_key == "mesh_max_triangles":
+            args.mesh_max_triangles = int(parse_float(value))
+        else:
+            raise SystemExit(f"Unknown override: {key}")
+    return args
 
 
 def require_urdf(urdf_file: str) -> Path:
@@ -63,6 +142,8 @@ def build_camera(robot_name: str) -> Camera:
     )
     return camera
 
+
+args = parse_args()
 
 robots = []
 datavizs = []
@@ -111,13 +192,17 @@ world_layers = datavizs[0]
 world_layers.add_3d_mesh(
     "/map_3d_mesh",
     frame_id="map",
-    render_options={"max_triangles": 220000, "use_vertex_colors": True},
+    render_options={
+        "max_triangles": int(args.mesh_max_triangles),
+        "use_vertex_colors": True,
+        "source_coordinate_space": "enu",
+    },
 )
 
 success, result = register_robots(
     robots,
     datavizs=datavizs,
-    workspace_scale=0.1,
+    workspace_scale=float(args.workspace_scale),
     compass_enabled=False,
     keep_alive=True,
 )

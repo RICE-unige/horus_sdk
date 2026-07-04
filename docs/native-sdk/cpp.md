@@ -22,6 +22,40 @@ Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitori
 | Cameras | minimap/teleop transport profiles, WebRTC settings, stereo fields, view/projection offsets |
 | DataViz | robot transforms, paths, velocity text, odometry trails, collision risk, occupancy, pointcloud, mesh, octomap, Gaussian Splat fixtures, semantic boxes |
 | Workspace | position scale, compass metadata, tutorial preset, local body model id |
+| Field teammate | `entity_kind`, capability default-deny `capabilities`, versioned `field_teammate_config`, fail-closed `validate_field_teammate_safety` |
+
+## Field teammate
+
+A human field teammate is registered as a guidable, non-controllable entity, at parity with the Python SDK:
+
+```cpp
+auto teammate = horus::robot::make_field_teammate("field_teammate_1");
+auto dataviz = teammate.create_dataviz();
+horus::bridge::RobotRegistryClient client;
+auto payload = client.build_robot_config_dict(teammate, *dataviz);
+
+// payload.entity_kind == "field_teammate", capabilities are default-deny, and:
+if (auto error = horus::bridge::validate_field_teammate_safety(payload)) {
+    // a tampered payload that re-enables teleop/tasks/control is rejected here
+}
+```
+
+`make_field_teammate` (and `Robot::configure_field_teammate`) force the
+robot-control capabilities off and disable teleop and the navigation tasks. The
+payload carries the same `entity_kind` / `capabilities` / `field_teammate_config`
+contract as Python, verified against `contracts/fixtures/field_teammate_hololens.json`.
+
+## Other subsystems
+
+Beyond registration payloads, the C++ SDK ports the HORUS experiments tooling
+(`horus/experiments/` — NDJSON/CSV metric writers, a monotonic-anchored clock,
+and the field-teammate study reducer with dyad-level confidence intervals) and
+the colour manager (`horus/color/` — per-scheme palettes with an MD5-deterministic
+fallback that matches Python/Rust byte-for-byte). It also bakes STL visual meshes
+(binary and ASCII) referenced by a URDF's `<visual>` elements into the description
+manifest (`horus/description/mesh_baker.hpp` — `bake_visual_meshes`, populating
+`mesh_assets` and `supports_visual_meshes`). See **Implementation Status** for the
+full native parity boundary.
 
 ## Build and test
 
