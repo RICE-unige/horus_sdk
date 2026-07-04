@@ -24,6 +24,12 @@ def _new_string_message():
     return message_cls()
 
 
+def _trace(client, message: str) -> None:
+    trace = getattr(client, "_trace_robot_description", None)
+    if callable(trace):
+        trace(message)
+
+
 def publish_sdk_registry_replay_once(client, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
     if not client.ros_initialized or client.node is None:
         return False, {"error": "ROS2 not initialized"}
@@ -43,6 +49,11 @@ def publish_sdk_registry_replay_once(client, entries, replay_request: Optional[D
             payloads.append(json_payload)
 
     expected_count = len(payloads)
+    _trace(
+        client,
+        f"[SDK replay] publish_once_begin request_id='{request_id}' join_attempt_id='{join_attempt_id}' "
+        f"requester_app_id='{requester_app_id}' entries={len(entries or [])} payloads={expected_count}",
+    )
 
     begin_msg = _new_string_message()
     begin_msg.data = json.dumps(
@@ -80,6 +91,11 @@ def publish_sdk_registry_replay_once(client, entries, replay_request: Optional[D
         }
     )
     client.sdk_replay_end_publisher.publish(end_msg)
+    _trace(
+        client,
+        f"[SDK replay] publish_once_end request_id='{request_id}' join_attempt_id='{join_attempt_id}' "
+        f"published_count={published_count}/{expected_count}",
+    )
 
     return True, {
         "request_id": request_id,
@@ -111,10 +127,17 @@ def publish_sdk_registry_replay(client, entries, replay_request: Optional[Dict[s
 
     per_attempt_published_count: List[int] = []
     last_result: Dict[str, Any] = {}
+    _trace(
+        client,
+        f"[SDK replay] burst_begin request_id='{request_id}' attempts={attempt_count} "
+        f"initial_delay_s={initial_delay_s:.3f} inter_attempt_delay_s={inter_attempt_delay_s:.3f}",
+    )
 
     for attempt_idx in range(attempt_count):
+        _trace(client, f"[SDK replay] burst_attempt request_id='{request_id}' attempt={attempt_idx + 1}/{attempt_count}")
         ok, result = client._publish_sdk_registry_replay_once(entries, base_request)
         if not ok:
+            _trace(client, f"[SDK replay] burst_failed request_id='{request_id}' attempt={attempt_idx + 1} error='{result}'")
             return False, result
         last_result = dict(result or {})
         per_attempt_published_count.append(int(last_result.get("published_count") or 0))
@@ -124,4 +147,9 @@ def publish_sdk_registry_replay(client, entries, replay_request: Optional[Dict[s
     last_result["attempt_count"] = attempt_count
     last_result["per_attempt_published_count"] = per_attempt_published_count
     last_result["total_published_count"] = int(sum(per_attempt_published_count))
+    _trace(
+        client,
+        f"[SDK replay] burst_end request_id='{request_id}' attempts={attempt_count} "
+        f"total_published_count={last_result['total_published_count']}",
+    )
     return True, last_result

@@ -26,6 +26,7 @@ from typing import Any, Dict, Tuple, Optional, List
 from horus.utils.network import resolve_advertise_ip
 
 logger = logging.getLogger(__name__)
+MODEL_TRACE_TAG = "HORUS_MODEL_TRACE"
 
 try:
     import rclpy
@@ -51,6 +52,8 @@ class RobotRegistryClient:
         self.robot_description_chunk_begin_publisher = None
         self.robot_description_chunk_item_publisher = None
         self.robot_description_chunk_end_publisher = None
+        self._robot_description_chunk_publishers: Dict[str, Any] = {}
+        self._robot_description_chunk_qos = None
         self.subscriber = None
         self.ros_initialized = False
         self._registration_lock = threading.Lock()
@@ -90,6 +93,42 @@ class RobotRegistryClient:
 
         if ROS2_AVAILABLE:
             self._initialize_ros2()
+
+    def _trace_robot_description(self, message: str) -> None:
+        line = f"{MODEL_TRACE_TAG} {message}"
+        try:
+            from horus.utils import cli
+
+            cli.print_info(line)
+        except Exception:
+            logger.info(line)
+
+    def _get_robot_description_chunk_publisher(self, topic: str):
+        """Return a std_msgs/String publisher for a robot-description chunk reply topic."""
+        if self.node is None:
+            return None
+
+        resolved_topic = str(topic or "").strip()
+        if not resolved_topic.startswith("/"):
+            return None
+
+        publisher = self._robot_description_chunk_publishers.get(resolved_topic)
+        if publisher is not None:
+            return publisher
+
+        qos = self._robot_description_chunk_qos
+        if qos is None:
+            qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=2048,
+            )
+            self._robot_description_chunk_qos = qos
+
+        publisher = self.node.create_publisher(String, resolved_topic, qos)
+        self._robot_description_chunk_publishers[resolved_topic] = publisher
+        self._trace_robot_description(f"[SDK chunks] dynamic_publisher_ready topic='{resolved_topic}'")
+        return publisher
 
     def _get_local_ip(self):
         """Get local IP address of this machine"""
@@ -171,6 +210,12 @@ class RobotRegistryClient:
                 durability=DurabilityPolicy.TRANSIENT_LOCAL,
                 depth=256,
             )
+            robot_description_chunk_qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                depth=2048,
+            )
+            self._robot_description_chunk_qos = robot_description_chunk_qos
 
             self.sdk_replay_begin_publisher = self.node.create_publisher(
                 String, "/horus/multi_operator/sdk_registry_replay_begin", sdk_replay_qos
@@ -182,14 +227,19 @@ class RobotRegistryClient:
                 String, "/horus/multi_operator/sdk_registry_replay_end", sdk_replay_qos
             )
             self.robot_description_chunk_begin_publisher = self.node.create_publisher(
-                String, "/horus/robot_description/chunk_begin", sdk_replay_qos
+                String, "/horus/robot_description/chunk_begin", robot_description_chunk_qos
             )
             self.robot_description_chunk_item_publisher = self.node.create_publisher(
-                String, "/horus/robot_description/chunk_item", sdk_replay_qos
+                String, "/horus/robot_description/chunk_item", robot_description_chunk_qos
             )
             self.robot_description_chunk_end_publisher = self.node.create_publisher(
-                String, "/horus/robot_description/chunk_end", sdk_replay_qos
+                String, "/horus/robot_description/chunk_end", robot_description_chunk_qos
             )
+            self._robot_description_chunk_publishers = {
+                "/horus/robot_description/chunk_begin": self.robot_description_chunk_begin_publisher,
+                "/horus/robot_description/chunk_item": self.robot_description_chunk_item_publisher,
+                "/horus/robot_description/chunk_end": self.robot_description_chunk_end_publisher,
+            }
 
             self.subscriber = self.node.create_subscription(
                 String, "/horus/registration_ack", self._ack_callback, ack_qos
@@ -235,6 +285,12 @@ class RobotRegistryClient:
                 "/horus/robot_description/request",
                 self._robot_description_request_callback,
                 ack_qos,
+            )
+            self._trace_robot_description(
+                "[SDK init] robot_description_transport_ready request_sub='/horus/robot_description/request' "
+                "chunk_begin_pub='/horus/robot_description/chunk_begin' "
+                "chunk_item_pub='/horus/robot_description/chunk_item' "
+                "chunk_end_pub='/horus/robot_description/chunk_end'"
             )
 
         except Exception as e:
@@ -757,17 +813,31 @@ class RobotRegistryClient:
                 if isinstance(parsed, dict):
                     payload = parsed
             except Exception:
+                self._trace_robot_description(
+                    f"[SDK replay] ignored_malformed_request payload_chars={len(payload_raw)}"
+                )
                 logger.debug("Ignored malformed registration replay request: %r", payload_raw, exc_info=True)
                 payload = {}
 
         self._last_registration_replay_request = payload
         self._registration_replay_request_seq += 1
+        self._trace_robot_description(
+            f"[SDK replay] request_received seq={self._registration_replay_request_seq} "
+            f"request_id='{str(payload.get('request_id') or '')}' "
+            f"requester_app_id='{str(payload.get('requester_app_id') or payload.get('app_id') or '')}' "
+            f"join_attempt_id='{str(payload.get('join_attempt_id') or '')}'"
+        )
 
     def _consume_registration_replay_request(self) -> Optional[Dict[str, Any]]:
         if self._registration_replay_request_seq == self._last_consumed_registration_replay_request_seq:
             return None
         self._last_consumed_registration_replay_request_seq = self._registration_replay_request_seq
-        return dict(self._last_registration_replay_request or {})
+        payload = dict(self._last_registration_replay_request or {})
+        self._trace_robot_description(
+            f"[SDK replay] request_consumed seq={self._last_consumed_registration_replay_request_seq} "
+            f"request_id='{str(payload.get('request_id') or '')}'"
+        )
+        return payload
 
     def _robot_description_request_callback(self, msg):
         if (
@@ -775,19 +845,23 @@ class RobotRegistryClient:
             or self.robot_description_chunk_item_publisher is None
             or self.robot_description_chunk_end_publisher is None
         ):
+            self._trace_robot_description("[SDK request] ignored_publishers_missing")
             return
 
         payload_raw = str(getattr(msg, "data", "") or "").strip()
         if not payload_raw:
+            self._trace_robot_description("[SDK request] ignored_empty_payload")
             return
 
         try:
             payload = json.loads(payload_raw)
         except Exception:
+            self._trace_robot_description(f"[SDK request] ignored_malformed payload_chars={len(payload_raw)}")
             logger.debug("Ignored malformed robot-description request payload: %r", payload_raw, exc_info=True)
             return
 
         if not isinstance(payload, dict):
+            self._trace_robot_description("[SDK request] ignored_non_dict_payload")
             return
 
         request_id = str(payload.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
@@ -795,6 +869,26 @@ class RobotRegistryClient:
         description_id = str(payload.get("description_id") or "").strip()
         session_id = str(payload.get("session_id") or "").strip()
         app_id = str(payload.get("app_id") or "").strip()
+        chunk_begin_topic = str(payload.get("chunk_begin_topic") or "/horus/robot_description/chunk_begin").strip()
+        chunk_item_topic = str(payload.get("chunk_item_topic") or "/horus/robot_description/chunk_item").strip()
+        chunk_end_topic = str(payload.get("chunk_end_topic") or "/horus/robot_description/chunk_end").strip()
+        begin_publisher = self._get_robot_description_chunk_publisher(chunk_begin_topic)
+        item_publisher = self._get_robot_description_chunk_publisher(chunk_item_topic)
+        end_publisher = self._get_robot_description_chunk_publisher(chunk_end_topic)
+        if begin_publisher is None or item_publisher is None or end_publisher is None:
+            self._trace_robot_description(
+                f"[SDK request] invalid_reply_topics request_id={request_id} robot='{robot_name}' "
+                f"begin='{chunk_begin_topic}' item='{chunk_item_topic}' end='{chunk_end_topic}'"
+            )
+            return
+
+        self._trace_robot_description(
+            f"[SDK request] received request_id={request_id} robot='{robot_name}' "
+            f"description_id='{description_id}' session='{session_id}' app='{app_id}' "
+            f"reply_begin='{chunk_begin_topic}' reply_item='{chunk_item_topic}' reply_end='{chunk_end_topic}' "
+            f"cache_robots={len(getattr(self, '_robot_description_by_robot', {}) or {})} "
+            f"cache_ids={len(getattr(self, '_robot_description_by_id', {}) or {})}"
+        )
 
         artifact_container: Optional[Dict[str, Any]] = None
         if description_id:
@@ -803,19 +897,38 @@ class RobotRegistryClient:
             artifact_container = self._robot_description_by_robot.get(robot_name)
 
         if artifact_container is None:
+            cached_robots = sorted(list((getattr(self, "_robot_description_by_robot", {}) or {}).keys()))[:8]
+            cached_ids = sorted(list((getattr(self, "_robot_description_by_id", {}) or {}).keys()))[:8]
+            self._trace_robot_description(
+                f"[SDK request] cache_miss request_id={request_id} robot='{robot_name}' "
+                f"description_id='{description_id}' cached_robots={cached_robots} cached_ids={cached_ids}"
+            )
             return
 
         artifact = artifact_container.get("artifact")
         if artifact is None:
+            self._trace_robot_description(
+                f"[SDK request] cache_entry_without_artifact request_id={request_id} robot='{robot_name}' "
+                f"description_id='{description_id}'"
+            )
             return
 
         resolved_description_id = str(artifact.manifest.description_id)
         if description_id and description_id != resolved_description_id:
+            self._trace_robot_description(
+                f"[SDK request] description_mismatch request_id={request_id} robot='{robot_name}' "
+                f"requested_description_id='{description_id}' resolved_description_id='{resolved_description_id}'"
+            )
             return
 
         chunks = list(artifact.chunks or [])
         expected_chunks = len(chunks)
         now_ms = int(time.time() * 1000)
+        self._trace_robot_description(
+            f"[SDK chunks] begin_publish request_id={request_id} robot='{robot_name}' "
+            f"description_id='{resolved_description_id}' chunks={expected_chunks} "
+            f"encoded_bytes={int(getattr(artifact.manifest, 'mesh_asset_encoded_bytes', 0) or 0)}"
+        )
 
         begin = String()
         begin.data = json.dumps(
@@ -830,7 +943,7 @@ class RobotRegistryClient:
                 "ts_unix_ms": now_ms,
             }
         )
-        self.robot_description_chunk_begin_publisher.publish(begin)
+        begin_publisher.publish(begin)
         begin_delay = max(0.0, float(getattr(self, "_robot_description_chunk_begin_delay_s", 0.03)))
         if begin_delay > 0.0:
             time.sleep(begin_delay)
@@ -850,7 +963,12 @@ class RobotRegistryClient:
                     "chunk_data": chunk_data,
                 }
             )
-            self.robot_description_chunk_item_publisher.publish(item)
+            item_publisher.publish(item)
+            if index == 0 or index == expected_chunks - 1 or ((index + 1) % (50 if expected_chunks >= 200 else 10)) == 0:
+                self._trace_robot_description(
+                    f"[SDK chunks] item_publish request_id={request_id} robot='{robot_name}' "
+                    f"description_id='{resolved_description_id}' chunk_index={index} sent={index + 1}/{expected_chunks}"
+                )
             if item_delay > 0.0:
                 time.sleep(item_delay)
             if batch_pause > 0.0 and (index + 1) < expected_chunks and ((index + 1) % batch_size) == 0:
@@ -869,7 +987,12 @@ class RobotRegistryClient:
                 "ts_unix_ms": int(time.time() * 1000),
             }
         )
-        self.robot_description_chunk_end_publisher.publish(end)
+        end_publisher.publish(end)
+        self._trace_robot_description(
+            f"[SDK chunks] end_publish request_id={request_id} robot='{robot_name}' "
+            f"description_id='{resolved_description_id}' sent={expected_chunks}/{expected_chunks} "
+            f"reply_begin='{chunk_begin_topic}'"
+        )
 
     def _publish_sdk_registry_replay_once(self, entries, replay_request: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
         from .multi_operator_replay import publish_sdk_registry_replay_once
@@ -3173,6 +3296,11 @@ class RobotRegistryClient:
                     f"bytes={int(getattr(cached_artifact.manifest, 'mesh_asset_encoded_bytes', 0) or 0)}, "
                     f"chunks={int(len(getattr(cached_artifact, 'chunks', []) or []))})."
                 )
+                self._trace_robot_description(
+                    f"[SDK cache] hit robot='{robot_name}' "
+                    f"description_id='{str(getattr(cached_artifact.manifest, 'description_id', '') or '')}' "
+                    f"chunks={int(len(getattr(cached_artifact, 'chunks', []) or []))}"
+                )
                 return cached_container
 
         if not has_description_config:
@@ -3214,10 +3342,20 @@ class RobotRegistryClient:
                     f"Using cached robot-description artifact for '{robot_name}' "
                     f"(groups={artifact_groups}, bytes={artifact_bytes}, chunks={artifact_chunks})."
                 )
+                self._trace_robot_description(
+                    f"[SDK cache] resolver_hit robot='{robot_name}' "
+                    f"description_id='{str(getattr(artifact.manifest, 'description_id', '') or '')}' "
+                    f"groups={artifact_groups} bytes={artifact_bytes} chunks={artifact_chunks}"
+                )
             else:
                 cli.print_info(
                     f"Built robot-description artifact for '{robot_name}' "
                     f"(groups={artifact_groups}, bytes={artifact_bytes}, chunks={artifact_chunks})."
+                )
+                self._trace_robot_description(
+                    f"[SDK cache] built robot='{robot_name}' "
+                    f"description_id='{str(getattr(artifact.manifest, 'description_id', '') or '')}' "
+                    f"groups={artifact_groups} bytes={artifact_bytes} chunks={artifact_chunks}"
                 )
 
         container = {
@@ -3227,6 +3365,11 @@ class RobotRegistryClient:
         if robot_name:
             self._robot_description_by_robot[robot_name] = container
         self._robot_description_by_id[artifact.manifest.description_id] = container
+        self._trace_robot_description(
+            f"[SDK cache] stored robot='{robot_name}' "
+            f"description_id='{str(getattr(artifact.manifest, 'description_id', '') or '')}' "
+            f"cache_robots={len(self._robot_description_by_robot)} cache_ids={len(self._robot_description_by_id)}"
+        )
         return container
 
     def _remove_robot_description_cache(self, robot_name: str) -> None:
