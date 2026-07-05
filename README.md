@@ -29,7 +29,6 @@ npm run docs:start
 > [!IMPORTANT]
 > This repository owns the SDK/client orchestration layer of HORUS.
 > The ROS 2 bridge runtime is maintained in [`horus_ros2`](https://github.com/RICE-unige/horus_ros2), and the MR release/distribution repository is [`horus`](https://github.com/RICE-unige/horus).
-> Adjacent future services for copilot orchestration and scene understanding are now being developed separately in [`compass`](https://github.com/Omotoye/compass) and [`lenses`](https://github.com/Omotoye/lenses).
 
 ## Research Focus
 
@@ -47,31 +46,58 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | SDK + registration payloads | `horus_sdk` | Robot config modeling, metadata, monitor UX |
 | ROS 2 bridge runtime | `horus_ros2` | TCP/WebRTC bridge, ROS topic/service routing |
 | MR app runtime | `horus` | Unity Quest scene, workspace flow, in-headset UX |
-| Copilot/orchestration service | `compass` | Future conversational planning, approvals, and backend execution orchestration |
-| Scene understanding service | `lenses` | Future perception, scene graph generation, and semantic context |
 
 ## Repository Map
 
 | Path | Description |
 |---|---|
-| `python/horus/` | Main SDK implementation (bridge, sensors, dataviz, utils, plugins) |
+| `python/horus/` | Main SDK implementation (`bridge`, `robot`, `sensors`, `dataviz`, `description`, `experiments`, `color`, `core`, `utils`, `plugins`). Camera models live under `sensors/`. |
 | `python/examples/` | Curated, no-CLI SDK registration examples for normal user workflows |
+| `python/examples/experiments/` | Experiment/benchmark harness (orchestrator, sweeps, camera-capacity report, paper/i-RIM analysis) |
 | `python/examples/legacy/` | Full legacy fake-runtime and SDK demo catalog preserved for validation and advanced variants |
-| `python/examples/tools/` | Support utilities for legacy demos (for example asset fetchers) |
+| `python/examples/tools/` | Support utilities (asset fetchers, mesh-marker relays, splat fixtures, benchmarks) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
-| `cpp/` | C++ SDK native registration parity track |
-| `rust/` | Rust SDK native registration parity track |
+| `cpp/` | C++ native SDK: payload-contract parity across robot/sensors/dataviz/task/teleop/status, experiments, color, description (incl. STL baking), bridge, plugins, plus mirrored examples, benchmarks, and tests |
+| `rust/` | Rust native SDK: payload-contract parity across the same surface, plus mirrored examples, benches, and tests |
 
 > [!NOTE]
 > Python remains the most complete and actively used track for current experiments.
 
-## Rust/C++ Parity Status
+## Native SDKs (C++/Rust)
 
-- Canonical parity contract and fixtures remain in:
-  - `contracts/sdk_payload_contract.md`
-  - `contracts/fixtures/*.json`
-- C++ and Rust now build native registration payloads for the same MR-facing contract.
-- Native SDK docs live in the website docs under `docs/native-sdk/`.
+The C++ and Rust SDKs are at **payload-contract parity** with Python, not thin registration shims. Both build the same MR-facing typed payloads across:
+- `robot/` (`sensors`, `dataviz`, `task`, `teleop`, `status`) and Robot Manager / workspace / ROS-binding config,
+- `experiments/` (NDJSON/CSV metric writers, monotonic-anchored clock),
+- `color/` colour manager (per-scheme palettes with an MD5-deterministic fallback that matches Python byte-for-byte),
+- `description/` robot-description manifest at structural parity plus native STL visual-mesh baking (binary + ASCII → deduplicated base64 mesh assets, `supports_visual_meshes`),
+- `bridge/*` payloads and the `plugins/rosbot` model.
+
+Each native track mirrors the curated Python scenarios by basename under `cpp/examples/` and `rust/examples/`, with benchmarks in `cpp/benchmarks/` and `rust/benches/`, plus full test suites.
+
+Canonical parity contract and fixtures remain in `contracts/sdk_payload_contract.md` and `contracts/fixtures/*.json`.
+
+**Intentional parity boundary (documented scope decisions, not stubs):**
+- Live-bridge registration, ACK, keep-alive, and dashboard monitoring stay **Python-only** by design; native `register_*` returns an explicit unsupported-transport result.
+- DAE/OBJ baking, triangle-budget decimation, texture-colour hints, and `package://` resolution stay Python-only (NumPy + external converters); DAE/OBJ-only or `package://`-only mesh references are skipped rather than baked natively.
+
+Details: [docs/reference/implementation-status.md](docs/reference/implementation-status.md) and [docs/reference/known-limitations.md](docs/reference/known-limitations.md). Native SDK guides: [docs/native-sdk/cpp.md](docs/native-sdk/cpp.md), [docs/native-sdk/rust.md](docs/native-sdk/rust.md), [docs/native-sdk/performance.md](docs/native-sdk/performance.md).
+
+### Native build / test / run
+
+```bash
+# C++ (no-ROS payload build) - CMake project lives under cpp/
+cd ~/horus_sdk/cpp
+cmake -S . -B build_no_ros -DHORUS_ENABLE_ROS2=OFF
+cmake --build build_no_ros --parallel
+ctest --test-dir build_no_ros --output-on-failure
+
+# Rust - crate lives under rust/
+cd ~/horus_sdk/rust
+cargo test --all-targets
+cargo run --example ops_registration
+```
+
+Both `ops_registration` binaries print `HORUS native payload validation OK.`
 
 ## Requirements
 
@@ -120,7 +146,7 @@ The installer keeps your shell clean (no global venv auto-activation). Use:
 Install (development):
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
@@ -254,21 +280,6 @@ python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profil
 python3 python/examples/robot_description_registration.py
 ```
 
-For Compass tests, use the Compass-enabled variant of the same registration. Start the Compass voice gateway before accepting the workspace in HORUS MR.
-
-```bash
-# Terminal C
-cd ~/compass
-source .venv/bin/activate
-compass voice-gateway serve --host 0.0.0.0 --port 8088
-
-# Terminal B
-python3 python/examples/robot_description_compass_registration.py
-```
-
-That variant sends `workspace_config.compass` with the `compass.v1` defaults used by HORUS MR:
-`enabled=true`, `gateway_port=8088`, `voice_mode=auto`, and `autonomy=approve_actions`.
-
 ### Stereo camera registration
 
 Use this for the dual camera policy used by teleop: mono minimap stream plus side-by-side stereo teleop stream.
@@ -289,12 +300,14 @@ Use this to showcase a 2D occupancy-grid map layer. This workflow is paired with
 # One-time asset fetch
 python3 python/examples/tools/fetch_robot_description_assets.py
 
-# Terminal A: real-model robots plus occupancy grid
+# Terminal A: real-model robot bodies + TF + occupancy grid
 python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --publish-occupancy-grid
 
-# Terminal B: SDK registration
+# Terminal B: SDK registration (declares the /map occupancy-grid layer)
 python3 python/examples/occupancy_map_registration.py
 ```
+
+> Note: `occupancy_map_registration.py` binds the occupancy layer to the `/map` topic. The fake runtime above publishes a deterministic `nav_msgs/OccupancyGrid` on `/map`; for live systems, replace it with a `map_server` or SLAM source on the same topic.
 
 ### PointCloud Map
 
@@ -332,18 +345,6 @@ python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profil
 python3 python/examples/octomap_registration.py
 ```
 
-### Semantic perception registration
-
-Use this to register global semantic boxes, such as detected people or equipment, as default-visible DataViz layers.
-
-```bash
-# Terminal A
-python3 python/examples/legacy/fake_tf_ops_suite.py --robot-count 4
-
-# Terminal B
-python3 python/examples/semantic_perception_registration.py
-```
-
 ### Multi-operator note
 
 The curated registration examples all use `keep_alive=True`, so they remain suitable for host/join and private multi-operator validation. Start any example above before or during the shared HORUS MR session; joiners can receive the SDK registration replay from the active host-side SDK process.
@@ -351,6 +352,98 @@ The curated registration examples all use `keep_alive=True`, so they remain suit
 ### Legacy catalog
 
 The full legacy command catalog remains in [python/examples/legacy/README.md](python/examples/legacy/README.md). Use it for stress tests, advanced flag variants, Carter/live integrations, tutorial-specific flows, and lower-level validation.
+
+### Additional integrations
+
+These examples cover broader/experimental integrations beyond the curated core set.
+
+**Global maps (all layers together):**
+
+```bash
+python3 python/examples/tools/fetch_robot_description_assets.py
+python3 python/examples/global_maps_registration.py
+```
+
+**Semantic perception layer:** register shared semantic boxes as default-visible workspace overlays. Pair this with the standard ops fake runtime.
+
+```bash
+# Terminal A
+PYTHONPATH=python:$PYTHONPATH python3 python/examples/legacy/fake_tf_ops_suite.py --robot-count 4
+
+# Terminal B
+PYTHONPATH=python:$PYTHONPATH python3 python/examples/semantic_perception_registration.py
+```
+
+**Compass-enabled robot-description flow:** register the real-model robot-description fleet with workspace-scoped Compass metadata. Start the Compass voice gateway before accepting the workspace in HORUS MR.
+
+```bash
+# Terminal A
+cd ~/compass
+source .venv/bin/activate
+compass voice-gateway serve --host 0.0.0.0 --port 8088
+
+# Terminal B
+cd ~/horus_sdk
+python3 python/examples/tools/fetch_robot_description_assets.py
+PYTHONPATH=python:$PYTHONPATH python3 python/examples/robot_description_compass_registration.py
+```
+
+That registration sends the `workspace_config.compass` contract consumed by HORUS MR (`contract_version=compass.v1`, `enabled=true`, default `gateway_port=8088`, and `autonomy=approve_actions`).
+
+**Gaussian Splat / DataViz (experimental):** register the Gaussian Splat fixture preview with a pointcloud fallback. Fetch the fixture dataset, publish it as ROS 2 test data, then register.
+
+```bash
+# One-time fixture fetch
+python3 python/examples/tools/fetch_gaussian_splat_fixtures.py --bundle prebuilt --scene drjohnson --iteration 7000
+
+# Terminal A: publish the splat fixture (live ROS 2 publisher)
+python3 python/examples/tools/publish_gaussian_splat_fixture.py --splat-render-count 0
+
+# Terminal B: SDK registration
+python3 python/examples/gaussian_splat_fixture_registration.py
+```
+
+**UAV sim (`uav_sim_horus`):** register a UAV against the live HORUS app/bridge with goal + octomap relays. `uav_sim_horus_registration.py` supports `--dry-run`/`--once`; the drone-action relay requires ROS 2.
+
+```bash
+# Offline validation
+python3 python/examples/uav_sim_horus_registration.py --dry-run --once --goal-transform map_to_ned --octomap-marker-style surface_mesh
+
+# Drone action/goal relay (requires ROS 2; no --dry-run)
+python3 python/examples/uav_sim_horus_drone_actions.py --robot-name arancino_uav --command-topic /uav_sim/command --goal-input-topic /arancino_uav/goal --goal-output-topic /uav_sim/goal --goal-transform enu --no-goal-relay
+```
+
+**H-CoRE heterogeneous (drone + rover):** prefer the full-featured variant, which supports offline `--dry-run --once`.
+
+```bash
+python3 python/examples/hcore_heterogeneous_registration.py --dry-run --once --octomap-marker-style surface_mesh
+```
+
+> [!WARNING]
+> `simple_hcore_heterogeneous_registration.py` has no `--help`/`--dry-run` guard: it spawns live H-Core bridges and attempts a live ROS 2/HORUS connection immediately on run. Use it only with the full H-Core stack.
+
+**Fleet / showroom robot description:** register a heterogeneous 5-robot showroom fleet with real URDF meshes. See [python/examples/FLEET_ROBOT_DESCRIPTION_DEMO.md](python/examples/FLEET_ROBOT_DESCRIPTION_DEMO.md).
+
+```bash
+python3 python/examples/tools/fetch_robot_description_assets.py --force
+
+# Offline validation
+python3 python/examples/fleet_robot_description_registration.py --dry-run --source local --body-mesh-mode runtime_high_mesh
+
+# Supporting nodes for live/showroom runs
+python3 python/examples/launch/fleet_robot_state_publishers.launch.py
+python3 python/examples/tools/showroom_tf_support_node.py
+python3 python/examples/robot_description_showroom_specs.py
+```
+
+## Experiments & Benchmarks
+
+The SDK ships an experiment/benchmark harness under `python/examples/experiments/` (orchestrator, sweeps, synthetic workloads, camera-capacity report, and paper/i-RIM analysis) plus a serializer throughput microbenchmark.
+
+```bash
+# Python serializer throughput (positional iteration count, default 50000; do NOT pass --help)
+python3 python/examples/tools/throughput_benchmark.py 50000
+```
 
 ## Camera Registration Model
 
@@ -397,11 +490,11 @@ Current SDK-side robot task support includes:
 ## Global Visualization and Workspace Config Model
 
 Registration payloads can now include:
-- `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid, 3D maps, octomap mesh layers, and semantic boxes),
+- `global_visualizations` (deduped, robot-independent visual layers such as occupancy grid, 3D maps, octomap mesh layers, Gaussian Splat layers, and semantic boxes),
 - `workspace_config.position_scale` (global scale hint consumed by MR runtime),
 - `workspace_config.compass` for the approval-gated Compass copilot contract (`enabled`, `gateway_port`, `voice_mode`, `autonomy`, `contract_version`).
 
-This enables workspace-level visualization wiring without duplicating map or semantic-layer config in each robot-scoped visualization block. In current MR builds, global semantic layers are default-visible for all operators, while a user closing/hiding a layer is treated as a local display choice.
+This enables workspace-level visualization wiring without duplicating map or semantic-layer config in each robot-scoped visualization block. In current MR builds, global visualization layers are default-visible for all operators, while a user closing/hiding a layer is treated as a local display choice.
 
 ## Dashboard Semantics
 
@@ -490,15 +583,15 @@ The MR roadmap introduces upcoming requirements that depend on SDK payload and o
 - Session recording + after-action replay data contracts.
 - Resource-aware streaming policy signals (quality tiers, priority, stream caps).
 - Persistent mission objects (pins/annotations/evidence/task assignment).
-- Safety and semantic-perception signals for teleop and supervision, with future scene-context sources expected from `lenses`.
-- Multi-operator and copilot-oriented orchestration scenarios, with future copilot workflows expected from `compass`.
+- Safety signals for teleop and supervision.
+- Multi-operator orchestration scenarios.
 
 SDK roadmap and examples should evolve to provide the metadata, presets, and validation scripts needed for these MR milestones.
 
 ## Roadmap
 
 > [!NOTE]
-> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features. Current baseline includes compatibility guardrail tests, curated no-CLI examples, preserved legacy examples, semantic configuration helpers, description-driven visual mesh bodies with Collada/DAE baking, Carter and Unitree live registrations, global map/semantic visualization examples, flat single-robot ROS-binding compatibility, multi-operator registration replay, and the separate initialization of `compass` and `lenses` as adjacent future services.
+> SDK roadmap items are scoped to payload schemas, orchestration policies, and validation workflows that unlock MR/runtime features. Current baseline includes compatibility guardrail tests, curated no-CLI examples, preserved legacy examples, semantic configuration helpers, description-driven visual mesh bodies with Collada/DAE baking, Carter and Unitree live registrations, global map visualization examples, flat single-robot ROS-binding compatibility, and multi-operator registration replay.
 
 | Track | Status | SDK Baseline | Next Milestone |
 |---|---|---|---|
@@ -518,9 +611,10 @@ SDK roadmap and examples should evolve to provide the metadata, presets, and val
 | Persistent Mission Objects | :white_circle: Planned | - | Add shared mission-object schema (pins, notes, attachments, assignees, lifecycle). |
 | Manipulator Teleoperation | :white_circle: Planned | - | Add manipulator capability descriptors (joint/EEF/gripper limits, home poses, safety envelopes). |
 | Mobile Manipulator Coordination | :white_circle: Planned | Base and manipulator are modeled independently today. | Add combined base+arm action primitives and coordination metadata. |
-| Semantic Perception Layers | :large_orange_diamond: In progress | Semantic box payloads and a curated semantic perception registration example are integrated as global visualization layers; `lenses` remains the future richer scene-understanding producer. | Add semantic tracks, class dictionaries, confidence/staleness styling, segmentation/depth overlays, uncertainty, spatial anchoring, and scene-context references aligned with `lenses` outputs. |
-| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility now tracks shared-host, shared-join, and private-workspace operators; multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, replay-triggered map/semantic layer replay behavior, and direct private-operator replay support are integrated. | Add richer operator identity/lease observability summaries, explicit ownership metadata schemas, layer visibility ownership semantics, and stronger rejoin/replay validation suites. |
-| AI Copilot Orchestration | :large_orange_diamond: In progress | `workspace_config.compass` now carries the stable `compass.v1` enablement contract, the robot-description Compass example is the canonical MR fake-fleet registration, and autonomy is fixed to `approve_actions`. | Add integration smoke tests that start HORUS bridge, the fake robot-description suite, the Compass voice gateway, and the Compass registration together. |
+| Semantic Perception Layers | :large_orange_diamond: In progress | Semantic box payloads and a curated semantic perception registration example are integrated as global visualization layers; richer scene understanding remains outside the SDK and can feed this contract later. | Add semantic tracks, class dictionaries, confidence/staleness styling, segmentation/depth overlays, uncertainty, and scene-context references. |
+| Multi-Operator Orchestration | :large_orange_diamond: In progress | SDK dashboard presence visibility now tracks shared-host, shared-join, and private-workspace operators; multi-operator host demo workflow, bridge auto-start hardening, SDK registry replay protocol publishing, replay-triggered map/visualization layer replay behavior, and direct private-operator replay support are integrated. | Add richer operator identity/lease observability summaries, explicit ownership metadata schemas, layer visibility ownership semantics, and stronger rejoin/replay validation suites. |
+| Gaussian Splat / DataViz | :large_orange_diamond: In progress | Experimental Gaussian Splat DataViz payloads (`dataviz/{dataviz,models}.py`, `bridge/robot_registry.py` splat refs), the `gaussian_splat_fixture_registration.py` example, fetch/publish fixture tools, a PointCloud2 fallback, and C++/Rust parity are integrated. | Validate Quest/XR splat rendering for dense assets beyond the small diagnostic fixtures. |
+| AI Copilot Orchestration | :large_orange_diamond: In progress | `workspace_config.compass` carries the stable `compass.v1` enablement contract, and `robot_description_compass_registration.py` is the canonical MR fake-fleet registration for Compass validation. | Add integration smoke tests that start the HORUS bridge, fake robot-description suite, Compass voice gateway, and Compass registration together. |
 
 ## Citation
 
@@ -568,8 +662,6 @@ Developed by **RICE Lab**, University of Genoa.
 
 - MR runtime: <https://github.com/RICE-unige/horus>
 - ROS 2 bridge runtime: <https://github.com/RICE-unige/horus_ros2>
-- Copilot/orchestration service: <https://github.com/Omotoye/compass>
-- Scene-understanding service: <https://github.com/Omotoye/lenses>
 
 ## License
 
