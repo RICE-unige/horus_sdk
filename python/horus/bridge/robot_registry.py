@@ -105,14 +105,28 @@ class RobotRegistryClient:
 
     def _get_robot_description_chunk_publisher(self, topic: str):
         """Return a std_msgs/String publisher for a robot-description chunk reply topic."""
-        if self.node is None:
-            return None
-
         resolved_topic = str(topic or "").strip()
         if not resolved_topic.startswith("/"):
             return None
 
-        publisher = self._robot_description_chunk_publishers.get(resolved_topic)
+        legacy_publishers = {
+            "/horus/robot_description/chunk_begin": self.robot_description_chunk_begin_publisher,
+            "/horus/robot_description/chunk_item": self.robot_description_chunk_item_publisher,
+            "/horus/robot_description/chunk_end": self.robot_description_chunk_end_publisher,
+        }
+        publisher = legacy_publishers.get(resolved_topic)
+        if publisher is not None:
+            return publisher
+
+        if self.node is None:
+            return None
+
+        publishers = getattr(self, "_robot_description_chunk_publishers", None)
+        if publishers is None:
+            publishers = {}
+            self._robot_description_chunk_publishers = publishers
+
+        publisher = publishers.get(resolved_topic)
         if publisher is not None:
             return publisher
 
@@ -126,7 +140,7 @@ class RobotRegistryClient:
             self._robot_description_chunk_qos = qos
 
         publisher = self.node.create_publisher(String, resolved_topic, qos)
-        self._robot_description_chunk_publishers[resolved_topic] = publisher
+        publishers[resolved_topic] = publisher
         self._trace_robot_description(f"[SDK chunks] dynamic_publisher_ready topic='{resolved_topic}'")
         return publisher
 
