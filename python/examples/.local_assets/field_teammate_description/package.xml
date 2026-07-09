@@ -1,0 +1,7 @@
+<package format="3">
+  <name>field_teammate_description</name>
+  <version>0.1.0</version>
+  <description>Low-poly human field teammate body used by HORUS SDK examples.</description>
+  <maintainer email="omotoye.adekoya@edu.unige.it">Omotoye Adekoya</maintainer>
+  <license>MIT</license>
+</package>

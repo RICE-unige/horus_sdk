@@ -332,11 +332,11 @@ class RobotMeshBaker:
                 if normalized_path is None or not normalized_path.is_file():
                     return None
 
-                vertices, faces, color_rgb = self._parse_obj_mesh(normalized_path)
+                vertices, faces, color_rgb, colors = self._parse_obj_mesh(normalized_path)
                 if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
                     return None
 
-                cached = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=color_rgb)
+                cached = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=color_rgb, colors=colors)
 
             if cached is None or len(cached.vertices) == 0 or len(cached.faces) == 0:
                 return None
@@ -354,9 +354,15 @@ class RobotMeshBaker:
         if normalized_path is not None and normalized_path.is_file():
             decimated_path = self._decimate_obj_with_blender(normalized_path, int(target_faces))
             if decimated_path is not None and decimated_path.is_file():
-                vertices, faces, _ = self._parse_obj_mesh(decimated_path)
+                vertices, faces, _, colors = self._parse_obj_mesh(decimated_path)
                 if vertices is not None and faces is not None and len(vertices) > 0 and len(faces) > 0:
-                    decimated = SourceMeshData(vertices=vertices, faces=faces, normals=None, color_rgb=cached.color_rgb)
+                    decimated = SourceMeshData(
+                        vertices=vertices,
+                        faces=faces,
+                        normals=None,
+                        color_rgb=cached.color_rgb,
+                        colors=colors,
+                    )
                     self._decimated_cache[decimated_key] = decimated
                     return decimated
 
@@ -1130,8 +1136,9 @@ class RobotMeshBaker:
     def _parse_obj_mesh(
         self,
         source_path: Path,
-    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
         vertices: List[Tuple[float, float, float]] = []
+        vertex_colors: List[Tuple[float, float, float, float]] = []
         faces: List[Tuple[int, int, int]] = []
         color_rgb: Optional[np.ndarray] = None
         material_colors: Dict[str, np.ndarray] = {}
@@ -1148,6 +1155,17 @@ class RobotMeshBaker:
                     parts = line.split()
                     if len(parts) >= 4:
                         vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+                        if len(parts) >= 7:
+                            vertex_colors.append(
+                                (
+                                    float(parts[4]),
+                                    float(parts[5]),
+                                    float(parts[6]),
+                                    float(parts[7]) if len(parts) >= 8 else 1.0,
+                                )
+                            )
+                        else:
+                            vertex_colors.append((math.nan, math.nan, math.nan, math.nan))
                     continue
                 if line.startswith("mtllib "):
                     mtllib_name = line.split(maxsplit=1)[1].strip()
@@ -1172,12 +1190,26 @@ class RobotMeshBaker:
                     faces.extend(_triangulate_face(face_indices))
 
         if not vertices or not faces:
-            return None, None, None
+            return None, None, None, None
+
+        colors = None
+        if len(vertex_colors) == len(vertices):
+            raw_colors = np.asarray(vertex_colors, dtype=np.float32)
+            if raw_colors.ndim == 2 and raw_colors.shape[1] >= 4:
+                valid = np.isfinite(raw_colors[:, :3]).all(axis=1)
+                if np.any(valid):
+                    fallback = color_rgb if color_rgb is not None else np.asarray([0.78, 0.78, 0.76], dtype=np.float32)
+                    raw_colors[~valid, :3] = fallback[:3]
+                    raw_colors[~valid, 3] = 1.0
+                    colors = np.clip(raw_colors[:, :4], 0.0, 1.0).astype(np.float32, copy=False)
+                    if color_rgb is None:
+                        color_rgb = np.clip(colors[:, :3].mean(axis=0), 0.0, 1.0).astype(np.float32, copy=False)
 
         return (
             np.asarray(vertices, dtype=np.float32),
             np.asarray(faces, dtype=np.int32),
             color_rgb.astype(np.float32, copy=False) if color_rgb is not None else None,
+            colors,
         )
 
     def _parse_mtl_colors(self, mtl_path: Path) -> Dict[str, np.ndarray]:

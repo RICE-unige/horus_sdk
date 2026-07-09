@@ -653,6 +653,7 @@ class Robot:
         include_visual_meshes: bool = True,
         visual_mesh_triangle_budget: int = 90000,
         body_mesh_mode: str = "preview_mesh",
+        visual_link_pose_source: str = "static",
         enabled: bool = True,
     ) -> None:
         """Configure robot description resolution for MR collision/joint visualization.
@@ -688,6 +689,7 @@ class Robot:
                 include_visual_meshes=include_visual_meshes,
                 visual_mesh_triangle_budget=visual_mesh_triangle_budget,
                 body_mesh_mode=body_mesh_mode,
+                visual_link_pose_source=visual_link_pose_source,
                 enabled=enabled,
             ).to_payload(),
         )
@@ -781,6 +783,9 @@ class Robot:
         can_clarify: bool = True,
         can_reject: bool = True,
         can_complete: bool = True,
+        profile_height_m: float = 1.75,
+        profile_sex: str = "unspecified",
+        body_model: str = "meta_avatar",
         guidable: bool = True,
         observable: bool = True,
         communicative: bool = True,
@@ -836,6 +841,9 @@ class Robot:
                 can_clarify=can_clarify,
                 can_reject=can_reject,
                 can_complete=can_complete,
+                profile_height_m=profile_height_m,
+                profile_sex=profile_sex,
+                body_model=body_model,
             ).to_payload(),
         )
 
@@ -1054,6 +1062,9 @@ class FieldTeammate(Robot):
         can_clarify: bool = True,
         can_reject: bool = True,
         can_complete: bool = True,
+        profile_height_m: float = 1.75,
+        profile_sex: str = "unspecified",
+        body_model: str = "meta_avatar",
         guidable: bool = True,
         observable: bool = True,
         communicative: bool = True,
@@ -1064,8 +1075,9 @@ class FieldTeammate(Robot):
             metadata=dict(metadata or {}),
             dimensions=dimensions,
         )
+        topic_leaf = normalize_topic_leaf(self.name, "field_teammate")
         resolved_base_frame = self._normalize_frame_token(
-            base_frame, f"{self.name}/base"
+            base_frame, f"{topic_leaf}/base"
         )
         self.configure_ros_binding(base_frame=resolved_base_frame)
         self.configure_field_teammate(
@@ -1086,6 +1098,9 @@ class FieldTeammate(Robot):
             can_clarify=can_clarify,
             can_reject=can_reject,
             can_complete=can_complete,
+            profile_height_m=profile_height_m,
+            profile_sex=profile_sex,
+            body_model=body_model,
             guidable=guidable,
             observable=observable,
             communicative=communicative,

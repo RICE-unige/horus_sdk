@@ -1,1 +1,3 @@
-.local_assets/
+.local_assets/*
+!.local_assets/field_teammate_description/
+!.local_assets/field_teammate_description/**

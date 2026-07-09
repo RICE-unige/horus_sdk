@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
+import re
 from typing import Any, Dict, Optional
 
 
@@ -26,6 +27,8 @@ def normalize_topic_prefix(value: Any) -> str:
 
 def normalize_topic_leaf(value: Any, default: str = "") -> str:
     normalized = str(value or "").strip().strip("/")
+    normalized = re.sub(r"[^A-Za-z0-9_]+", "_", normalized)
+    normalized = re.sub(r"_+", "_", normalized).strip("_")
     return normalized or default
 
 
@@ -492,6 +495,7 @@ class RobotDescriptionConfig:
     include_visual_meshes: bool = True
     visual_mesh_triangle_budget: int = 90000
     body_mesh_mode: str = "preview_mesh"
+    visual_link_pose_source: str = "static"
     enabled: bool = True
 
     @classmethod
@@ -510,6 +514,7 @@ class RobotDescriptionConfig:
         include_visual_meshes: Any = True,
         visual_mesh_triangle_budget: Any = 90000,
         body_mesh_mode: Any = "preview_mesh",
+        visual_link_pose_source: Any = "static",
         enabled: Any = True,
     ) -> "RobotDescriptionConfig":
         normalized_body_mesh_mode = str(body_mesh_mode or "preview_mesh").strip().lower()
@@ -526,6 +531,10 @@ class RobotDescriptionConfig:
         if normalized_source not in {"local", "ros", "topic"}:
             normalized_source = "ros"
 
+        normalized_pose_source = str(visual_link_pose_source or "static").strip().lower()
+        if normalized_pose_source not in {"static", "tf"}:
+            normalized_pose_source = "static"
+
         return cls(
             urdf_path=str(urdf_path or ""),
             base_frame=str(base_frame or "base_link"),
@@ -540,6 +549,7 @@ class RobotDescriptionConfig:
             include_visual_meshes=resolved_include_visual_meshes,
             visual_mesh_triangle_budget=int(max(2000, min(500000, coerce_int(visual_mesh_triangle_budget, 90000)))),
             body_mesh_mode=normalized_body_mesh_mode,
+            visual_link_pose_source=normalized_pose_source,
             enabled=bool(enabled),
         )
 
@@ -559,6 +569,7 @@ class RobotDescriptionConfig:
             "include_visual_meshes": self.include_visual_meshes,
             "visual_mesh_triangle_budget": self.visual_mesh_triangle_budget,
             "body_mesh_mode": self.body_mesh_mode,
+            "visual_link_pose_source": self.visual_link_pose_source,
         }
 
 
@@ -691,6 +702,9 @@ class FieldTeammateConfig:
     can_clarify: bool = True
     can_reject: bool = True
     can_complete: bool = True
+    profile_height_m: float = 1.75
+    profile_sex: str = "unspecified"
+    body_model: str = "meta_avatar"
     contract_version: str = "field_teammate.v1"
 
     _SUPPORTED_WEARABLES = ("hololens2", "aria", "quest_pro", "generic")
@@ -717,6 +731,9 @@ class FieldTeammateConfig:
         can_clarify: Any = True,
         can_reject: Any = True,
         can_complete: Any = True,
+        profile_height_m: Any = 1.75,
+        profile_sex: Any = "unspecified",
+        body_model: Any = "meta_avatar",
         contract_version: Any = "field_teammate.v1",
     ) -> "FieldTeammateConfig":
         prefix = _field_teammate_topic_prefix(name)
@@ -729,6 +746,20 @@ class FieldTeammateConfig:
         normalized_contract = str(contract_version or "field_teammate.v1").strip()
         if not normalized_contract:
             normalized_contract = "field_teammate.v1"
+
+        try:
+            normalized_height = float(profile_height_m)
+        except (TypeError, ValueError):
+            normalized_height = 1.75
+        normalized_height = max(1.35, min(2.10, normalized_height))
+
+        normalized_sex = str(profile_sex or "unspecified").strip().lower()
+        if normalized_sex not in {"female", "male", "unspecified"}:
+            normalized_sex = "unspecified"
+
+        normalized_body_model = str(body_model or "meta_avatar").strip().lower()
+        if not normalized_body_model:
+            normalized_body_model = "meta_avatar"
 
         def _topic(value: Any, default: str) -> str:
             text = str(value or "").strip()
@@ -768,6 +799,9 @@ class FieldTeammateConfig:
             can_clarify=bool(can_clarify),
             can_reject=bool(can_reject),
             can_complete=bool(can_complete),
+            profile_height_m=normalized_height,
+            profile_sex=normalized_sex,
+            body_model=normalized_body_model,
             contract_version=normalized_contract,
         )
 
@@ -793,6 +827,11 @@ class FieldTeammateConfig:
                 "can_clarify": self.can_clarify,
                 "can_reject": self.can_reject,
                 "can_complete": self.can_complete,
+            },
+            "profile": {
+                "human_height_m": self.profile_height_m,
+                "sex": self.profile_sex,
+                "body_model": self.body_model,
             },
             "contract_version": self.contract_version,
         }

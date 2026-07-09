@@ -101,6 +101,7 @@ class RobotDescriptionV2:
     version: str
     robot_name: str
     base_frame: str
+    visual_link_pose_source: str = "static"
     links: List[CompiledLink] = field(default_factory=list)
     joints: List[CompiledJoint] = field(default_factory=list)
     visual_links: List[CompiledVisual] = field(default_factory=list)
@@ -111,6 +112,7 @@ class RobotDescriptionV2:
             "version": self.version,
             "robot_name": self.robot_name,
             "base_frame": self.base_frame,
+            "visual_link_pose_source": self.visual_link_pose_source,
             "links": [entry.to_dict() for entry in self.links],
             "joints": [entry.to_dict() for entry in self.joints],
         }

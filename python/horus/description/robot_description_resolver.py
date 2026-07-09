@@ -256,6 +256,7 @@ class RobotDescriptionResolveConfig:
     include_visual_meshes: bool = True
     visual_mesh_triangle_budget: int = 90000
     body_mesh_mode: str = "preview_mesh"
+    visual_link_pose_source: str = "static"
 
 
 class RobotDescriptionResolver:
@@ -300,6 +301,7 @@ class RobotDescriptionResolver:
                     "include_visual_meshes": bool(config.include_visual_meshes),
                     "body_mesh_mode": config.body_mesh_mode,
                     "visual_mesh_triangle_budget": int(config.visual_mesh_triangle_budget),
+                    "visual_link_pose_source": config.visual_link_pose_source,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -441,6 +443,9 @@ class RobotDescriptionResolver:
 
         raw_body_mesh_mode = config.get("body_mesh_mode", "preview_mesh")
         body_mesh_mode = _normalize_body_mesh_mode(raw_body_mesh_mode)
+        visual_link_pose_source = str(config.get("visual_link_pose_source", "static") or "static").strip().lower()
+        if visual_link_pose_source not in {"static", "tf"}:
+            visual_link_pose_source = "static"
 
         default_budget = 240000 if body_mesh_mode == "runtime_high_mesh" else 90000
         visual_mesh_triangle_budget = config.get("visual_mesh_triangle_budget", default_budget)
@@ -467,6 +472,7 @@ class RobotDescriptionResolver:
             include_visual_meshes=include_visual_meshes,
             visual_mesh_triangle_budget=max(2000, min(500000, visual_mesh_triangle_budget)),
             body_mesh_mode=body_mesh_mode,
+            visual_link_pose_source=visual_link_pose_source,
         )
 
     def _resolve_urdf_xml(self, config: RobotDescriptionResolveConfig) -> Tuple[str, str]:
@@ -926,6 +932,7 @@ class RobotDescriptionResolver:
             version="v2",
             robot_name=robot_name,
             base_frame=base_frame,
+            visual_link_pose_source=config.visual_link_pose_source,
             links=links,
             joints=joints,
             visual_links=visual_links,

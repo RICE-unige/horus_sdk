@@ -1,0 +1,26 @@
+Field-teammate human body mesh
+==============================
+
+File: field_teammate_human_body.obj
+
+Source: MakeHuman "hm08" base mesh (makehuman/data/3dobjs/base.obj)
+        https://github.com/makehumancommunity/makehuman
+
+License: CC0 1.0 Universal (Public Domain Dedication)
+         https://creativecommons.org/publicdomain/zero/1.0/
+
+The MakeHuman base mesh was explicitly released to the public domain under
+CC0 1.0 in September 2020 by Data Collection AB, Joel Palmius, and Jonas
+Hauquier (see the header of the upstream base.obj and the MakeHuman
+repository LICENSE.md, section C, "The base mesh and proxies").
+
+CC0 imposes no attribution requirement; the credit above is provided as a
+courtesy and for provenance.
+
+Modifications from upstream:
+  - Extracted only the visible "body" geometry group (dropped MakeHuman
+    helper / rig / clothing cages and joint-marker cubes); vertex
+    coordinates are unchanged.
+  - Re-posed for HORUS via the URDF <origin> / <mesh scale> only (the .obj
+    geometry itself is unmodified): MakeHuman is +Y up / faces +Z; the URDF
+    rotates it to ROS +X-forward, +Z-up, feet at z=0, scaled to ~1.75 m.

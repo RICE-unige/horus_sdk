@@ -15,7 +15,13 @@ import pytest
 
 from horus.bridge.registration_payload import FieldTeammateSafetyError
 from horus.bridge.robot_registry import RobotRegistryClient
-from horus.robot import EntityCapabilities, FieldTeammate, Robot, RobotType
+from horus.description.robot_description_resolver import RobotDescriptionResolver
+from horus.robot import EntityCapabilities, FieldTeammate, Robot, RobotDimensions, RobotType
+
+from examples.tools.field_teammate_articulated_assets import (
+    FieldTeammateProfile,
+    ensure_field_teammate_articulated_assets,
+)
 
 
 _FIXTURE = (
@@ -23,6 +29,14 @@ _FIXTURE = (
     / "contracts"
     / "fixtures"
     / "field_teammate_hololens.json"
+)
+_HUMAN_URDF = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / ".local_assets"
+    / "field_teammate_description"
+    / "urdf"
+    / "field_teammate_human.urdf"
 )
 
 
@@ -70,6 +84,67 @@ def test_field_teammate_capabilities_are_default_deny():
 def test_field_teammate_has_no_dimensions_by_default():
     config = _payload(FieldTeammate("ft"))
     assert "dimensions" not in config
+
+
+def test_field_teammate_human_model_is_baked(tmp_path):
+    profile = FieldTeammateProfile(height_m=1.78, sex="female")
+    bundle = ensure_field_teammate_articulated_assets(profile, cache_root=tmp_path)
+    teammate = FieldTeammate(
+        "field_teammate_1",
+        dimensions=RobotDimensions(length=0.34, width=0.38, height=profile.normalized_height_m),
+        profile_height_m=profile.normalized_height_m,
+        profile_sex=profile.normalized_sex,
+        body_model="skinned_profile_v1",
+    )
+    teammate.configure_robot_description(
+        source="local",
+        urdf_path=str(bundle.urdf_path),
+        base_frame="base",
+        mesh_root=str(bundle.mesh_root),
+        include_visual_meshes=True,
+        visual_mesh_triangle_budget=80000,
+        body_mesh_mode="runtime_high_mesh",
+        visual_link_pose_source="static",
+    )
+
+    config = _payload(teammate)
+    assert config["field_teammate_config"]["profile"] == {
+        "human_height_m": profile.normalized_height_m,
+        "sex": "female",
+        "body_model": "skinned_profile_v1",
+    }
+    manifest = config["robot_description_manifest"]
+    assert manifest["base_frame"] == "base"
+    assert manifest["supports_visual_meshes"] is True
+    assert manifest["mesh_asset_count"] == 1
+    assert config["capabilities"]["controllable"] is False
+
+    artifact = RobotDescriptionResolver().resolve_for_robot(teammate)
+    assert artifact is not None
+    assert artifact.payload_dict["visual_link_pose_source"] == "static"
+    assets = artifact.payload_dict["mesh_assets"]
+    total_triangles = sum(int(asset["triangle_count"]) for asset in assets)
+    assert 12000 < total_triangles < 80000
+    assert len(artifact.payload_dict["visual_links"]) == 1
+    assert assets[0]["colors_b64"], "skinned human mesh must preserve baked vertex colors"
+
+    # Orientation/placement contract: the body stands upright with feet at z=0,
+    # profile height tall, and is thinner front-to-back (X) than side-to-side (Y) so it
+    # faces +X, the camera/FPV forward axis. If this regresses (e.g. the URDF
+    # rotation is reverted), the projected FPV view lands beside the face.
+    visuals_by_mesh = {visual["mesh_id"]: visual for visual in artifact.payload_dict["visual_links"]}
+    world_mins = []
+    world_maxs = []
+    for asset in assets:
+        visual = visuals_by_mesh[asset["mesh_id"]]
+        origin = visual["origin_xyz"]
+        world_mins.append([origin[i] + asset["bounds_min"][i] for i in range(3)])
+        world_maxs.append([origin[i] + asset["bounds_max"][i] for i in range(3)])
+    bmin = [min(bounds[i] for bounds in world_mins) for i in range(3)]
+    bmax = [max(bounds[i] for bounds in world_maxs) for i in range(3)]
+    assert abs(bmin[2]) < 0.05, f"feet not at z=0: {bmin[2]}"
+    assert 1.6 < bmax[2] < 2.0, f"unexpected body height: {bmax[2]}"
+    assert (bmax[0] - bmin[0]) < (bmax[1] - bmin[1]), "body does not face +X"
 
 
 def test_configure_field_teammate_on_plain_robot():
@@ -137,3 +212,57 @@ def test_entity_capabilities_value_object_merge():
     assert merged.controllable is False
     assert merged.guidable is True
     assert merged.communicative is False
+
+
+def test_field_teammate_topic_contract_frozen():
+    """Freeze the field_teammate.v1 topic shapes.
+
+    The live relay is owned by horus_connector
+    (scripts/field_teammate_hololens_relay.py, the "teammate" role) and
+    hardcodes these topic shapes WITHOUT importing the SDK. The connector has
+    its own dry-run contract test and Zenoh transport-scope test. If this test
+    ever needs updating, update BOTH connector files in lockstep and bump the
+    contract version.
+    """
+    teammate = FieldTeammate("field_teammate_1")
+    config = teammate.get_field_teammate_config() or {}
+    assert config.get("contract_version") == "field_teammate.v1"
+    assert (config.get("topics") or {}) == {
+        "first_person_video": "/field_teammate_1/fpv/image_raw/compressed",
+        "localization_confidence": "/field_teammate_1/localization_confidence",
+        "guidance_request": "/field_teammate_1/guidance/request",
+        "guidance_response": "/field_teammate_1/guidance/response",
+        "guidance_state": "/field_teammate_1/guidance/state",
+        "guidance_annotation": "/field_teammate_1/guidance/annotation",
+        "guidance_route": "/field_teammate_1/guidance/route",
+        "guidance_warning": "/field_teammate_1/guidance/warning",
+        "status": "/field_teammate_1/status",
+        "audio": "/field_teammate_1/audio/message",
+    }
+
+
+def test_field_teammate_name_is_sanitized_for_ros_topic_contract():
+    """Keep SDK topic derivation aligned with the connector relay.
+
+    The live connector relay cannot publish ROS topics with spaces, hyphens, or
+    other punctuation in the teammate namespace. The SDK registration payload
+    must sanitize names the same way, otherwise HORUS can register one namespace
+    while the relay publishes another.
+    """
+    teammate = FieldTeammate("field-teammate 1/dev")
+    config = teammate.get_field_teammate_config() or {}
+
+    assert config["base_frame"] == "field_teammate_1_dev/base"
+    assert config["camera_frame"] == "field_teammate_1_dev/camera"
+    assert (config.get("topics") or {}) == {
+        "first_person_video": "/field_teammate_1_dev/fpv/image_raw/compressed",
+        "localization_confidence": "/field_teammate_1_dev/localization_confidence",
+        "guidance_request": "/field_teammate_1_dev/guidance/request",
+        "guidance_response": "/field_teammate_1_dev/guidance/response",
+        "guidance_state": "/field_teammate_1_dev/guidance/state",
+        "guidance_annotation": "/field_teammate_1_dev/guidance/annotation",
+        "guidance_route": "/field_teammate_1_dev/guidance/route",
+        "guidance_warning": "/field_teammate_1_dev/guidance/warning",
+        "status": "/field_teammate_1_dev/status",
+        "audio": "/field_teammate_1_dev/audio/message",
+    }

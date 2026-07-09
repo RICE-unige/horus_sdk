@@ -54,6 +54,11 @@
       "can_reject": true,
       "can_complete": true
     },
+    "profile": {
+      "human_height_m": 1.75,
+      "sex": "unspecified",
+      "body_model": "meta_avatar"
+    },
     "contract_version": "field_teammate.v1"
   }
 }

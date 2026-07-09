@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!--
+  Field-teammate human body model.
+
+  Mesh: MakeHuman "hm08" base mesh, public domain (CC0 1.0).
+        See ../vendor/makehuman_hm08_cc0/LICENSE.txt
+        A bare, realistically-proportioned neutral standing body (the
+        SAM 3D Body / SMPL-X aesthetic), not a stylized character.
+
+  Orientation: MakeHuman native = +Y up, faces +Z, ~2 m tall in native units.
+  The transform below re-poses it into the ROS `base` frame:
+      rpy 1.5707963268 0 1.5707963268  -> +Z up, faces +X (the camera/FPV
+                                          forward axis), so the projected FPV
+                                          view sits in FRONT of the face.
+      scale 0.105                       -> ~1.75 m tall.
+      origin z 0.858                    -> feet at z=0.
+      origin x -0.116                   -> body front/back centred over the feet.
+-->
+<robot name="field_teammate_human">
+  <link name="base">
+    <visual name="human_body">
+      <origin xyz="-0.116 0.0 0.858" rpy="1.5707963268 0 1.5707963268"/>
+      <geometry>
+        <mesh filename="../vendor/makehuman_hm08_cc0/field_teammate_human_body.obj" scale="0.105 0.105 0.105"/>
+      </geometry>
+    </visual>
+
+    <collision name="body_proxy">
+      <origin xyz="0 0 0.875" rpy="0 0 0"/>
+      <geometry><box size="0.32 0.50 1.75"/></geometry>
+    </collision>
+  </link>
+</robot>
