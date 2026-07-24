@@ -229,6 +229,8 @@ def test_field_teammate_topic_contract_frozen():
     assert config.get("contract_version") == "field_teammate.v1"
     assert (config.get("topics") or {}) == {
         "first_person_video": "/field_teammate_1/fpv/image_raw/compressed",
+        "first_person_video_camera_pose": "/field_teammate_1/fpv/camera_pose",
+        "first_person_video_camera_info": "/field_teammate_1/fpv/camera_info",
         "localization_confidence": "/field_teammate_1/localization_confidence",
         "guidance_request": "/field_teammate_1/guidance/request",
         "guidance_response": "/field_teammate_1/guidance/response",
@@ -256,6 +258,8 @@ def test_field_teammate_name_is_sanitized_for_ros_topic_contract():
     assert config["camera_frame"] == "field_teammate_1_dev/camera"
     assert (config.get("topics") or {}) == {
         "first_person_video": "/field_teammate_1_dev/fpv/image_raw/compressed",
+        "first_person_video_camera_pose": "/field_teammate_1_dev/fpv/camera_pose",
+        "first_person_video_camera_info": "/field_teammate_1_dev/fpv/camera_info",
         "localization_confidence": "/field_teammate_1_dev/localization_confidence",
         "guidance_request": "/field_teammate_1_dev/guidance/request",
         "guidance_response": "/field_teammate_1_dev/guidance/response",
