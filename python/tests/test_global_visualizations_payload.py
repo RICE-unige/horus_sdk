@@ -1,6 +1,7 @@
 """Tests for global visualization payload serialization and dedupe."""
 
 from horus.bridge.robot_registry import RobotRegistryClient
+from horus.dataviz import MapRenderTarget, MapUpdateMode
 from horus.robot import Robot, RobotType
 
 
@@ -157,6 +158,45 @@ def test_point_cloud_defaults_are_emitted_without_render_options():
     assert point_cloud["visible_points_budget"] == 120000
     assert point_cloud["max_visible_points_budget"] == 200000
     assert point_cloud["map_static_mode"] is True
+
+
+def test_3d_map_sdk_selects_static_quest_rendering():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_map(
+        topic="/bounded_map",
+        render_target=MapRenderTarget.QUEST,
+        update_mode=MapUpdateMode.STATIC,
+    )
+
+    config = _build_client()._build_robot_config_dict(robot, dataviz)
+    entry = next(
+        item for item in config["global_visualizations"] if item.get("type") == "point_cloud"
+    )
+
+    assert entry["topic"] == "/bounded_map"
+    assert entry["point_cloud"]["map_static_mode"] is True
+
+
+def test_3d_map_sdk_selects_refresh_remote_rendering():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_map(
+        topic="/horus/remote_render/test_map",
+        render_target="remote",
+        update_mode="refresh",
+        render_options={"framerate": 60, "bitrate_kbps": 18000},
+    )
+
+    remote = _build_client()._build_global_visualizations_payload([dataviz])[0]
+
+    assert remote["type"] == "remote_render"
+    assert remote["topic"] == "/horus/remote_render/test_map"
+    assert remote["remote_render"]["dynamic_view"] is True
+    assert remote["remote_render"]["format_version"] == (
+        "rgbd_pose_timewarp_luma_nibbles_v5"
+    )
+    assert remote["remote_render"]["framerate"] == 60
 
 
 def test_global_visualization_dedupes_point_cloud_across_multiple_robots():
