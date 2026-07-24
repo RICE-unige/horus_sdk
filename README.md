@@ -333,6 +333,14 @@ python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profil
 python3 python/examples/mesh_map_registration.py
 ```
 
+### Remote Dense 3D Maps
+
+Use PC rendering for source maps that exceed the Quest geometry budget. The
+Cow and Lady and ETH3D Courtyard examples support fixed-atlas (`static`) and
+headset-driven (`refresh`) modes over WebRTC, including 30 FPS and 60 FPS
+profiles. See [the remote 3D map guide](python/examples/REMOTE_MAP_RENDERING_DEMO.md)
+for dataset setup, commands, profiles, and the SDK-level render-target API.
+
 ### Octomap Map
 
 Use this to showcase the octomap-style global map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.
