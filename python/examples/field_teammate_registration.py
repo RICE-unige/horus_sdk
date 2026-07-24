@@ -417,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hololens-host",
         default="",
-        help="HoloLens IPv4/hostname shown in the HORUS Lenses status panel. Required with --live-hololens.",
+        help="HoloLens IPv4/hostname shown in the HORUS Field status panel. Required with --live-hololens.",
     )
     parser.add_argument(
         "--video-profile",

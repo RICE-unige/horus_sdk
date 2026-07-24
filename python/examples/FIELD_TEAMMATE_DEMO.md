@@ -77,13 +77,52 @@ The HoloLens does **not** connect to `horus_ros2` or HorusLink directly. The
 live path is:
 
 ```text
-HORUS Lenses app on HoloLens
+HORUS Field app on HoloLens
   -> headset pose/PV stream ports
   -> offboard relay on this machine
   -> ROS 2 topics
   -> horus_ros2 bridge
   -> HORUS MR operators
 ```
+
+### Canonical live UI and voice test
+
+Use the managed connector launch when testing the physical HoloLens, unified
+main panel, or live voice. The connector and registration names must match
+exactly because the entity name is also the voice room.
+
+```bash
+# Terminal 1: HoloLens pose/PV/control relay plus voice signaling.
+cd ~/horus_connector
+./horus setup teammate       # only when the HoloLens IP/name changed
+./horus doctor teammate
+./horus stop
+./horus launch teammate
+```
+
+In a second terminal, source ROS and register the name configured as
+`FIELD_TEAMMATE_NAME` in `~/horus_connector/.env`:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/horus_ws/install/setup.bash
+set -a
+source ~/horus_connector/.env
+set +a
+cd ~/horus_sdk
+export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
+python3 python/examples/field_teammate_registration.py --name "$FIELD_TEAMMATE_NAME"
+```
+
+Keep both terminals running. Connect HORUS MR to its normal bridge on port
+`10000`, accept the workspace, start live voice on Quest, and accept it from
+the HoloLens main panel. Stop registration with `Ctrl+C`, then run
+`./horus stop` in the connector checkout.
+
+The `--live-hololens` SDK convenience flag below starts the stream relay
+directly. It is useful for stream/registration debugging, but the managed
+`./horus launch teammate` path above is preferred for voice because it also
+owns signaling lifecycle and automatic HoloLens voice configuration.
 
 The HoloLens app displays the device IP and configured ports in its status
 panel. The default companion-app profile exposes:
