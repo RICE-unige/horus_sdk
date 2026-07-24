@@ -1305,6 +1305,20 @@ class RobotRegistryClient:
             return topics
         try:
             for viz in dataviz.get_enabled_visualizations():
+                viz_type = str(getattr(getattr(viz, "viz_type", None), "value", "") or "")
+                if viz_type == "remote_render":
+                    render_options = getattr(viz, "render_options", {}) or {}
+                    transport = str(render_options.get("transport", "webrtc") or "webrtc").strip().lower()
+                    if transport == "ros_compressed":
+                        ros_topic = str(render_options.get("ros_compressed_topic", "") or "").strip()
+                        if ros_topic and ros_topic not in topics:
+                            topics.append(ros_topic)
+                    status_topic = str(
+                        render_options.get("status_topic", "") or ""
+                    ).strip()
+                    if status_topic and status_topic not in topics:
+                        topics.append(status_topic)
+                    continue
                 topic = viz.data_source.topic
                 if topic and topic not in topics:
                     topics.append(topic)
@@ -1901,6 +1915,162 @@ class RobotRegistryClient:
                 )
             if occupancy_payload:
                 payload["occupancy"] = occupancy_payload
+
+        if viz_type_value == "remote_render":
+            rotation = render_options.get("camera_rotation")
+            if not isinstance(rotation, dict):
+                rotation = {}
+            transport = str(
+                render_options.get("transport", "webrtc") or "webrtc"
+            ).strip().lower()
+            if transport not in {"webrtc", "ros_compressed"}:
+                transport = "webrtc"
+            ros_compressed_topic = str(
+                render_options.get(
+                    "ros_compressed_topic", "/horus/remote_render/map_rgbd/compressed"
+                )
+                or "/horus/remote_render/map_rgbd/compressed"
+            ).strip()
+            encoder = str(render_options.get("encoder", "auto") or "auto").strip().lower()
+            if encoder not in {"auto", "nvenc", "x264"}:
+                encoder = "auto"
+            remote_render_payload = {
+                "update_mode": str(
+                    render_options.get(
+                        "update_mode",
+                        "refresh"
+                        if self._payload_coerce_bool(
+                            render_options.get("dynamic_view"), False
+                        )
+                        else "static",
+                    )
+                    or "static"
+                ).strip().lower(),
+                "format_version": str(
+                    render_options.get("format_version", "rgbd_multiview_luma_nibbles_v2")
+                ).strip(),
+                "dynamic_view": self._payload_coerce_bool(
+                    render_options.get("dynamic_view"), False
+                ),
+                "viewer_pose_topic": str(
+                    render_options.get(
+                        "viewer_pose_topic", "/horus/remote_render/viewer_pose"
+                    )
+                    or "/horus/remote_render/viewer_pose"
+                ).strip(),
+                "viewer_pose_rate_hz": max(
+                    1.0,
+                    min(
+                        120.0,
+                        self._payload_coerce_float(
+                            render_options.get("viewer_pose_rate_hz"), 60.0
+                        ),
+                    ),
+                ),
+                "pose_position_range_m": max(
+                    8.0,
+                    min(
+                        2048.0,
+                        self._payload_coerce_float(
+                            render_options.get("pose_position_range_m"), 128.0
+                        ),
+                    ),
+                ),
+                "transport": transport,
+                "stream_topic": topic,
+                "ros_compressed_topic": ros_compressed_topic,
+                "client_signal_topic": str(
+                    render_options.get("client_signal_topic", "/horus/webrtc/client_signal")
+                ).strip(),
+                "server_signal_topic": str(
+                    render_options.get("server_signal_topic", "/horus/webrtc/server_signal")
+                ).strip(),
+                "status_topic": str(
+                    render_options.get("status_topic", "/horus/remote_render/agent_status")
+                ).strip(),
+                "encoder": encoder,
+                "bitrate_kbps": max(
+                    1000, int(self._payload_coerce_float(render_options.get("bitrate_kbps"), 5000.0))
+                ),
+                "framerate": max(
+                    1, min(60, int(self._payload_coerce_float(render_options.get("framerate"), 30.0)))
+                ),
+                "depth_near_m": max(
+                    0.01, self._payload_coerce_float(render_options.get("depth_near_m"), 8.0)
+                ),
+                "depth_far_m": max(
+                    0.02, self._payload_coerce_float(render_options.get("depth_far_m"), 42.0)
+                ),
+                "vertical_fov_deg": self._payload_coerce_float(
+                    render_options.get("vertical_fov_deg"), 52.0
+                ),
+                "view_aspect": max(
+                    0.01, self._payload_coerce_float(render_options.get("view_aspect"), 16.0 / 9.0)
+                ),
+                "grid_columns": max(
+                    32, min(320, int(self._payload_coerce_float(render_options.get("grid_columns"), 192.0)))
+                ),
+                "grid_rows": max(
+                    18, min(180, int(self._payload_coerce_float(render_options.get("grid_rows"), 108.0)))
+                ),
+                "flip_y": self._payload_coerce_bool(render_options.get("flip_y"), False),
+                "camera_position": self._payload_coerce_vec3(
+                    render_options.get("camera_position"), (-19.0, 0.0, 15.0)
+                ),
+                "camera_rotation": {
+                    "x": self._payload_coerce_float(rotation.get("x"), 0.0),
+                    "y": self._payload_coerce_float(rotation.get("y"), 0.32556815),
+                    "z": self._payload_coerce_float(rotation.get("z"), 0.0),
+                    "w": self._payload_coerce_float(rotation.get("w"), 0.94551858),
+                },
+            }
+            if remote_render_payload["update_mode"] not in {"static", "refresh"}:
+                remote_render_payload["update_mode"] = (
+                    "refresh" if remote_render_payload["dynamic_view"] else "static"
+                )
+            if remote_render_payload["depth_far_m"] <= remote_render_payload["depth_near_m"]:
+                remote_render_payload["depth_far_m"] = remote_render_payload["depth_near_m"] + 1.0
+            if not remote_render_payload["viewer_pose_topic"].startswith("/"):
+                remote_render_payload["viewer_pose_topic"] = "/horus/remote_render/viewer_pose"
+            raw_views = render_options.get("views")
+            parsed_views = []
+            if isinstance(raw_views, list):
+                for index, raw_view in enumerate(raw_views[:12]):
+                    if not isinstance(raw_view, dict):
+                        continue
+                    view_rotation = raw_view.get("camera_rotation")
+                    if not isinstance(view_rotation, dict):
+                        view_rotation = {}
+                    atlas_x = max(0.0, min(1.0, self._payload_coerce_float(raw_view.get("atlas_x"), 0.0)))
+                    atlas_y = max(0.0, min(1.0, self._payload_coerce_float(raw_view.get("atlas_y"), 0.0)))
+                    atlas_width = max(0.001, min(1.0 - atlas_x, self._payload_coerce_float(raw_view.get("atlas_width"), 1.0)))
+                    atlas_height = max(0.001, min(1.0 - atlas_y, self._payload_coerce_float(raw_view.get("atlas_height"), 1.0)))
+                    parsed_views.append(
+                        {
+                            "id": str(raw_view.get("id") or f"view_{index}"),
+                            "atlas_x": atlas_x,
+                            "atlas_y": atlas_y,
+                            "atlas_width": atlas_width,
+                            "atlas_height": atlas_height,
+                            "camera_position": self._payload_coerce_vec3(
+                                raw_view.get("camera_position"),
+                                (
+                                    remote_render_payload["camera_position"]["x"],
+                                    remote_render_payload["camera_position"]["y"],
+                                    remote_render_payload["camera_position"]["z"],
+                                ),
+                            ),
+                            "camera_rotation": {
+                                "x": self._payload_coerce_float(view_rotation.get("x"), 0.0),
+                                "y": self._payload_coerce_float(view_rotation.get("y"), 0.0),
+                                "z": self._payload_coerce_float(view_rotation.get("z"), 0.0),
+                                "w": self._payload_coerce_float(view_rotation.get("w"), 1.0),
+                            },
+                        }
+                    )
+            if parsed_views:
+                remote_render_payload["views"] = parsed_views
+            payload["remote_render"] = remote_render_payload
 
         if viz_type_value == "point_cloud":
             point_cloud_payload: Dict[str, Any] = {}
@@ -2783,7 +2953,7 @@ class RobotRegistryClient:
             if len(datavizs) != len(robots):
                 return False, {"error": "Robot/dataviz length mismatch"}
 
-            cli.print_info("Building robot registration payloads...")
+            cli.print_info("Building HORUS registration payloads...")
             entries = []
             entry_by_name = {}
             core_topics = [
@@ -2826,12 +2996,20 @@ class RobotRegistryClient:
                     entry_control_topics,
                     entry_camera_topics,
                 )
-                for topic, group in self._build_topic_group_overrides(robot.name, entry_topics).items():
+                entity_kind = str(
+                    getattr(robot, "get_entity_kind", lambda: "robot")() or "robot"
+                ).strip().lower()
+                dashboard_group = (
+                    "Workspace Render"
+                    if entity_kind == "workspace_visualization"
+                    else robot.name
+                )
+                for topic, group in self._build_topic_group_overrides(dashboard_group, entry_topics).items():
                     topic_group_overrides[topic] = group
                 robot_topics = self._merge_topics(robot_topics, entry_data_topics)
                 robot_topics = self._merge_topics(robot_topics, entry_camera_topics)
                 control_topics = self._merge_topics(control_topics, entry_control_topics)
-            cli.print_info(f"Built {len(entries)} robot registration payload(s).")
+            cli.print_info(f"Built {len(entries)} registration payload(s).")
 
             bridge_running = self._ensure_bridge_running()
             if not bridge_running:
@@ -2938,7 +3116,7 @@ class RobotRegistryClient:
                 return True, {"success": True}
 
             def seed_all_registrations() -> None:
-                cli.print_info(f"Seeding registrations for {len(entries)} robot(s)...")
+                cli.print_info(f"Seeding {len(entries)} registration(s)...")
                 for _, _, msg in entries:
                     self.publisher.publish(msg)
 
@@ -3040,7 +3218,7 @@ class RobotRegistryClient:
                             dashboard.update_registration("Registered")
                             published = int((result or {}).get("published_count") or 0)
                             attempts = int((result or {}).get("attempt_count") or 1)
-                            dashboard.update_status(f"Replay complete ({published} robots, {attempts} attempts)")
+                            dashboard.update_status(f"Replay complete ({published} registrations, {attempts} attempts)")
 
                     if not is_connected:
                         if not wait_for_app_before_register and not seeded_before_app:

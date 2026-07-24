@@ -18,7 +18,9 @@ from .robot import (
     Robot,
     RobotDimensions,
     RobotType,
+    WorkspaceVisualization,
     is_registration_cancelled,
+    register_entities,
     register_robots,
 )
 
@@ -27,6 +29,7 @@ __all__ = [
     "FieldTeammate",
     "RobotDimensions",
     "RobotType",
+    "WorkspaceVisualization",
     "EntityCapabilities",
     "FieldTeammateConfig",
     "TeleopProfile",
@@ -35,5 +38,6 @@ __all__ = [
     "WorkspaceCompassConfig",
     "WorkspaceExperimentConfig",
     "register_robots",
+    "register_entities",
     "is_registration_cancelled",
 ]
