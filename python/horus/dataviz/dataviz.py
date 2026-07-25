@@ -493,14 +493,18 @@ class DataViz:
         """Add a Quest-rendered or remotely rendered 3D map.
 
         ``render_target="quest"`` consumes geometry from ``topic`` and renders it
-        on the headset. ``render_target="remote"`` treats ``topic`` as a packed
-        RGB-D stream produced by an offboard renderer. ``update_mode="static"``
-        freezes the accepted map frame; ``refresh`` keeps applying source updates.
+        on the headset. ``render_target="remote"`` treats ``topic`` as the color
+        source for the synchronized, pose-adaptive WebRTC RGB-D renderer.
         """
         target = self._normalize_map_option(
             render_target, MapRenderTarget, "render_target"
         )
         if target is MapRenderTarget.REMOTE:
+            if update_mode is not None:
+                raise ValueError(
+                    "remote rendering is always pose-adaptive; update_mode only "
+                    "applies to Quest-rendered geometry"
+                )
             if transport_lane is not None:
                 raise ValueError(
                     "transport_lane applies to Quest geometry transport, not remote RGB-D streams"
@@ -509,7 +513,6 @@ class DataViz:
                 stream_topic=topic,
                 frame_id=frame_id,
                 render_options=render_options,
-                update_mode=update_mode,
             )
             return
 
@@ -601,62 +604,35 @@ class DataViz:
         stream_topic: str = "/horus/remote_render/map_portal",
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
-        update_mode: Optional[Union[MapUpdateMode, str]] = None,
     ) -> None:
-        """Add a workspace-level remotely rendered spatial map.
-
-        The transport can be ``webrtc`` or ``ros_compressed``. ROS compressed
-        mode is primarily an end-to-end diagnostic path for the workspace
-        renderer and does not create a robot camera.
-        """
+        """Add the pose-adaptive, workspace-level remote RGB-D renderer."""
         options = dict(render_options or {})
-        if update_mode is None:
-            dynamic_format = str(options.get("format_version", "")) in (
-                "rgbd_pose_timewarp_luma_nibbles_v4",
-                "rgbd_pose_timewarp_luma_nibbles_v5",
-            )
-            mode = (
-                MapUpdateMode.REFRESH
-                if self._coerce_bool(options.get("dynamic_view"), False)
-                or dynamic_format
-                else MapUpdateMode.STATIC
-            )
-        else:
-            mode = self._normalize_map_option(
-                update_mode, MapUpdateMode, "update_mode"
-            )
-        dynamic_view = mode is MapUpdateMode.REFRESH
         options["render_target"] = MapRenderTarget.REMOTE.value
-        options["update_mode"] = mode.value
-        options["dynamic_view"] = dynamic_view
+        transport = str(
+            options.get("transport", "ros_compressed") or "ros_compressed"
+        ).strip().lower()
+        if transport not in {"webrtc", "ros_compressed"}:
+            raise ValueError("remote render transport must be 'webrtc' or 'ros_compressed'")
+        options["transport"] = transport
         options["format_version"] = (
-            "rgbd_pose_timewarp_luma_nibbles_v5"
-            if dynamic_view
-            else "rgbd_multiview_luma_nibbles_v2"
+            "remote_stereo_rgbd_ros_v2"
+            if transport == "ros_compressed"
+            else "remote_stereo_rgbd_webrtc_v2"
         )
-        options.setdefault("transport", "webrtc")
         options.setdefault("viewer_pose_topic", "/horus/remote_render/viewer_pose")
-        options.setdefault("viewer_pose_rate_hz", 30.0)
-        options.setdefault("pose_position_range_m", 128.0)
-        options.setdefault("ros_compressed_topic", "/horus/remote_render/map_rgbd/compressed")
+        options.setdefault("viewer_pose_rate_hz", 60.0)
+        options.setdefault("frame_data_topic", "/horus/remote_render/frame_data")
+        options.setdefault(
+            "ros_compressed_topic",
+            "/horus/remote_render/rgbd",
+        )
         options.setdefault("client_signal_topic", "/horus/webrtc/client_signal")
         options.setdefault("server_signal_topic", "/horus/webrtc/server_signal")
         options.setdefault("status_topic", "/horus/remote_render/agent_status")
-        options.setdefault("encoder", "auto")
-        options.setdefault("bitrate_kbps", 5000)
-        options.setdefault("framerate", 30)
-        options.setdefault("depth_near_m", 8.0)
-        options.setdefault("depth_far_m", 42.0)
-        options.setdefault("vertical_fov_deg", 52.0)
-        options.setdefault("view_aspect", 16.0 / 9.0)
-        options.setdefault("grid_columns", 192)
-        options.setdefault("grid_rows", 108)
+        options.setdefault("encoder", "nvenc")
+        options.setdefault("bitrate_kbps", 12000)
+        options.setdefault("framerate", 60)
         options.setdefault("flip_y", False)
-        options.setdefault("camera_position", {"x": -19.0, "y": 0.0, "z": 15.0})
-        options.setdefault(
-            "camera_rotation",
-            {"x": 0.0, "y": 0.32556815, "z": 0.0, "w": 0.94551858},
-        )
 
         data_source = EnvironmentDataSource(
             name="remote_rendered_map",
