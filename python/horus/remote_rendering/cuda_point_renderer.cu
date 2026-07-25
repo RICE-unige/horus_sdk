@@ -16,6 +16,7 @@ struct Renderer
   uchar3 * colors = nullptr;
   float * camera_positions = nullptr;
   float * world_to_camera = nullptr;
+  float * projections = nullptr;
   unsigned long long * winners = nullptr;
   uchar3 * output_colors = nullptr;
   float * output_depth = nullptr;
@@ -41,10 +42,9 @@ __global__ void project_points_multiview(
   int view_count,
   int width,
   int height,
-  float focal,
+  const float * projections,
   float near_m,
   float far_m,
-  int point_radius,
   unsigned long long * winners)
 {
   const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -59,6 +59,7 @@ __global__ void project_points_multiview(
   for (int view = 0; view < view_count; ++view) {
     const float * position = camera_positions + view * 3;
     const float * matrix = world_to_camera + view * 9;
+    const float * projection = projections + view * 4;
     const float px = point_x - position[0];
     const float py = point_y - position[1];
     const float pz = point_z - position[2];
@@ -69,10 +70,12 @@ __global__ void project_points_multiview(
       continue;
     }
 
-    const int screen_x = __float2int_rd(width * 0.5f + focal * camera_x / camera_z);
-    const int screen_y = __float2int_rd(height * 0.5f - focal * camera_y / camera_z);
-    if (screen_x < -point_radius || screen_x >= width + point_radius ||
-        screen_y < -point_radius || screen_y >= height + point_radius) {
+    const float ndc_x = projection[0] * camera_x / camera_z + projection[2];
+    const float ndc_y = projection[1] * camera_y / camera_z + projection[3];
+    const int screen_x = __float2int_rd(width * 0.5f * (ndc_x + 1.0f));
+    const int screen_y = __float2int_rd(height * 0.5f * (1.0f - ndc_y));
+    if (screen_x < 0 || screen_x >= width ||
+        screen_y < 0 || screen_y >= height) {
       continue;
     }
 
@@ -81,25 +84,17 @@ __global__ void project_points_multiview(
       (static_cast<unsigned long long>(depth_bits) << 32) |
       static_cast<unsigned long long>(static_cast<unsigned int>(index));
     unsigned long long * view_winners = winners + view * pixel_count;
-    for (int dy = -point_radius; dy <= point_radius; ++dy) {
-      for (int dx = -point_radius; dx <= point_radius; ++dx) {
-        if (dx * dx + dy * dy > point_radius * point_radius + 1) {
-          continue;
-        }
-        const int target_x = screen_x + dx;
-        const int target_y = screen_y + dy;
-        if (target_x < 0 || target_x >= width || target_y < 0 || target_y >= height) {
-          continue;
-        }
-        atomicMin(&view_winners[target_y * width + target_x], key);
-      }
-    }
+    atomicMin(&view_winners[screen_y * width + screen_x], key);
   }
 }
 
 __global__ void resolve_pixels(
   const unsigned long long * winners,
   const uchar3 * colors,
+  int width,
+  int height,
+  int view_count,
+  int point_radius,
   std::size_t output_count,
   uchar3 * output_colors,
   float * output_depth)
@@ -108,7 +103,33 @@ __global__ void resolve_pixels(
   if (pixel >= output_count) {
     return;
   }
-  const unsigned long long winner = winners[pixel];
+  const std::size_t pixel_count = static_cast<std::size_t>(width) * height;
+  const int view = static_cast<int>(pixel / pixel_count);
+  if (view >= view_count) {
+    return;
+  }
+  const std::size_t view_pixel = pixel - static_cast<std::size_t>(view) * pixel_count;
+  const int pixel_x = static_cast<int>(view_pixel % width);
+  const int pixel_y = static_cast<int>(view_pixel / width);
+  const unsigned long long * view_winners =
+    winners + static_cast<std::size_t>(view) * pixel_count;
+  unsigned long long winner = 0xffffffffffffffffULL;
+  for (int dy = -point_radius; dy <= point_radius; ++dy) {
+    for (int dx = -point_radius; dx <= point_radius; ++dx) {
+      if (dx * dx + dy * dy > point_radius * point_radius + 1) {
+        continue;
+      }
+      const int source_x = pixel_x + dx;
+      const int source_y = pixel_y + dy;
+      if (source_x < 0 || source_x >= width ||
+          source_y < 0 || source_y >= height) {
+        continue;
+      }
+      winner = min(
+        winner,
+        view_winners[static_cast<std::size_t>(source_y) * width + source_x]);
+    }
+  }
   if (winner == 0xffffffffffffffffULL) {
     output_colors[pixel] = make_uchar3(0, 0, 0);
     output_depth[pixel] = __int_as_float(0x7f800000);
@@ -151,6 +172,7 @@ int render_views_impl(
   Renderer * renderer,
   const float * camera_positions,
   const float * world_to_camera,
+  const float * projections,
   int view_count,
   int width,
   int height,
@@ -163,6 +185,7 @@ int render_views_impl(
   float * elapsed_ms)
 {
   if (renderer == nullptr || camera_positions == nullptr || world_to_camera == nullptr ||
+      projections == nullptr ||
       host_color == nullptr || host_depth == nullptr || view_count <= 0 ||
       view_count > kMaximumViews || width <= 0 || height <= 0 || near_m <= 0.0f ||
       far_m <= near_m || vertical_fov_degrees <= 1.0f || vertical_fov_degrees >= 179.0f ||
@@ -190,14 +213,19 @@ int render_views_impl(
         cudaMemcpyHostToDevice),
       "cudaMemcpy camera matrices") ||
     !check_cuda(
+      cudaMemcpy(
+        renderer->projections,
+        projections,
+        view_count * 4 * sizeof(float),
+        cudaMemcpyHostToDevice),
+      "cudaMemcpy camera projections") ||
+    !check_cuda(
       cudaMemset(renderer->winners, 0xff, output_count * sizeof(unsigned long long)),
       "cudaMemset winners")) {
     return 3;
   }
 
   cudaEventRecord(renderer->begin);
-  const float radians = vertical_fov_degrees * 0.01745329251994329577f;
-  const float focal = height * 0.5f / tanf(radians * 0.5f);
   const int threads = 256;
   const int point_blocks = static_cast<int>((renderer->point_count + threads - 1) / threads);
   project_points_multiview<<<point_blocks, threads>>>(
@@ -208,15 +236,18 @@ int render_views_impl(
     view_count,
     width,
     height,
-    focal,
+    renderer->projections,
     near_m,
     far_m,
-    point_radius,
     renderer->winners);
   const int pixel_blocks = static_cast<int>((output_count + threads - 1) / threads);
   resolve_pixels<<<pixel_blocks, threads>>>(
     renderer->winners,
     renderer->colors,
+    width,
+    height,
+    view_count,
+    point_radius,
     output_count,
     renderer->output_colors,
     renderer->output_depth);
@@ -270,12 +301,16 @@ int horus_cuda_create(std::size_t point_count, void ** output)
     !check_cuda(
       cudaMalloc(reinterpret_cast<void **>(&renderer->world_to_camera), kMaximumViews * 9 * sizeof(float)),
       "cudaMalloc camera matrices") ||
+    !check_cuda(
+      cudaMalloc(reinterpret_cast<void **>(&renderer->projections), kMaximumViews * 4 * sizeof(float)),
+      "cudaMalloc camera projections") ||
     !check_cuda(cudaEventCreate(&renderer->begin), "cudaEventCreate begin") ||
     !check_cuda(cudaEventCreate(&renderer->end), "cudaEventCreate end")) {
     cudaFree(renderer->points);
     cudaFree(renderer->colors);
     cudaFree(renderer->camera_positions);
     cudaFree(renderer->world_to_camera);
+    cudaFree(renderer->projections);
     if (renderer->begin != nullptr) cudaEventDestroy(renderer->begin);
     if (renderer->end != nullptr) cudaEventDestroy(renderer->end);
     delete renderer;
@@ -322,6 +357,7 @@ int horus_cuda_render_views(
   void * handle,
   const float * camera_positions,
   const float * world_to_camera,
+  const float * projections,
   int view_count,
   int width,
   int height,
@@ -338,6 +374,7 @@ int horus_cuda_render_views(
     static_cast<Renderer *>(handle),
     camera_positions,
     world_to_camera,
+    projections,
     view_count,
     width,
     height,
@@ -365,10 +402,15 @@ int horus_cuda_render(
   float * elapsed_ms)
 {
   g_last_error.clear();
+  const float radians = vertical_fov_degrees * 0.01745329251994329577f;
+  const float projection_y = 1.0f / tanf(radians * 0.5f);
+  const float projection_x = projection_y / (static_cast<float>(width) / height);
+  const float projection[4] = {projection_x, projection_y, 0.0f, 0.0f};
   return render_views_impl(
     static_cast<Renderer *>(handle),
     camera_position,
     world_to_camera,
+    projection,
     1,
     width,
     height,
@@ -459,6 +501,7 @@ void horus_cuda_destroy(void * handle)
   cudaFree(renderer->colors);
   cudaFree(renderer->camera_positions);
   cudaFree(renderer->world_to_camera);
+  cudaFree(renderer->projections);
   cudaFree(renderer->winners);
   cudaFree(renderer->output_colors);
   cudaFree(renderer->output_depth);

@@ -7,8 +7,13 @@ CC BY 4.0: https://doi.org/10.3929/ethz-b-000721636
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+import hashlib
+import json
 import math
+from pathlib import Path
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -151,6 +156,65 @@ ETH3D_COURTYARD_SCANS = (
         ),
     ),
 )
+
+ETH3D_REMOTE_SCENES = {
+    "delivery_area": {
+        "label": "ETH3D Delivery Area",
+        "archive_url": "https://www.eth3d.net/data/delivery_area_scan_clean.7z",
+        "target_extent_m": 28.0,
+    },
+    "electro": {
+        "label": "ETH3D Electro",
+        "archive_url": "https://www.eth3d.net/data/electro_scan_clean.7z",
+        "target_extent_m": 32.0,
+    },
+    "facade": {
+        "label": "ETH3D Facade",
+        "archive_url": "https://www.eth3d.net/data/facade_scan_clean.7z",
+        "target_extent_m": 32.0,
+    },
+    "playground": {
+        "label": "ETH3D Playground",
+        "archive_url": "https://www.eth3d.net/data/playground_scan_clean.7z",
+        "target_extent_m": 32.0,
+    },
+    "terrains": {
+        "label": "ETH3D Terrains",
+        "archive_url": "https://www.eth3d.net/data/terrains_scan_clean.7z",
+        "target_extent_m": 28.0,
+    },
+}
+ETH3D_REMOTE_SCENE_IDS = tuple(ETH3D_REMOTE_SCENES)
+DEFAULT_ETH3D_REMOTE_ROOT = Path.home() / ".cache" / "horus" / "eth3d_remote_maps"
+
+
+@dataclass(frozen=True)
+class Eth3dRemoteScene:
+    scene_id: str
+    root: Path
+    scans: tuple[tuple[str, np.ndarray], ...]
+    point_count: int
+    center: np.ndarray
+    source_bounds_min: np.ndarray
+    source_bounds_max: np.ndarray
+    world_scale: float
+    depth_near_m: float
+    depth_far_m: float
+    initial_position: tuple[float, float, float]
+    initial_pitch_degrees: float
+    fingerprint: str
+
+
+REMOTE_RENDER_LOD_DTYPE = np.dtype(
+    [
+        ("position", "<f4", (3,)),
+        ("color", "u1", (3,)),
+    ],
+    align=False,
+)
+REMOTE_RENDER_LOD_HEADER_BYTES = 20
+
+
 PLY_SCALAR_TYPES = {
     "char": "i1",
     "uchar": "u1",
@@ -263,6 +327,381 @@ def open_vertex_ply_records(path: str | Path) -> tuple[np.memmap, set[str]]:
         shape=(vertex_count,),
     )
     return records, names
+
+
+def resolve_eth3d_remote_scene_root(
+    scene_id: str,
+    path: str | Path | None = None,
+) -> Path:
+    if scene_id not in ETH3D_REMOTE_SCENES:
+        raise ValueError(
+            f"unknown ETH3D scene {scene_id!r}; expected one of "
+            f"{', '.join(ETH3D_REMOTE_SCENE_IDS)}"
+        )
+    search_root = (
+        Path(path).expanduser()
+        if path
+        else DEFAULT_ETH3D_REMOTE_ROOT / scene_id / "scan_clean"
+    )
+    if (search_root / "scan_alignment.mlp").is_file():
+        return search_root.resolve()
+    if search_root.is_dir():
+        matches = sorted(search_root.rglob("scan_alignment.mlp"))
+        for match in matches:
+            if match.parent.name == "scan_clean":
+                return match.parent.resolve()
+        if matches:
+            return matches[0].parent.resolve()
+    raise FileNotFoundError(
+        f"ETH3D {scene_id} is not available below {search_root}. Run "
+        "'python3 python/examples/tools/fetch_remote_render_maps.py "
+        f"--scene {scene_id}' first."
+    )
+
+
+def _read_eth3d_scan_alignment(
+    root: Path,
+) -> tuple[tuple[str, np.ndarray], ...]:
+    project = ET.parse(root / "scan_alignment.mlp")
+    scans: list[tuple[str, np.ndarray]] = []
+    for mesh in project.findall(".//MLMesh"):
+        filename = (mesh.attrib.get("filename") or "").strip()
+        matrix_node = mesh.find("MLMatrix44")
+        if not filename or matrix_node is None or not matrix_node.text:
+            continue
+        matrix_values = np.fromstring(matrix_node.text, sep=" ", dtype=np.float32)
+        if matrix_values.size != 16:
+            raise ValueError(
+                f"invalid alignment matrix for {filename} in "
+                f"{root / 'scan_alignment.mlp'}"
+            )
+        scan_path = (root / filename).resolve()
+        if root.resolve() not in scan_path.parents or not scan_path.is_file():
+            raise FileNotFoundError(f"aligned ETH3D scan is missing: {scan_path}")
+        scans.append((filename, matrix_values.reshape(4, 4)))
+    if not scans:
+        raise ValueError(f"no aligned scans found in {root / 'scan_alignment.mlp'}")
+    return tuple(scans)
+
+
+def _eth3d_scene_fingerprint(
+    root: Path,
+    scans: tuple[tuple[str, np.ndarray], ...],
+) -> list[dict[str, int | str]]:
+    fingerprint = []
+    for filename, _ in scans:
+        stat = (root / filename).stat()
+        fingerprint.append(
+            {
+                "filename": filename,
+                "bytes": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        )
+    return fingerprint
+
+
+def _scan_eth3d_scene_bounds(
+    root: Path,
+    scans: tuple[tuple[str, np.ndarray], ...],
+    *,
+    chunk_size: int = 1_000_000,
+) -> tuple[int, np.ndarray, np.ndarray]:
+    bounds_min = np.full(3, np.inf, dtype=np.float64)
+    bounds_max = np.full(3, -np.inf, dtype=np.float64)
+    point_count = 0
+    for filename, alignment in scans:
+        records, _ = open_vertex_ply_records(root / filename)
+        for start in range(0, len(records), chunk_size):
+            end = min(len(records), start + chunk_size)
+            points = np.column_stack(
+                (
+                    records["x"][start:end],
+                    records["y"][start:end],
+                    records["z"][start:end],
+                )
+            ).astype(np.float32)
+            points = points @ alignment[:3, :3].T + alignment[:3, 3]
+            finite = np.isfinite(points).all(axis=1)
+            points = points[finite]
+            if not len(points):
+                continue
+            point_count += len(points)
+            bounds_min = np.minimum(bounds_min, points.min(axis=0))
+            bounds_max = np.maximum(bounds_max, points.max(axis=0))
+    if point_count == 0 or not np.isfinite((bounds_min, bounds_max)).all():
+        raise ValueError(f"ETH3D scene at {root} contains no finite points")
+    return point_count, bounds_min, bounds_max
+
+
+def prepare_eth3d_remote_scene(
+    scene_id: str,
+    path: str | Path | None = None,
+    *,
+    dataset_scale: float = 1.0,
+) -> Eth3dRemoteScene:
+    if not np.isfinite(dataset_scale) or not 0.1 <= dataset_scale <= 10.0:
+        raise ValueError("dataset_scale must be finite and between 0.1 and 10")
+    root = resolve_eth3d_remote_scene_root(scene_id, path)
+    scans = _read_eth3d_scan_alignment(root)
+    source_fingerprint = _eth3d_scene_fingerprint(root, scans)
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            source_fingerprint,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    cache_path = root.parent / "horus_remote_scene_stats_v1.json"
+    cached = None
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    if cached and cached.get("fingerprint") == source_fingerprint:
+        point_count = int(cached["point_count"])
+        bounds_min = np.asarray(cached["bounds_min"], dtype=np.float64)
+        bounds_max = np.asarray(cached["bounds_max"], dtype=np.float64)
+    else:
+        point_count, bounds_min, bounds_max = _scan_eth3d_scene_bounds(root, scans)
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "scene_id": scene_id,
+                    "fingerprint": source_fingerprint,
+                    "point_count": point_count,
+                    "bounds_min": bounds_min.tolist(),
+                    "bounds_max": bounds_max.tolist(),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    extents = bounds_max - bounds_min
+    source_extent = max(float(extents.max()), 1e-6)
+    target_extent = (
+        float(ETH3D_REMOTE_SCENES[scene_id]["target_extent_m"]) * dataset_scale
+    )
+    world_scale = target_extent / source_extent
+    converted_extents = np.asarray(
+        (extents[0], extents[2], extents[1]),
+        dtype=np.float64,
+    ) * world_scale
+    horizontal_extent = max(float(converted_extents[0]), float(converted_extents[2]))
+    vertical_extent = float(converted_extents[1])
+    camera_height = max(1.6, vertical_extent * 0.55)
+    camera_distance = max(4.0, horizontal_extent * 0.35)
+    camera_target_height = vertical_extent * 0.3
+    initial_position = (
+        0.0,
+        camera_height,
+        -camera_distance,
+    )
+    initial_pitch_degrees = math.degrees(
+        math.atan2(camera_height - camera_target_height, camera_distance)
+    )
+    diagonal = float(np.linalg.norm(converted_extents))
+    center = (bounds_min + bounds_max) * 0.5
+    # ETH3D is Z-up. Preserve horizontal centering but place the physical
+    # scan floor at Unity map y=0 so the remote scene rests on the HORUS
+    # workspace instead of straddling it.
+    center[2] = bounds_min[2]
+    return Eth3dRemoteScene(
+        scene_id=scene_id,
+        root=root,
+        scans=scans,
+        point_count=point_count,
+        center=center.astype(np.float32),
+        source_bounds_min=bounds_min.astype(np.float32),
+        source_bounds_max=bounds_max.astype(np.float32),
+        world_scale=world_scale,
+        depth_near_m=max(0.1, target_extent / 250.0),
+        depth_far_m=max(40.0, diagonal * 2.5),
+        initial_position=initial_position,
+        initial_pitch_degrees=initial_pitch_degrees,
+        fingerprint=fingerprint,
+    )
+
+
+def iter_eth3d_remote_scene_chunks(
+    scene: Eth3dRemoteScene,
+    *,
+    chunk_size: int = 1_000_000,
+):
+    chunk_size = max(10_000, int(chunk_size))
+    for filename, alignment in scene.scans:
+        records, names = open_vertex_ply_records(scene.root / filename)
+        has_color = {"red", "green", "blue"}.issubset(names)
+        for start in range(0, len(records), chunk_size):
+            end = min(len(records), start + chunk_size)
+            points = np.column_stack(
+                (
+                    records["x"][start:end],
+                    records["y"][start:end],
+                    records["z"][start:end],
+                )
+            ).astype(np.float32)
+            points = points @ alignment[:3, :3].T + alignment[:3, 3]
+            finite = np.isfinite(points).all(axis=1)
+            points = points[finite]
+            converted = np.empty_like(points)
+            converted[:, 0] = (points[:, 0] - scene.center[0]) * scene.world_scale
+            converted[:, 1] = (points[:, 2] - scene.center[2]) * scene.world_scale
+            converted[:, 2] = (points[:, 1] - scene.center[1]) * scene.world_scale
+            if has_color:
+                colors = np.column_stack(
+                    (
+                        records["red"][start:end],
+                        records["green"][start:end],
+                        records["blue"][start:end],
+                    )
+                ).astype(np.uint8)[finite]
+            else:
+                colors = np.full(
+                    (len(converted), 3),
+                    (184, 188, 192),
+                    dtype=np.uint8,
+                )
+            yield converted, colors
+
+
+def _remote_render_preprocessor_binary() -> Path:
+    repository_root = Path(__file__).resolve().parents[3]
+    tool_root = repository_root / "rust" / "remote_render_preprocessor"
+    manifest = tool_root / "Cargo.toml"
+    if not manifest.is_file():
+        raise RuntimeError(f"remote-render Rust preprocessor is missing: {manifest}")
+    binary = tool_root / "target" / "release" / "horus-remote-render-preprocessor"
+    sources = (manifest, tool_root / "src" / "main.rs")
+    if binary.is_file() and binary.stat().st_mtime >= max(
+        source.stat().st_mtime for source in sources
+    ):
+        return binary
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        candidate = Path.home() / ".cargo" / "bin" / "cargo"
+        cargo = str(candidate) if candidate.is_file() else None
+    if cargo is None:
+        raise RuntimeError(
+            "Rust cargo is required to prepare remote-render point-cloud LOD caches"
+        )
+    subprocess.run(
+        (
+            cargo,
+            "build",
+            "--release",
+            "--manifest-path",
+            str(manifest),
+        ),
+        cwd=tool_root,
+        check=True,
+    )
+    if not binary.is_file():
+        raise RuntimeError(f"Rust preprocessor did not produce {binary}")
+    return binary
+
+
+def _read_remote_render_lod_header(path: Path) -> tuple[int, float]:
+    with path.open("rb") as stream:
+        header = stream.read(REMOTE_RENDER_LOD_HEADER_BYTES)
+    if len(header) != REMOTE_RENDER_LOD_HEADER_BYTES or header[:4] != b"HRL1":
+        raise RuntimeError(f"invalid HORUS remote-render LOD cache: {path}")
+    version = int.from_bytes(header[4:8], "little")
+    if version != 1:
+        raise RuntimeError(f"unsupported HORUS remote-render LOD version {version}")
+    voxel_size = float(np.frombuffer(header[8:12], dtype="<f4")[0])
+    point_count = int.from_bytes(header[12:20], "little")
+    expected_bytes = REMOTE_RENDER_LOD_HEADER_BYTES + (
+        point_count * REMOTE_RENDER_LOD_DTYPE.itemsize
+    )
+    if point_count <= 0 or path.stat().st_size != expected_bytes:
+        raise RuntimeError(f"incomplete HORUS remote-render LOD cache: {path}")
+    return point_count, voxel_size
+
+
+def prepare_eth3d_remote_scene_lod(
+    scene: Eth3dRemoteScene,
+    *,
+    voxel_size_m: float = 0.0125,
+) -> tuple[Path, int]:
+    """Build or reuse a deterministic render LOD while retaining full source data."""
+    voxel_size_m = float(voxel_size_m)
+    if not np.isfinite(voxel_size_m) or not 0.001 <= voxel_size_m <= 0.25:
+        raise ValueError("voxel_size_m must be between 0.001 and 0.25 meters")
+    cache_root = scene.root.parent / "horus_render_lod"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    voxel_micrometers = int(round(voxel_size_m * 1_000_000.0))
+    cache_path = cache_root / (
+        f"{scene.scene_id}_{scene.fingerprint[:16]}_{voxel_micrometers}um.hrl"
+    )
+    if cache_path.is_file():
+        point_count, cached_voxel_size = _read_remote_render_lod_header(cache_path)
+        if abs(cached_voxel_size - voxel_size_m) <= 1e-6:
+            return cache_path, point_count
+        cache_path.unlink()
+
+    binary = _remote_render_preprocessor_binary()
+    process = subprocess.Popen(
+        (str(binary), f"{voxel_size_m:.9f}", str(cache_path)),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        if process.stdin is None:
+            raise RuntimeError("failed to open Rust preprocessor input")
+        for points, colors in iter_eth3d_remote_scene_chunks(scene):
+            records = np.empty(len(points), dtype=REMOTE_RENDER_LOD_DTYPE)
+            records["position"] = points
+            records["color"] = colors
+            process.stdin.write(records.tobytes(order="C"))
+        process.stdin.close()
+        stderr = (
+            process.stderr.read().decode("utf-8", "replace")
+            if process.stderr
+            else ""
+        )
+        return_code = process.wait()
+    except Exception:
+        process.kill()
+        process.wait()
+        cache_path.unlink(missing_ok=True)
+        raise
+    if return_code != 0:
+        cache_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            "Rust remote-render preprocessing failed"
+            + (f":\n{stderr.strip()}" if stderr.strip() else "")
+        )
+    if stderr.strip():
+        print(f"[remote-map-source] {stderr.strip()}", flush=True)
+    point_count, _ = _read_remote_render_lod_header(cache_path)
+    return cache_path, point_count
+
+
+def iter_eth3d_remote_scene_lod_chunks(
+    path: str | Path,
+    *,
+    chunk_size: int = 1_000_000,
+):
+    source = Path(path).expanduser().resolve()
+    point_count, _ = _read_remote_render_lod_header(source)
+    records = np.memmap(
+        source,
+        mode="r",
+        dtype=REMOTE_RENDER_LOD_DTYPE,
+        offset=REMOTE_RENDER_LOD_HEADER_BYTES,
+        shape=(point_count,),
+    )
+    chunk_size = max(10_000, int(chunk_size))
+    for start in range(0, point_count, chunk_size):
+        end = min(point_count, start + chunk_size)
+        yield (
+            np.ascontiguousarray(records["position"][start:end]),
+            np.ascontiguousarray(records["color"][start:end]),
+        )
 
 
 def prepare_cow_lady_points(

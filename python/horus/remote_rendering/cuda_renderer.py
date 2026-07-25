@@ -117,6 +117,7 @@ class CudaPointRenderer:
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_float),
             ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
             ctypes.c_int,
             ctypes.c_int,
             ctypes.c_int,
@@ -226,6 +227,7 @@ class CudaPointRenderer:
         near_m: float,
         far_m: float,
         point_radius: int = 1,
+        projections=None,
     ) -> tuple[np.ndarray, np.ndarray, float]:
         if self._uploaded != self.point_count:
             raise CudaRendererError(
@@ -245,6 +247,14 @@ class CudaPointRenderer:
             np.stack([quaternion_to_matrix(rotation).T for rotation in rotations]),
             dtype=np.float32,
         )
+        if projections is None:
+            vertical_fov = np.deg2rad(float(vertical_fov_deg))
+            projection_y = 1.0 / np.tan(vertical_fov * 0.5)
+            projection_x = projection_y / (float(width) / float(height))
+            projections = [(projection_x, projection_y, 0.0, 0.0)] * len(positions)
+        projections = np.ascontiguousarray(projections, dtype=np.float32)
+        if projections.shape != (len(positions), 4):
+            raise ValueError("projections must have shape (N, 4)")
         color = np.empty((len(positions), int(height), int(width), 3), dtype=np.uint8)
         depth = np.empty((len(positions), int(height), int(width)), dtype=np.float32)
         elapsed = ctypes.c_float()
@@ -253,6 +263,7 @@ class CudaPointRenderer:
                 self._handle,
                 positions.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 matrices.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                projections.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 len(positions),
                 int(width),
                 int(height),

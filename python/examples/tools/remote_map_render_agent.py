@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Render a workspace map on the PC and publish pose-tagged RGB-D frames.
-
-Real scenes use one headset-driven server camera. The Quest warps each RGB-D
-frame from its embedded render pose and retains a bounded set of spatial
-keyframes, so newly revealed surfaces do not destructively replace valid map
-content from earlier viewpoints.
-"""
+"""Render a dense map on the PC for synchronized HORUS XR composition."""
 
 from __future__ import annotations
 
@@ -20,46 +14,118 @@ import cv2
 import numpy as np
 import rclpy
 from rclpy.executors import ExternalShutdownException
+from rclpy.impl.implementation_singleton import rclpy_implementation as _rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 
 from horus.remote_rendering import (
+    ADVANCED_REMOTE_SCENE_IDS,
     COW_LADY_DEPTH_FAR_BASE,
-    COW_LADY_DEPTH_NEAR_BASE,
     DEFAULT_VIEWER_POSE_TOPIC,
-    DEPTH_FAR_METERS,
-    DEPTH_NEAR_METERS,
-    DYNAMIC_RGBD_FORMAT_VERSION,
     ETH3D_COURTYARD_DEPTH_FAR_BASE,
-    ETH3D_COURTYARD_DEPTH_NEAR_BASE,
     ETH3D_COURTYARD_POINT_COUNT,
-    REMOTE_RGBD_FORMAT_VERSION,
+    ETH3D_REMOTE_SCENE_IDS,
+    FRAME_MARKER_WIDTH,
+    REMOTE_FRAME_DATA_TOPIC,
+    REMOTE_FRAME_FORMAT_VERSION,
+    ROS_DEBUG_FRAME_FORMAT_VERSION,
+    ROS_DEBUG_FRAME_TOPIC,
     VIEWER_POSE_VERSION,
-    VERTICAL_FOV_DEGREES,
+    CudaMeshRenderer,
     CudaPointRenderer,
+    GaussianSplatRenderer,
+    GAUSSIAN_SCENES,
+    MESH_SCENES,
+    NvdiffrastMeshRenderer,
     DynamicCameraPose,
-    build_dynamic_camera_poses,
-    build_remote_map_rgbd,
-    encode_luma_depth,
-    pack_dynamic_rgbd,
+    downsample_depth_for_surfels,
+    embed_frame_marker,
+    expand_projection,
+    pack_stereo_remote_frame,
+    pack_ros_debug_frame,
+    projection_from_vertical_fov,
+    load_gaussian_splat_ply,
+    load_textured_mesh_scene,
+    resolve_gaussian_splat,
 )
 from horus.remote_rendering.real_scene import (
-    COW_LADY_VIEW_SPECS,
-    ETH3D_COURTYARD_VIEW_SPECS,
-    fill_small_depth_holes,
     iter_eth3d_courtyard_chunks,
+    iter_eth3d_remote_scene_lod_chunks,
     load_colored_vertex_ply,
     prepare_cow_lady_points,
+    prepare_eth3d_remote_scene,
+    prepare_eth3d_remote_scene_lod,
     resolve_cow_lady_ply,
-    view_spec_camera_pose,
 )
+from horus.remote_rendering.synthetic_scene import build_industrial_site
 
 
 STREAM_TOPIC = "/horus/remote_render/map_portal"
-ROS_STREAM_TOPIC = "/horus/remote_render/map_rgbd/compressed"
 AGENT_STATUS_TOPIC = "/horus/remote_render/agent_status"
+
+
+def _shade_mesh_faces(
+    vertices: np.ndarray,
+    faces: np.ndarray,
+    colors: np.ndarray,
+) -> np.ndarray:
+    """Apply the stable directional shading used by the original static renderer."""
+    triangles = vertices[faces]
+    normals = np.cross(
+        triangles[:, 1] - triangles[:, 0],
+        triangles[:, 2] - triangles[:, 0],
+    )
+    lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = np.divide(
+        normals,
+        np.maximum(lengths, 1e-8),
+        out=np.zeros_like(normals),
+    )
+    light = np.asarray((-0.38, 0.82, -0.43), dtype=np.float32)
+    light /= np.linalg.norm(light)
+    intensity = 0.42 + 0.58 * np.abs(normals @ light)
+    return np.ascontiguousarray(
+        np.clip(colors.astype(np.float32) * intensity[:, None], 0.0, 255.0),
+        dtype=np.uint8,
+    )
+
+
+def _preview_pose_for_bounds(
+    bounds_min: np.ndarray,
+    bounds_max: np.ndarray,
+) -> DynamicCameraPose:
+    """Build an exterior startup view without changing live alignment."""
+    minimum = np.asarray(bounds_min, dtype=np.float32)
+    maximum = np.asarray(bounds_max, dtype=np.float32)
+    extent = np.maximum(maximum - minimum, 0.01)
+    center = (minimum + maximum) * 0.5
+    eye_height = float(
+        minimum[1] + max(1.5, min(2.5, float(extent[1]) * 0.35))
+    )
+    target = np.asarray((center[0], eye_height, center[2]), dtype=np.float32)
+    position = target.copy()
+    if extent[0] >= extent[2]:
+        position[0] = center[0] - float(extent[0]) * 0.3
+    else:
+        position[2] = center[2] - float(extent[2]) * 0.3
+    direction = target - position
+    horizontal = max(1e-6, float(np.hypot(direction[0], direction[2])))
+    yaw = float(np.arctan2(direction[0], direction[2]))
+    pitch = float(np.arctan2(-direction[1], horizontal))
+    half_yaw = yaw * 0.5
+    half_pitch = pitch * 0.5
+    rotation = (
+        float(np.cos(half_yaw) * np.sin(half_pitch)),
+        float(np.sin(half_yaw) * np.cos(half_pitch)),
+        float(-np.sin(half_yaw) * np.sin(half_pitch)),
+        float(np.cos(half_yaw) * np.cos(half_pitch)),
+    )
+    return DynamicCameraPose(
+        tuple(float(value) for value in position),
+        rotation,
+    )
 
 
 class RemoteMapRenderSource(Node):
@@ -69,34 +135,53 @@ class RemoteMapRenderSource(Node):
         self.frame_index = 0
         self.rendered_frame_count = 0
         self.last_render_ms = 0.0
+        self.last_cuda_ms = 0.0
         self.valid_depth_fraction = 0.0
         self.latest_pose_sequence = 0
-        self.latest_render_sequence = 0
+        self.latest_render_sequence = -1
         self.last_published_render_sequence = -1
         self.last_pose_time = 0.0
+        self.current_render_fov_deg = args.minimum_vertical_fov_deg
+        self.last_ros_debug_payload_bytes = 0
+        self._status_publish_count = 0
+        self._last_ros_debug_subscription_count = -1
+
         self._frame_lock = threading.Lock()
         self._pose_lock = threading.Lock()
         self._pose_event = threading.Event()
         self._stop_event = threading.Event()
         self._render_thread: threading.Thread | None = None
-        self._cuda_renderer: CudaPointRenderer | None = None
-        self.encoded_frame: bytes | None = None
+        self._cuda_renderer: (
+            CudaPointRenderer
+            | CudaMeshRenderer
+            | NvdiffrastMeshRenderer
+            | GaussianSplatRenderer
+            | None
+        ) = None
+        self._renderer_name = "uninitialized"
+        self._color_frame: array | None = None
+        self._frame_data: array | None = None
+        self._ros_debug_frame: array | None = None
+        self._viewer_pose_received = False
 
-        if args.dynamic_view:
-            self._initialize_dynamic_source()
-        else:
-            self._initialize_static_source()
-        if args.transport == "ros_compressed" and self.encoded_frame is None:
-            self.encoded_frame = self._encode_ros_frame(self.packed)
+        self._initialize_source()
 
         image_qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=2,
-            reliability=(
-                ReliabilityPolicy.RELIABLE
-                if args.transport == "ros_compressed"
-                else ReliabilityPolicy.BEST_EFFORT
-            ),
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        metadata_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=2,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        ros_debug_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=2,
+            reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
         )
         status_qos = QoSProfile(
@@ -111,176 +196,192 @@ class RemoteMapRenderSource(Node):
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.VOLATILE,
         )
-        if args.transport == "ros_compressed":
-            self.image_publisher = self.create_publisher(
-                CompressedImage, ROS_STREAM_TOPIC, image_qos
+        self.image_publisher = None
+        self.frame_data_publisher = None
+        self.ros_debug_publisher = None
+        if args.transport == "webrtc":
+            self.image_publisher = self.create_publisher(Image, STREAM_TOPIC, image_qos)
+            self.frame_data_publisher = self.create_publisher(
+                CompressedImage,
+                REMOTE_FRAME_DATA_TOPIC,
+                metadata_qos,
             )
         else:
-            self.image_publisher = self.create_publisher(Image, STREAM_TOPIC, image_qos)
+            self.ros_debug_publisher = self.create_publisher(
+                CompressedImage,
+                ROS_DEBUG_FRAME_TOPIC,
+                ros_debug_qos,
+            )
         self.status_publisher = self.create_publisher(String, AGENT_STATUS_TOPIC, status_qos)
-        self.pose_subscription = None
-        if args.dynamic_view:
-            self.pose_subscription = self.create_subscription(
-                String,
-                args.viewer_pose_topic,
-                self._handle_viewer_pose,
-                pose_qos,
-            )
-            self._render_thread = threading.Thread(
-                target=self._render_loop,
-                name="horus-remote-map-cuda",
-                daemon=True,
-            )
-            self._render_thread.start()
-        self.create_timer(1.0 / args.fps, self._publish_frame)
+        self.pose_subscription = self.create_subscription(
+            String,
+            args.viewer_pose_topic,
+            self._handle_viewer_pose,
+            pose_qos,
+        )
+        self._render_thread = threading.Thread(
+            target=self._render_loop,
+            name="horus-remote-map-cuda",
+            daemon=True,
+        )
+        self._render_thread.start()
+        # Frames are published by the render thread as soon as they exist. A
+        # timer here would quantize publication to its own period, adding up to
+        # a full frame of latency to every frame and re-introducing jitter that
+        # the receiver then has to absorb.
         self.create_timer(1.0, self._publish_status)
 
     @property
-    def format_version(self) -> str:
-        return DYNAMIC_RGBD_FORMAT_VERSION if self.args.dynamic_view else REMOTE_RGBD_FORMAT_VERSION
-
-    @property
     def renderer_name(self) -> str:
-        if self.args.dynamic_view:
-            return "cuda_points"
-        if self.args.scene != "synthetic":
-            return "cuda_static_proxy"
-        return "native_pc"
+        return self._renderer_name
 
-    def _initialize_static_source(self) -> None:
-        args = self.args
-        if args.scene in ("cow_lady", "eth3d_courtyard"):
-            self._initialize_static_complete_source()
-            return
-
-        self.color, self.depth, packed = build_remote_map_rgbd(args.width, args.height)
-        self.depth_near_m = DEPTH_NEAR_METERS
-        self.depth_far_m = DEPTH_FAR_METERS
-        self.source_point_count = 0
-        self.valid_depth_fraction = float(np.isfinite(self.depth).mean())
-        self.packed_width = int(packed.shape[1])
-        self.packed_height = int(packed.shape[0])
-        self.packed = packed
-        self.frames = self._build_static_frames(packed)
-
-    def _initialize_static_complete_source(self) -> None:
-        args = self.args
-        if args.width % 3 or args.height % 3:
-            raise ValueError("complete static atlases require dimensions divisible by three")
-
-        renderer: CudaPointRenderer | None = None
+    def _create_mesh_renderer(
+        self,
+        vertices: np.ndarray,
+        faces: np.ndarray,
+        colors: np.ndarray,
+        *,
+        uvs: np.ndarray | None = None,
+        texture_atlas: np.ndarray | None = None,
+        texture_rects: np.ndarray | None = None,
+    ) -> tuple[NvdiffrastMeshRenderer | CudaMeshRenderer, str]:
+        """Prefer the hardware rasterizer and retain the CUDA fallback."""
         try:
-            if args.scene == "cow_lady":
-                points, colors = load_colored_vertex_ply(
-                    resolve_cow_lady_ply(args.dataset_path or None)
-                )
-                points = prepare_cow_lady_points(points, world_scale=args.dataset_scale)
-                self.source_point_count = len(points)
-                self.depth_near_m = COW_LADY_DEPTH_NEAR_BASE * args.dataset_scale
-                self.depth_far_m = COW_LADY_DEPTH_FAR_BASE * args.dataset_scale
-                views = COW_LADY_VIEW_SPECS
-                renderer = CudaPointRenderer(self.source_point_count)
-                renderer.upload(points, colors)
-            else:
-                self.source_point_count = ETH3D_COURTYARD_POINT_COUNT
-                self.depth_near_m = ETH3D_COURTYARD_DEPTH_NEAR_BASE * args.dataset_scale
-                self.depth_far_m = ETH3D_COURTYARD_DEPTH_FAR_BASE * args.dataset_scale
-                views = ETH3D_COURTYARD_VIEW_SPECS
-                renderer = CudaPointRenderer(self.source_point_count)
-                offset = 0
-                for points, colors in iter_eth3d_courtyard_chunks(
-                    args.dataset_path or None,
-                    world_scale=args.dataset_scale,
-                    chunk_size=1_000_000,
-                ):
-                    renderer.upload(points, colors, offset=offset)
-                    offset += len(points)
-                    if offset % 5_000_000 < len(points):
-                        print(
-                            f"[remote-map-source] uploaded {offset:,}/"
-                            f"{self.source_point_count:,} ETH3D points to CUDA",
-                            flush=True,
-                        )
-                if offset != self.source_point_count:
-                    raise RuntimeError(
-                        f"ETH3D source contained {offset:,} points, "
-                        f"expected {self.source_point_count:,}"
-                    )
-
-            camera_poses = [
-                view_spec_camera_pose(view, world_scale=args.dataset_scale)
-                for view in views
-            ]
-            tile_width = args.width // 3
-            tile_height = args.height // 3
-            colors, depths, cuda_ms = renderer.render_views(
-                [position for position, _ in camera_poses],
-                [rotation for _, rotation in camera_poses],
-                tile_width,
-                tile_height,
-                vertical_fov_deg=VERTICAL_FOV_DEGREES,
-                near_m=self.depth_near_m,
-                far_m=self.depth_far_m,
-                point_radius=args.point_splat_radius,
+            renderer = NvdiffrastMeshRenderer(
+                vertices,
+                faces,
+                colors,
+                uvs=uvs,
+                texture_atlas=texture_atlas,
+                texture_rects=texture_rects,
             )
-
-            color_atlas = np.zeros((args.height, args.width, 3), dtype=np.uint8)
-            depth_atlas = np.full((args.height, args.width), np.inf, dtype=np.float32)
-            for index, view in enumerate(views):
-                view_color, view_depth = fill_small_depth_holes(
-                    colors[index],
-                    depths[index],
-                    iterations=2,
-                )
-                x0 = int(round(view.atlas_x * args.width))
-                y0 = args.height - int(
-                    round((view.atlas_y + view.atlas_height) * args.height)
-                )
-                color_atlas[y0:y0 + tile_height, x0:x0 + tile_width] = view_color
-                depth_atlas[y0:y0 + tile_height, x0:x0 + tile_width] = view_depth
-
-            encoded_depth = encode_luma_depth(
-                depth_atlas,
-                near_m=self.depth_near_m,
-                far_m=self.depth_far_m,
+            return renderer, "nvdiffrast_hardware_triangles"
+        except RuntimeError as exc:
+            self.get_logger().warning(
+                f"nvdiffrast unavailable; using CUDA mesh fallback: {exc}"
             )
-            packed = np.ascontiguousarray(
-                np.concatenate((color_atlas, encoded_depth), axis=1)
+            renderer = CudaMeshRenderer(
+                vertices,
+                faces,
+                colors,
+                uvs=uvs,
+                texture_atlas=texture_atlas,
+                texture_rects=texture_rects,
             )
-            self.color = color_atlas
-            self.depth = depth_atlas
-            self.valid_depth_fraction = float(np.isfinite(depth_atlas).mean())
-            self.packed_width = int(packed.shape[1])
-            self.packed_height = int(packed.shape[0])
-            self.packed = packed
-            self.frames = self._build_static_frames(packed)
-            self.rendered_frame_count = 1
-            self.last_cuda_ms = cuda_ms
-            self.last_render_ms = cuda_ms
-        finally:
-            if renderer is not None:
-                renderer.close()
+            return renderer, "cuda_pose_adaptive_triangles"
 
-    def _initialize_dynamic_source(self) -> None:
+    def _initialize_source(self) -> None:
         args = self.args
-        if args.scene == "cow_lady":
-            points, colors = load_colored_vertex_ply(resolve_cow_lady_ply(args.dataset_path or None))
-            points = prepare_cow_lady_points(points, world_scale=args.dataset_scale)
-            self.source_point_count = len(points)
-            self.depth_near_m = args.depth_near_m or max(0.1, 0.1 * args.dataset_scale)
-            self.depth_far_m = args.depth_far_m or 40.0 * args.dataset_scale
-            initial_pose = DynamicCameraPose(
-                (0.0, 2.0 * args.dataset_scale, 3.0 * args.dataset_scale),
-                (0.0, 1.0, 0.0, 0.0),
+        if args.scene in MESH_SCENES:
+            mesh = load_textured_mesh_scene(
+                args.scene,
+                args.dataset_path or None,
+                world_scale=args.dataset_scale,
             )
-            self._cuda_renderer = CudaPointRenderer(self.source_point_count)
-            self._cuda_renderer.upload(points, colors)
+            self.source_point_count = len(mesh.faces)
+            bounds_min = mesh.vertices.min(axis=0)
+            bounds_max = mesh.vertices.max(axis=0)
+            diagonal = float(np.linalg.norm(bounds_max - bounds_min))
+            self.depth_near_m = args.depth_near_m or max(
+                0.03,
+                diagonal * 0.001,
+            )
+            self.depth_far_m = args.depth_far_m or max(10.0, diagonal * 2.0)
+            preview_pose = _preview_pose_for_bounds(bounds_min, bounds_max)
+            self._cuda_renderer, backend = self._create_mesh_renderer(
+                mesh.vertices,
+                mesh.faces,
+                mesh.face_tints,
+                uvs=mesh.uvs,
+                texture_atlas=mesh.texture_atlas,
+                texture_rects=mesh.face_texture_rects,
+            )
+            self._renderer_name = f"{backend}_textured"
+        elif args.scene in GAUSSIAN_SCENES:
+            scene_spec = GAUSSIAN_SCENES[args.scene]
+            source_path = resolve_gaussian_splat(
+                args.scene,
+                args.dataset_path or None,
+            )
+            scene = load_gaussian_splat_ply(
+                source_path,
+                world_scale=args.dataset_scale,
+                canonicalize_y_down=scene_spec.canonicalize_y_down,
+            )
+            self.source_point_count = scene.gaussian_count
+            bounds_min = np.asarray(scene.world_bounds_min, dtype=np.float32)
+            bounds_max = np.asarray(scene.world_bounds_max, dtype=np.float32)
+            diagonal = float(np.linalg.norm(bounds_max - bounds_min))
+            self.depth_near_m = args.depth_near_m or max(
+                0.02,
+                diagonal * 0.001,
+            )
+            self.depth_far_m = args.depth_far_m or max(10.0, diagonal * 2.0)
+            preview_pose = _preview_pose_for_bounds(bounds_min, bounds_max)
+            self._cuda_renderer = GaussianSplatRenderer(scene)
+            self._renderer_name = (
+                f"gsplat_cuda_anisotropic_sh{scene.sh_degree}_full"
+            )
+        elif args.scene == "cow_lady":
+            source_path = resolve_cow_lady_ply(args.dataset_path or None)
+            surface_path = source_path.with_name("cow_and_lady_surface.npz")
+            self.depth_near_m = args.depth_near_m or max(0.1, 0.1 * args.dataset_scale)
+            self.depth_far_m = (
+                args.depth_far_m or COW_LADY_DEPTH_FAR_BASE * args.dataset_scale
+            )
+            pitch = np.deg2rad(22.0) * 0.5
+            preview_pose = DynamicCameraPose(
+                (0.0, 5.0 * args.dataset_scale, -8.0 * args.dataset_scale),
+                (float(np.sin(pitch)), 0.0, 0.0, float(np.cos(pitch))),
+            )
+            if surface_path.is_file():
+                with np.load(surface_path, allow_pickle=False) as surface:
+                    vertices = prepare_cow_lady_points(
+                        surface["vertices"],
+                        world_scale=args.dataset_scale,
+                    )
+                    faces = np.ascontiguousarray(surface["faces"], dtype=np.uint32)
+                    face_colors = np.ascontiguousarray(
+                        surface["face_colors"],
+                        dtype=np.uint8,
+                    )
+                self.source_point_count = len(faces)
+                self._cuda_renderer, self._renderer_name = (
+                    self._create_mesh_renderer(
+                        vertices,
+                        faces,
+                        face_colors,
+                    )
+                )
+                print(
+                    f"[remote-map-source] using cached Cow and Lady surface "
+                    f"{surface_path}",
+                    flush=True,
+                )
+            else:
+                points, colors = load_colored_vertex_ply(source_path)
+                points = prepare_cow_lady_points(
+                    points,
+                    world_scale=args.dataset_scale,
+                )
+                self.source_point_count = len(points)
+                self._cuda_renderer = CudaPointRenderer(self.source_point_count)
+                self._cuda_renderer.upload(points, colors)
+                self._renderer_name = "cuda_pose_adaptive_points"
+                print(
+                    "[remote-map-source] WARNING Cow and Lady surface cache is "
+                    "missing; point splats can shimmer during head motion. Run "
+                    "prepare_cow_lady_surface.py once.",
+                    flush=True,
+                )
         elif args.scene == "eth3d_courtyard":
             self.source_point_count = ETH3D_COURTYARD_POINT_COUNT
             self.depth_near_m = args.depth_near_m or max(0.25, 0.5 * args.dataset_scale)
-            self.depth_far_m = args.depth_far_m or 60.0 * args.dataset_scale
+            self.depth_far_m = (
+                args.depth_far_m or ETH3D_COURTYARD_DEPTH_FAR_BASE * args.dataset_scale
+            )
             pitch = np.deg2rad(18.0) * 0.5
-            initial_pose = DynamicCameraPose(
+            preview_pose = DynamicCameraPose(
                 (0.0, 10.0 * args.dataset_scale, -24.0 * args.dataset_scale),
                 (float(np.sin(pitch)), 0.0, 0.0, float(np.cos(pitch))),
             )
@@ -295,37 +396,116 @@ class RemoteMapRenderSource(Node):
                 offset += len(points)
                 if offset % 5_000_000 < len(points):
                     print(
-                        f"[remote-map-source] uploaded {offset:,}/{self.source_point_count:,} "
-                        "ETH3D points to CUDA",
+                        f"[remote-map-source] uploaded {offset:,}/"
+                        f"{self.source_point_count:,} ETH3D points to CUDA",
                         flush=True,
                     )
             if offset != self.source_point_count:
                 raise RuntimeError(
-                    f"ETH3D source contained {offset:,} points, expected {self.source_point_count:,}"
+                    f"ETH3D source contained {offset:,} points, "
+                    f"expected {self.source_point_count:,}"
                 )
+            self._renderer_name = "cuda_pose_adaptive_points"
+        elif args.scene in ETH3D_REMOTE_SCENE_IDS:
+            scene = prepare_eth3d_remote_scene(
+                args.scene,
+                args.dataset_path or None,
+                dataset_scale=args.dataset_scale,
+            )
+            lod_path, lod_point_count = prepare_eth3d_remote_scene_lod(
+                scene,
+                voxel_size_m=args.source_voxel_size,
+            )
+            self.source_point_count = lod_point_count
+            self.depth_near_m = args.depth_near_m or scene.depth_near_m
+            self.depth_far_m = args.depth_far_m or scene.depth_far_m
+            pitch = np.deg2rad(scene.initial_pitch_degrees) * 0.5
+            preview_pose = DynamicCameraPose(
+                scene.initial_position,
+                (float(np.sin(pitch)), 0.0, 0.0, float(np.cos(pitch))),
+            )
+            self._cuda_renderer = CudaPointRenderer(self.source_point_count)
+            offset = 0
+            for points, colors in iter_eth3d_remote_scene_lod_chunks(
+                lod_path,
+                chunk_size=1_000_000,
+            ):
+                self._cuda_renderer.upload(points, colors, offset=offset)
+                offset += len(points)
+                if offset % 5_000_000 < len(points):
+                    print(
+                        f"[remote-map-source] uploaded {offset:,}/"
+                        f"{self.source_point_count:,} {args.scene} LOD points to CUDA",
+                        flush=True,
+                    )
+            if offset != self.source_point_count:
+                raise RuntimeError(
+                    f"ETH3D {args.scene} contained {offset:,} finite points, "
+                    f"expected {self.source_point_count:,}"
+                )
+            self._renderer_name = (
+                f"cuda_pose_adaptive_points_rust_lod_{args.source_voxel_size:.4f}m"
+            )
         else:
-            raise ValueError("dynamic view rendering requires a real point-map scene")
+            vertices, faces, face_colors = build_industrial_site().arrays()
+            vertices = np.ascontiguousarray(
+                vertices * args.dataset_scale,
+                dtype=np.float32,
+            )
+            faces = np.ascontiguousarray(faces, dtype=np.uint32)
+            face_colors = _shade_mesh_faces(vertices, faces, face_colors)
+            self.source_point_count = len(faces)
+            self.depth_near_m = args.depth_near_m or max(0.1, 0.2 * args.dataset_scale)
+            self.depth_far_m = args.depth_far_m or 80.0 * args.dataset_scale
+            pitch = np.deg2rad(38.0) * 0.5
+            preview_pose = DynamicCameraPose(
+                (0.0, 15.0 * args.dataset_scale, -19.0 * args.dataset_scale),
+                (float(np.sin(pitch)), 0.0, 0.0, float(np.cos(pitch))),
+            )
+            self._cuda_renderer, self._renderer_name = (
+                self._create_mesh_renderer(vertices, faces, face_colors)
+            )
 
-        self._latest_pose = initial_pose
-        self.latest_pose_sequence = 0
-        self.packed_width = args.width * 2
-        self.packed_height = args.height
-        self._render_dynamic_frame(initial_pose, sequence=0)
+        # Dataset-specific camera poses are only for the startup render used to
+        # validate the renderer. Live frames use Quest-local eye poses directly.
+        # Reusing this pitched preview as a scene anchor tilts the map floor and
+        # makes source geometry move in a camera-relative coordinate system.
+        preview_eyes = self._build_eye_poses(preview_pose, 0.064)
+        self._latest_poses = preview_eyes
+        self._latest_workspace_pose = preview_pose
+        self._latest_viewer_fov_deg = args.minimum_vertical_fov_deg
+        initial_projection = projection_from_vertical_fov(
+            args.minimum_vertical_fov_deg + args.guard_band_degrees * 2.0,
+            args.width / args.height,
+        )
+        self._latest_projections = (initial_projection, initial_projection)
+        self._render_frame(
+            preview_eyes,
+            sequence=0,
+            render_projections=self._latest_projections,
+        )
 
     @staticmethod
-    def _build_static_frames(packed: np.ndarray) -> tuple[array, array]:
-        frame = array("B", packed.tobytes())
-        return frame, frame
+    def _build_eye_poses(
+        center_pose: DynamicCameraPose,
+        ipd_m: float,
+    ) -> tuple[DynamicCameraPose, DynamicCameraPose]:
+        from horus.remote_rendering import quaternion_to_matrix
 
-    def _encode_ros_frame(self, packed: np.ndarray) -> bytes:
-        ok, encoded = cv2.imencode(
-            ".jpg",
-            cv2.cvtColor(packed, cv2.COLOR_RGB2BGR),
-            [cv2.IMWRITE_JPEG_QUALITY, self.args.jpeg_quality],
+        rotation = np.asarray(center_pose.rotation, dtype=np.float32)
+        basis = quaternion_to_matrix(rotation)
+        center = np.asarray(center_pose.position, dtype=np.float32)
+        half_offset = basis @ np.asarray((ipd_m * 0.5, 0.0, 0.0), dtype=np.float32)
+        return (
+            DynamicCameraPose(
+                tuple(float(value) for value in center - half_offset),
+                center_pose.rotation,
+            ),
+            DynamicCameraPose(
+                tuple(float(value) for value in center + half_offset),
+                center_pose.rotation,
+            ),
         )
-        if not ok:
-            raise RuntimeError("failed to encode pose-tagged RGB-D frame")
-        return encoded.tobytes()
 
     @staticmethod
     def _read_vector(payload, key: str, length: int) -> tuple[float, ...]:
@@ -337,6 +517,16 @@ class RemoteMapRenderSource(Node):
             return tuple(float(value) for value in raw)
         raise ValueError(f"{key} must contain {', '.join(names)}")
 
+    def _expanded_projection(
+        self,
+        projection: tuple[float, ...],
+    ) -> tuple[float, float, float, float]:
+        return expand_projection(
+            projection,
+            guard_band_degrees=self.args.guard_band_degrees,
+            minimum_vertical_fov_deg=self.args.minimum_vertical_fov_deg,
+        )
+
     def _handle_viewer_pose(self, message: String) -> None:
         try:
             payload = json.loads((message.data or "").replace("\0", "").strip())
@@ -347,7 +537,7 @@ class RemoteMapRenderSource(Node):
                 isinstance(payload.get("predicted_position"), (dict, list, tuple))
                 and isinstance(payload.get("predicted_rotation"), (dict, list, tuple))
             )
-            pose = DynamicCameraPose(
+            viewer_pose = DynamicCameraPose(
                 self._read_vector(
                     payload,
                     "predicted_position" if use_prediction else "position",
@@ -359,14 +549,74 @@ class RemoteMapRenderSource(Node):
                     4,
                 ),
             )
-            if not np.isfinite(np.asarray((*pose.position, *pose.rotation))).all():
+            viewer_fov = float(
+                payload.get("vertical_fov_deg", self.args.minimum_vertical_fov_deg)
+            )
+            left_pose = DynamicCameraPose(
+                self._read_vector(
+                    payload,
+                    "predicted_left_position"
+                    if use_prediction
+                    else "left_position",
+                    3,
+                ),
+                self._read_vector(
+                    payload,
+                    "predicted_left_rotation"
+                    if use_prediction
+                    else "left_rotation",
+                    4,
+                ),
+            )
+            right_pose = DynamicCameraPose(
+                self._read_vector(
+                    payload,
+                    "predicted_right_position"
+                    if use_prediction
+                    else "right_position",
+                    3,
+                ),
+                self._read_vector(
+                    payload,
+                    "predicted_right_rotation"
+                    if use_prediction
+                    else "right_rotation",
+                    4,
+                ),
+            )
+            left_projection = self._expanded_projection(
+                self._read_vector(payload, "left_projection", 4)
+            )
+            right_projection = self._expanded_projection(
+                self._read_vector(payload, "right_projection", 4)
+            )
+            if not np.isfinite(
+                np.asarray(
+                    (
+                        *viewer_pose.position,
+                        *viewer_pose.rotation,
+                        *left_pose.position,
+                        *left_pose.rotation,
+                        *right_pose.position,
+                        *right_pose.rotation,
+                        *left_projection,
+                        *right_projection,
+                        viewer_fov,
+                    )
+                )
+            ).all():
                 return
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             return
+
         with self._pose_lock:
-            self._latest_pose = pose
+            self._latest_poses = (left_pose, right_pose)
+            self._latest_workspace_pose = viewer_pose
+            self._latest_viewer_fov_deg = float(np.clip(viewer_fov, 40.0, 140.0))
+            self._latest_projections = (left_projection, right_projection)
             self.latest_pose_sequence = sequence
             self.last_pose_time = time.monotonic()
+            self._viewer_pose_received = True
         self._pose_event.set()
 
     def _render_loop(self) -> None:
@@ -381,148 +631,281 @@ class RemoteMapRenderSource(Node):
             if now < next_render and self._stop_event.wait(next_render - now):
                 return
             with self._pose_lock:
-                pose = self._latest_pose
+                poses = self._latest_poses
+                workspace_pose = self._latest_workspace_pose
+                viewer_fov = self._latest_viewer_fov_deg
+                projections = self._latest_projections
                 sequence = self.latest_pose_sequence
-            if sequence == self.latest_render_sequence and self.last_pose_time > 0.0:
+            if sequence == self.latest_render_sequence:
                 next_render = time.monotonic() + period
                 continue
             try:
                 started = time.monotonic()
-                self._render_dynamic_frame(pose, sequence=sequence)
+                self._render_frame(
+                    poses,
+                    sequence=sequence,
+                    workspace_pose=workspace_pose,
+                    viewer_fov_deg=viewer_fov,
+                    render_projections=projections,
+                )
+                self._publish_frame()
                 next_render = max(started + period, time.monotonic())
             except Exception as exception:
-                self.get_logger().error(f"dynamic CUDA render failed: {exception}")
+                self.get_logger().error(f"pose-adaptive CUDA render failed: {exception}")
                 self._stop_event.wait(0.5)
 
-    def _render_dynamic_frame(self, center_pose: DynamicCameraPose, *, sequence: int) -> None:
-        poses = build_dynamic_camera_poses(
-            center_pose.position,
-            center_pose.rotation,
-            baseline_m=self.args.dynamic_view_baseline * self.args.dataset_scale,
-        )
+    def _render_frame(
+        self,
+        poses: tuple[DynamicCameraPose, DynamicCameraPose],
+        *,
+        sequence: int,
+        workspace_pose: DynamicCameraPose | None = None,
+        viewer_fov_deg: float | None = None,
+        render_projections: tuple[
+            tuple[float, float, float, float],
+            tuple[float, float, float, float],
+        ] | None = None,
+    ) -> None:
         started = time.monotonic()
-        color, depth, cuda_ms = self._cuda_renderer.render(
-            poses[0].position,
-            poses[0].rotation,
+        render_fov = float(
+            np.clip(
+                max(
+                    self.args.minimum_vertical_fov_deg,
+                    (viewer_fov_deg or self.args.minimum_vertical_fov_deg)
+                    + self.args.guard_band_degrees * 2.0,
+                ),
+                40.0,
+                140.0,
+            )
+        )
+        left_rotation = np.asarray(poses[0].rotation, dtype=np.float32)
+        right_rotation = np.asarray(poses[1].rotation, dtype=np.float32)
+        if float(np.dot(left_rotation, right_rotation)) < 0.0:
+            right_rotation = -right_rotation
+        center_rotation = left_rotation + right_rotation
+        center_rotation /= max(float(np.linalg.norm(center_rotation)), 1e-8)
+        center_pose = DynamicCameraPose(
+            tuple(
+                float(value)
+                for value in (
+                    np.asarray(poses[0].position, dtype=np.float32)
+                    + np.asarray(poses[1].position, dtype=np.float32)
+                )
+                * 0.5
+            ),
+            tuple(float(value) for value in center_rotation),
+        )
+        if render_projections:
+            center_projection = tuple(
+                float(value)
+                for value in (
+                    np.asarray(render_projections[0], dtype=np.float32)
+                    + np.asarray(render_projections[1], dtype=np.float32)
+                )
+                * 0.5
+            )
+        else:
+            center_projection = projection_from_vertical_fov(
+                render_fov,
+                self.args.width / self.args.height,
+            )
+
+        # Render one predicted center-eye view. The Quest reprojects its
+        # synchronized metric depth independently into both display eyes,
+        # which restores stereo while halving the expensive server render.
+        # The small source-to-display eye baseline is covered by the guard
+        # band and independent surfels.
+        colors, depths, cuda_ms = self._cuda_renderer.render_views(
+            [center_pose.position],
+            [center_pose.rotation],
             self.args.width,
             self.args.height,
-            vertical_fov_deg=self.args.vertical_fov_deg,
+            vertical_fov_deg=render_fov,
             near_m=self.depth_near_m,
             far_m=self.depth_far_m,
             point_radius=self.args.point_splat_radius,
+            projections=(center_projection,),
         )
-        packed = pack_dynamic_rgbd(
-            color,
-            depth,
-            poses,
+        center_depth = downsample_depth_for_surfels(
+            depths[0],
+            width=self.args.depth_width,
+            height=self.args.depth_height,
+        )
+        reduced_depth = np.stack((center_depth, center_depth), axis=0)
+        # One view on the wire. Both eyes reproject the same server render, so
+        # a side-by-side atlas would carry the identical image twice and double
+        # the cost of every frame for nothing.
+        color = np.ascontiguousarray(colors[0], dtype=np.uint8)
+        if self.args.transport == "webrtc":
+            embed_frame_marker(color, sequence)
+        projections = (center_projection, center_projection)
+        frame_data = pack_stereo_remote_frame(
+            reduced_depth,
             sequence=sequence,
+            color_width=self.args.width,
+            color_height=self.args.height,
             near_m=self.depth_near_m,
             far_m=self.depth_far_m,
-            position_range_m=self.args.pose_position_range,
+            projections=projections,
+            # Depth is camera-local. Carry the exact Quest-local camera pose
+            # that requested this frame so the headset can place every
+            # reconstructed point directly into its stable workspace. The
+            # server's arbitrary scene anchor must never enter Quest-side
+            # placement.
+            positions=(
+                (workspace_pose or center_pose).position,
+                (workspace_pose or center_pose).position,
+            ),
+            rotations=(
+                (workspace_pose or center_pose).rotation,
+                (workspace_pose or center_pose).rotation,
+            ),
+            mono_atlas=True,
         )
-        frame = array("B", packed.tobytes())
-        encoded_frame = (
-            self._encode_ros_frame(packed)
-            if self.args.transport == "ros_compressed"
-            else None
-        )
+        ros_debug_frame = None
+        if self.args.transport == "ros_compressed":
+            success, encoded = cv2.imencode(
+                ".jpg",
+                cv2.cvtColor(color, cv2.COLOR_RGB2BGR),
+                (cv2.IMWRITE_JPEG_QUALITY, self.args.ros_jpeg_quality),
+            )
+            if not success:
+                raise RuntimeError("failed to encode ROS diagnostic JPEG")
+            ros_debug_frame = pack_ros_debug_frame(encoded.tobytes(), frame_data)
         with self._frame_lock:
-            self.frames = (frame, frame)
-            self.packed = packed
-            self.encoded_frame = encoded_frame
+            self._color_frame = array("B", color.tobytes())
+            self._frame_data = array("B", frame_data)
+            self._ros_debug_frame = (
+                array("B", ros_debug_frame) if ros_debug_frame is not None else None
+            )
+            self.last_ros_debug_payload_bytes = (
+                len(ros_debug_frame) if ros_debug_frame is not None else 0
+            )
             self.color = color
-            self.depth = depth
-            self.valid_depth_fraction = float(np.isfinite(depth).mean())
+            self.depth = depths
+            self.valid_depth_fraction = float(np.isfinite(reduced_depth).mean())
             self.rendered_frame_count += 1
             self.latest_render_sequence = sequence
+            self.current_render_fov_deg = render_fov
             self.last_render_ms = (time.monotonic() - started) * 1000.0
             self.last_cuda_ms = cuda_ms
 
     def _publish_frame(self) -> None:
-        if self.args.transport == "ros_compressed":
-            with self._frame_lock:
-                encoded = self.encoded_frame
-                render_sequence = self.latest_render_sequence
-            if encoded is None:
-                return
-            if self.args.dynamic_view and render_sequence == self.last_published_render_sequence:
-                return
-            message = CompressedImage()
-            message.header.stamp = self.get_clock().now().to_msg()
-            message.header.frame_id = "remote_map_render_camera"
-            message.format = f"jpeg; {self.format_version}"
-            message.data = encoded
-            self.image_publisher.publish(message)
-            self.last_published_render_sequence = render_sequence
-            self.frame_index += 1
+        with self._frame_lock:
+            color_frame = self._color_frame
+            frame_data = self._frame_data
+            ros_debug_frame = self._ros_debug_frame
+            render_sequence = self.latest_render_sequence
+        if (
+            color_frame is None
+            or frame_data is None
+            or render_sequence == self.last_published_render_sequence
+        ):
             return
 
-        phase = (self.frame_index // max(1, self.args.fps // 2)) % 2
-        with self._frame_lock:
-            frame = self.frames[phase]
-        message = Image()
-        message.header.stamp = self.get_clock().now().to_msg()
-        message.header.frame_id = "remote_map_render_camera"
-        message.height = self.packed_height
-        message.width = self.packed_width
-        message.encoding = "rgb8"
-        message.is_bigendian = 0
-        message.step = self.packed_width * 3
-        message.data = frame
-        self.image_publisher.publish(message)
+        stamp = self.get_clock().now().to_msg()
+        frame_id = f"remote_map_render_camera:{render_sequence & 0xFFFF}"
+        if self.args.transport == "webrtc":
+            image = Image()
+            image.header.stamp = stamp
+            image.header.frame_id = frame_id
+            image.height = self.args.height
+            image.width = self.args.width
+            image.encoding = "rgb8"
+            image.is_bigendian = 0
+            image.step = self.args.width * 3
+            image.data = color_frame
+            self.image_publisher.publish(image)
+
+            auxiliary = CompressedImage()
+            auxiliary.header.stamp = stamp
+            auxiliary.header.frame_id = frame_id
+            auxiliary.format = REMOTE_FRAME_FORMAT_VERSION
+            auxiliary.data = frame_data
+            self.frame_data_publisher.publish(auxiliary)
+        elif ros_debug_frame is not None:
+            diagnostic = CompressedImage()
+            diagnostic.header.stamp = stamp
+            diagnostic.header.frame_id = frame_id
+            diagnostic.format = ROS_DEBUG_FRAME_FORMAT_VERSION
+            diagnostic.data = ros_debug_frame
+            self.ros_debug_publisher.publish(diagnostic)
+
+        self.last_published_render_sequence = render_sequence
         self.frame_index += 1
 
     def _publish_status(self) -> None:
+        self._status_publish_count += 1
         pose_age_ms = None
         if self.last_pose_time > 0.0:
             pose_age_ms = max(0.0, (time.monotonic() - self.last_pose_time) * 1000.0)
+        ros_debug_subscription_count = (
+            self.ros_debug_publisher.get_subscription_count()
+            if self.ros_debug_publisher is not None
+            else 0
+        )
+        if (
+            ros_debug_subscription_count != self._last_ros_debug_subscription_count
+            or self._status_publish_count % 5 == 0
+        ):
+            self.get_logger().info(
+                "HORUS_REMOTE_RENDER_DIAG "
+                f"transport={self.args.transport} "
+                f"ros_debug_qos=reliable "
+                f"subscriptions={ros_debug_subscription_count} "
+                f"published={self.frame_index} "
+                f"rendered={self.rendered_frame_count} "
+                f"latest_pose={self.latest_pose_sequence} "
+                f"latest_render={self.latest_render_sequence} "
+                f"payload_bytes={self.last_ros_debug_payload_bytes} "
+                f"pose_age_ms={pose_age_ms}"
+            )
+            self._last_ros_debug_subscription_count = ros_debug_subscription_count
         status = String()
         status.data = json.dumps(
             {
                 "state": "streaming_source",
                 "renderer": self.renderer_name,
                 "scene": self.args.scene,
-                "transport_owner": self.args.transport,
-                "format_version": self.format_version,
-                "update_mode": "refresh" if self.args.dynamic_view else "static",
-                "dynamic_view": self.args.dynamic_view,
+                "transport": self.args.transport,
+                "format_version": (
+                    REMOTE_FRAME_FORMAT_VERSION
+                    if self.args.transport == "webrtc"
+                    else ROS_DEBUG_FRAME_FORMAT_VERSION
+                ),
                 "stream_topic": (
-                    ROS_STREAM_TOPIC
-                    if self.args.transport == "ros_compressed"
-                    else STREAM_TOPIC
+                    STREAM_TOPIC
+                    if self.args.transport == "webrtc"
+                    else ROS_DEBUG_FRAME_TOPIC
                 ),
+                "frame_data_topic": REMOTE_FRAME_DATA_TOPIC,
+                "ros_compressed_topic": ROS_DEBUG_FRAME_TOPIC,
                 "status_topic": AGENT_STATUS_TOPIC,
-                "viewer_pose_topic": self.args.viewer_pose_topic if self.args.dynamic_view else "",
-                "width": self.packed_width,
-                "height": self.packed_height,
-                "view_width": (
-                    self.args.width
-                    if self.args.dynamic_view
-                    else self.args.width // 3
-                    if self.args.scene != "synthetic"
-                    else self.args.width
-                ),
-                "view_height": (
-                    self.args.height
-                    if self.args.dynamic_view
-                    else self.args.height // 3
-                    if self.args.scene != "synthetic"
-                    else self.args.height
-                ),
+                "viewer_pose_topic": self.args.viewer_pose_topic,
+                "color_width": self.args.width,
+                "color_width_per_eye": self.args.width,
+                "color_height": self.args.height,
+                "depth_width": self.args.depth_width,
+                "depth_height": self.args.depth_height,
                 "fps": self.args.fps,
-                "render_update_fps": self.args.render_update_fps if self.args.dynamic_view else 0,
+                "render_update_fps": self.args.render_update_fps,
                 "frames_published": self.frame_index,
                 "frames_rendered": self.rendered_frame_count,
+                "ros_debug_qos": "reliable",
+                "ros_debug_subscription_count": ros_debug_subscription_count,
+                "ros_debug_payload_bytes": self.last_ros_debug_payload_bytes,
                 "latest_pose_sequence": self.latest_pose_sequence,
                 "latest_render_sequence": self.latest_render_sequence,
                 "pose_age_ms": pose_age_ms,
                 "render_ms": self.last_render_ms,
-                "cuda_ms": getattr(self, "last_cuda_ms", 0.0),
+                "cuda_ms": self.last_cuda_ms,
                 "valid_depth_fraction": self.valid_depth_fraction,
-                "source_point_count": self.source_point_count,
+                "source_primitive_count": self.source_point_count,
                 "depth_near_m": self.depth_near_m,
                 "depth_far_m": self.depth_far_m,
-                "vertical_fov_deg": self.args.vertical_fov_deg if self.args.dynamic_view else VERTICAL_FOV_DEGREES,
+                "render_vertical_fov_deg": self.current_render_fov_deg,
+                "guard_band_degrees": self.args.guard_band_degrees,
+                "viewer_pose_received": self._viewer_pose_received,
             },
             separators=(",", ":"),
         )
@@ -533,11 +916,6 @@ class RemoteMapRenderSource(Node):
         self._pose_event.set()
         if self._render_thread is not None:
             self._render_thread.join(timeout=10.0)
-            if self._render_thread.is_alive():
-                self.get_logger().warning(
-                    "CUDA render thread did not stop; native resources will be released by process exit"
-                )
-                return
             self._render_thread = None
         if self._cuda_renderer is not None:
             self._cuda_renderer.close()
@@ -546,74 +924,96 @@ class RemoteMapRenderSource(Node):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Publish PC-rendered packed RGB-D frames for the HORUS WebRTC sender."
+        description=(
+            "Render a pose-adaptive 3D map on the PC and publish "
+            "synchronized WebRTC color plus lossless depth metadata."
+        )
     )
-    parser.add_argument("--width", type=int, default=960)
-    parser.add_argument("--height", type=int, default=540)
-    parser.add_argument("--fps", type=int, default=30)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--depth-width", type=int, default=480)
+    parser.add_argument("--depth-height", type=int, default=270)
+    parser.add_argument("--fps", type=int, default=60)
     parser.add_argument(
         "--transport",
-        choices=("webrtc_source", "ros_compressed"),
-        default="webrtc_source",
+        choices=("webrtc", "ros_compressed"),
+        default="ros_compressed",
     )
-    parser.add_argument("--jpeg-quality", type=int, default=95)
+    parser.add_argument("--ros-jpeg-quality", type=int, default=92)
     parser.add_argument(
         "--scene",
-        choices=("synthetic", "cow_lady", "eth3d_courtyard"),
-        default="synthetic",
+        choices=(
+            "synthetic",
+            *ADVANCED_REMOTE_SCENE_IDS,
+            "cow_lady",
+            "eth3d_courtyard",
+            *ETH3D_REMOTE_SCENE_IDS,
+        ),
+        default="cow_lady",
     )
     parser.add_argument("--dataset-path", default="")
     parser.add_argument("--dataset-scale", type=float, default=1.0)
-    parser.add_argument("--point-splat-radius", type=int, default=1)
-    parser.add_argument("--dynamic-view", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--source-voxel-size",
+        type=float,
+        default=0.0125,
+        help=(
+            "PC render LOD voxel size in scene metres. The complete downloaded "
+            "source remains unchanged."
+        ),
+    )
+    parser.add_argument("--point-splat-radius", type=int, default=2)
+    parser.add_argument(
+        "--synthetic-point-spacing",
+        type=float,
+        default=0.04,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--viewer-pose-topic", default=DEFAULT_VIEWER_POSE_TOPIC)
-    parser.add_argument("--dynamic-view-baseline", type=float, default=0.75)
-    parser.add_argument("--render-update-fps", type=float, default=0.0)
-    parser.add_argument("--vertical-fov-deg", type=float, default=90.0)
-    parser.add_argument("--pose-position-range", type=float, default=128.0)
+    parser.add_argument("--render-update-fps", type=float, default=60.0)
+    parser.add_argument("--minimum-vertical-fov-deg", type=float, default=90.0)
+    parser.add_argument("--guard-band-degrees", type=float, default=6.0)
     parser.add_argument("--depth-near-m", type=float, default=0.0)
     parser.add_argument("--depth-far-m", type=float, default=0.0)
     parser.add_argument("--ready-file", default="")
     parser.add_argument("--preview-path", default="")
     args = parser.parse_args()
-    if not 320 <= args.width <= 1920 or not 180 <= args.height <= 1080:
-        parser.error("view dimensions must be within 320x180 and 1920x1080")
-    if args.width % 2 or args.height % 2:
-        parser.error("view width and height must be even for RGB-D packing")
-    if args.dynamic_view and args.width % 4:
-        parser.error("dynamic view width must be divisible by four for 16-bit depth packing")
-    if not args.dynamic_view and args.scene != "synthetic" and (
-        args.width % 3 or args.height % 3
+
+    if not FRAME_MARKER_WIDTH <= args.width <= 1920 or not 180 <= args.height <= 1920:
+        parser.error(
+            f"color dimensions must be within {FRAME_MARKER_WIDTH}x180 and 1920x1920"
+        )
+    if (
+        not 1 <= args.depth_width <= args.width
+        or not 1 <= args.depth_height <= args.height
     ):
-        parser.error("complete static atlas width and height must be divisible by three")
-    if not 1 <= args.fps <= 60:
-        parser.error("--fps must be between 1 and 60")
-    if args.transport == "ros_compressed" and args.fps > 15:
-        parser.error("ROS compressed diagnostics are capped at 15 FPS")
-    if not 80 <= args.jpeg_quality <= 100:
-        parser.error("--jpeg-quality must be between 80 and 100")
-    if args.dynamic_view and args.scene == "synthetic":
-        parser.error("--dynamic-view requires cow_lady or eth3d_courtyard")
+        parser.error("depth dimensions must be positive and no larger than color")
+    if not 1 <= args.fps <= 60 or not 1.0 <= args.render_update_fps <= 60.0:
+        parser.error("publish and render rates must be between 1 and 60 FPS")
+    if not 20 <= args.ros_jpeg_quality <= 95:
+        parser.error("--ros-jpeg-quality must be between 20 and 95")
     if not args.viewer_pose_topic.startswith("/"):
         parser.error("--viewer-pose-topic must be an absolute ROS topic")
-    if args.render_update_fps <= 0.0:
-        args.render_update_fps = min(args.fps, 30 if args.scene == "eth3d_courtyard" else 60)
-    if not 1.0 <= args.render_update_fps <= 60.0:
-        parser.error("--render-update-fps must be between 1 and 60")
-    if not 0.0 <= args.dynamic_view_baseline <= 5.0:
-        parser.error("--dynamic-view-baseline must be between 0 and 5 metres")
-    if not 40.0 <= args.vertical_fov_deg <= 140.0:
-        parser.error("--vertical-fov-deg must be between 40 and 140")
-    if not 8.0 <= args.pose_position_range <= 2048.0:
-        parser.error("--pose-position-range must be between 8 and 2048 metres")
-    if args.depth_near_m < 0.0 or args.depth_far_m < 0.0:
-        parser.error("depth overrides cannot be negative")
-    if args.depth_far_m > 0.0 and args.depth_near_m > 0.0 and args.depth_far_m <= args.depth_near_m:
-        parser.error("--depth-far-m must be greater than --depth-near-m")
-    if not 0.1 <= args.dataset_scale <= 10.0:
-        parser.error("--dataset-scale must be between 0.1 and 10")
+    if not 40.0 <= args.minimum_vertical_fov_deg <= 130.0:
+        parser.error("--minimum-vertical-fov-deg must be between 40 and 130")
+    if not 0.0 <= args.guard_band_degrees <= 25.0:
+        parser.error("--guard-band-degrees must be between 0 and 25")
     if not 0 <= args.point_splat_radius <= 4:
         parser.error("--point-splat-radius must be between 0 and 4")
+    if not 0.1 <= args.dataset_scale <= 10.0:
+        parser.error("--dataset-scale must be between 0.1 and 10")
+    if not 0.001 <= args.source_voxel_size <= 0.25:
+        parser.error("--source-voxel-size must be between 0.001 and 0.25 metres")
+    if not 0.01 <= args.synthetic_point_spacing <= 0.25:
+        parser.error("--synthetic-point-spacing must be between 0.01 and 0.25 metres")
+    if args.depth_near_m < 0.0 or args.depth_far_m < 0.0:
+        parser.error("depth overrides cannot be negative")
+    if (
+        args.depth_near_m > 0.0
+        and args.depth_far_m > 0.0
+        and args.depth_far_m <= args.depth_near_m
+    ):
+        parser.error("--depth-far-m must be greater than --depth-near-m")
     return args
 
 
@@ -639,18 +1039,24 @@ def main() -> int:
                         "scene": args.scene,
                         "encoder": "horus_ros2",
                         "transport": args.transport,
-                        "transport_owner": args.transport,
-                        "format_version": node.format_version,
-                        "update_mode": "refresh" if args.dynamic_view else "static",
-                        "dynamic_view": args.dynamic_view,
-                        "stream_topic": (
-                            ROS_STREAM_TOPIC
-                            if args.transport == "ros_compressed"
-                            else STREAM_TOPIC
+                        "format_version": (
+                            REMOTE_FRAME_FORMAT_VERSION
+                            if args.transport == "webrtc"
+                            else ROS_DEBUG_FRAME_FORMAT_VERSION
                         ),
-                        "viewer_pose_topic": args.viewer_pose_topic if args.dynamic_view else "",
-                        "width": node.packed_width,
-                        "height": node.packed_height,
+                        "stream_topic": (
+                            STREAM_TOPIC
+                            if args.transport == "webrtc"
+                            else ROS_DEBUG_FRAME_TOPIC
+                        ),
+                        "frame_data_topic": REMOTE_FRAME_DATA_TOPIC,
+                        "ros_compressed_topic": ROS_DEBUG_FRAME_TOPIC,
+                        "viewer_pose_topic": args.viewer_pose_topic,
+                        "color_width": args.width,
+                        "color_width_per_eye": args.width,
+                        "color_height": args.height,
+                        "depth_width": args.depth_width,
+                        "depth_height": args.depth_height,
                         "fps": args.fps,
                         "render_update_fps": args.render_update_fps,
                         "valid_depth_fraction": node.valid_depth_fraction,
@@ -661,14 +1067,21 @@ def main() -> int:
             )
         print(
             "[remote-map-source] READY "
-            f"topic={ROS_STREAM_TOPIC if args.transport == 'ros_compressed' else STREAM_TOPIC} "
-            f"packed={node.packed_width}x{node.packed_height} "
-            f"fps={args.fps} dynamic={args.dynamic_view} transport={args.transport}",
+            f"transport={args.transport} "
+            f"color_topic={STREAM_TOPIC if args.transport == 'webrtc' else ROS_DEBUG_FRAME_TOPIC} "
+            f"frame_data_topic={REMOTE_FRAME_DATA_TOPIC} "
+            f"color={args.width}x{args.height} "
+            f"(per_eye={args.width}x{args.height}) "
+            f"depth_per_eye={args.depth_width}x{args.depth_height} "
+            f"fps={args.fps} scene={args.scene}",
             flush=True,
         )
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except _rclpy.RCLError:
+        if rclpy.ok():
+            raise
     finally:
         node.close()
         node.destroy_node()

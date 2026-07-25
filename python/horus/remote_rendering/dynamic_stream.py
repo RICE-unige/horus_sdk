@@ -12,7 +12,7 @@ from .synthetic_scene import DEPTH_LUMA_MAX, DEPTH_LUMA_MIN, encode_luma_depth
 
 DYNAMIC_RGBD_FORMAT_VERSION = "rgbd_pose_timewarp_luma_nibbles_v5"
 LEGACY_DYNAMIC_RGBD_FORMAT_VERSION = "rgbd_pose_timewarp_luma_nibbles_v4"
-VIEWER_POSE_VERSION = "remote_render_pose.v1"
+VIEWER_POSE_VERSION = "remote_render_stereo_pose.v2"
 DEFAULT_VIEWER_POSE_TOPIC = "/horus/remote_render/viewer_pose"
 DYNAMIC_VIEW_COUNT = 1
 DYNAMIC_DEPTH_BITS = 16
@@ -55,6 +55,25 @@ def quaternion_to_matrix(rotation) -> np.ndarray:
         ),
         dtype=np.float32,
     )
+
+
+def quaternion_multiply(left, right) -> np.ndarray:
+    """Compose two x/y/z/w quaternions."""
+    lx, ly, lz, lw = normalize_quaternion(left)
+    rx, ry, rz, rw = normalize_quaternion(right)
+    return normalize_quaternion(
+        (
+            lw * rx + lx * rw + ly * rz - lz * ry,
+            lw * ry - lx * rz + ly * rw + lz * rx,
+            lw * rz + lx * ry - ly * rx + lz * rw,
+            lw * rw - lx * rx - ly * ry - lz * rz,
+        )
+    )
+
+
+def quaternion_inverse(rotation) -> np.ndarray:
+    value = normalize_quaternion(rotation)
+    return np.array((-value[0], -value[1], -value[2], value[3]), dtype=np.float32)
 
 
 def build_dynamic_camera_poses(
