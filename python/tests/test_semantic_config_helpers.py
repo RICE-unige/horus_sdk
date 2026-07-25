@@ -134,18 +134,7 @@ def test_workspace_remote_render_is_global_and_has_no_robot_controls():
     dataviz.add_remote_rendered_map(
         render_options={
             "status_topic": "/horus/remote_render/agent_status",
-            "camera_position": (-19.0, 0.0, 15.0),
-            "views": [
-                {
-                    "id": "front",
-                    "atlas_x": 0.0,
-                    "atlas_y": 0.5,
-                    "atlas_width": 0.5,
-                    "atlas_height": 0.5,
-                    "camera_position": (3.0, 0.0, 2.0),
-                    "camera_rotation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0},
-                }
-            ],
+            "frame_data_topic": "/horus/remote_render/frame_data",
         }
     )
     global_visualizations = client._build_global_visualizations_payload([dataviz])
@@ -167,106 +156,47 @@ def test_workspace_remote_render_is_global_and_has_no_robot_controls():
     assert remote["type"] == "remote_render"
     assert remote["scope"] == "global"
     assert remote["topic"] == "/horus/remote_render/map_portal"
-    assert remote["remote_render"]["format_version"] == "rgbd_multiview_luma_nibbles_v2"
-    assert remote["remote_render"]["update_mode"] == "static"
-    assert remote["remote_render"]["dynamic_view"] is False
+    assert remote["remote_render"]["format_version"] == (
+        "remote_stereo_rgbd_ros_v2"
+    )
     assert remote["remote_render"]["viewer_pose_topic"] == "/horus/remote_render/viewer_pose"
-    assert remote["remote_render"]["viewer_pose_rate_hz"] == 30.0
-    assert remote["remote_render"]["pose_position_range_m"] == 128.0
-    assert remote["remote_render"]["transport"] == "webrtc"
-    assert remote["remote_render"]["encoder"] == "auto"
-    assert remote["remote_render"]["bitrate_kbps"] == 5000
+    assert remote["remote_render"]["viewer_pose_rate_hz"] == 60.0
+    assert remote["remote_render"]["transport"] == "ros_compressed"
+    assert remote["remote_render"]["ros_compressed_topic"] == (
+        "/horus/remote_render/rgbd"
+    )
+    assert remote["remote_render"]["frame_data_topic"] == "/horus/remote_render/frame_data"
+    assert remote["remote_render"]["encoder"] == "nvenc"
+    assert remote["remote_render"]["bitrate_kbps"] == 12000
     assert remote["remote_render"]["client_signal_topic"] == "/horus/webrtc/client_signal"
     assert remote["remote_render"]["server_signal_topic"] == "/horus/webrtc/server_signal"
     assert remote["remote_render"]["status_topic"] == "/horus/remote_render/agent_status"
-    assert remote["remote_render"]["views"] == [
-        {
-            "id": "front",
-            "atlas_x": 0.0,
-            "atlas_y": 0.5,
-            "atlas_width": 0.5,
-            "atlas_height": 0.5,
-            "camera_position": {"x": 3.0, "y": 0.0, "z": 2.0},
-            "camera_rotation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0},
-        }
+    assert client._collect_topics(dataviz) == [
+        "/horus/remote_render/rgbd",
+        "/horus/remote_render/agent_status",
     ]
-    assert client._collect_topics(dataviz) == ["/horus/remote_render/agent_status"]
     assert "/horus/remote_render/map_portal" not in client._collect_topics(dataviz)
 
 
-def test_workspace_remote_render_dynamic_pose_contract_is_serialized():
+def test_workspace_remote_render_pose_contract_is_serialized():
     client = _build_client()
     resource = WorkspaceVisualization("workspace_remote_map")
     dataviz = resource.create_dataviz()
     dataviz.add_remote_rendered_map(
         render_options={
-            "format_version": "rgbd_pose_timewarp_luma_nibbles_v5",
-            "dynamic_view": True,
             "viewer_pose_topic": "/test/remote_map/viewer_pose",
             "viewer_pose_rate_hz": 72.0,
-            "pose_position_range_m": 256.0,
+            "frame_data_topic": "/test/remote_map/frame_data",
         }
     )
 
     remote = client._build_global_visualizations_payload([dataviz])[0]["remote_render"]
 
-    assert remote["format_version"] == "rgbd_pose_timewarp_luma_nibbles_v5"
-    assert remote["update_mode"] == "refresh"
-    assert remote["dynamic_view"] is True
+    assert remote["format_version"] == "remote_stereo_rgbd_ros_v2"
+    assert remote["transport"] == "ros_compressed"
     assert remote["viewer_pose_topic"] == "/test/remote_map/viewer_pose"
     assert remote["viewer_pose_rate_hz"] == 72.0
-    assert remote["pose_position_range_m"] == 256.0
-
-
-def test_workspace_remote_render_preserves_nine_static_capture_views():
-    client = _build_client()
-    resource = WorkspaceVisualization("workspace_remote_map")
-    dataviz = resource.create_dataviz()
-    views = [
-        {
-            "id": f"view_{index}",
-            "atlas_x": (index % 3) / 3.0,
-            "atlas_y": (index // 3) / 3.0,
-            "atlas_width": 1.0 / 3.0,
-            "atlas_height": 1.0 / 3.0,
-            "camera_position": (float(index), 2.0, 0.0),
-            "camera_rotation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-        }
-        for index in range(9)
-    ]
-    dataviz.add_remote_rendered_map(render_options={"views": views})
-
-    remote = client._build_global_visualizations_payload([dataviz])[0]["remote_render"]
-
-    assert len(remote["views"]) == 9
-    assert [view["id"] for view in remote["views"]] == [
-        f"view_{index}" for index in range(9)
-    ]
-
-
-def test_workspace_remote_render_ros_debug_topics_are_monitored():
-    client = _build_client()
-    resource = WorkspaceVisualization("workspace_remote_map")
-    dataviz = resource.create_dataviz()
-    dataviz.add_remote_rendered_map(
-        render_options={
-            "transport": "ros_compressed",
-            "ros_compressed_topic": "/horus/remote_render/map_rgbd/compressed",
-            "status_topic": "/horus/remote_render/agent_status",
-        }
-    )
-
-    topics = client._collect_topics(dataviz)
-    global_visualizations = client._build_global_visualizations_payload([dataviz])
-    remote = global_visualizations[0]["remote_render"]
-
-    assert topics == [
-        "/horus/remote_render/map_rgbd/compressed",
-        "/horus/remote_render/agent_status",
-    ]
-    assert remote["transport"] == "ros_compressed"
-    assert remote["ros_compressed_topic"] == "/horus/remote_render/map_rgbd/compressed"
-    assert "/horus/remote_render/map_portal" not in topics
+    assert remote["frame_data_topic"] == "/test/remote_map/frame_data"
 
 
 def test_metadata_aliases_remain_available():

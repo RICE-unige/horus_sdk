@@ -13,13 +13,18 @@ from horus.remote_rendering.real_scene import (
     COW_LADY_VIEW_SPECS,
     ETH3D_COURTYARD_VIEW_SPECS,
     RemoteRenderViewSpec,
+    iter_eth3d_remote_scene_lod_chunks,
     load_colored_vertex_ply,
+    iter_eth3d_remote_scene_chunks,
+    prepare_eth3d_remote_scene,
+    prepare_eth3d_remote_scene_lod,
     prepare_cow_lady_points,
     render_colored_points,
     unproject_multiview_surfels,
     view_spec_camera_pose,
 )
 from horus.remote_rendering.dynamic_stream import (
+    DynamicCameraPose,
     build_dynamic_camera_poses,
     decode_dynamic_depth,
     decode_dynamic_pose_metadata,
@@ -28,6 +33,68 @@ from horus.remote_rendering.dynamic_stream import (
     metadata_rows,
     pack_dynamic_rgbd,
 )
+from horus.remote_rendering.frame_protocol import (
+    FRAME_MARKER_HEIGHT,
+    FRAME_MARKER_WIDTH,
+    decode_frame_marker,
+    dequantize_depth,
+    downsample_depth_for_reprojection,
+    downsample_depth_for_surfels,
+    downsample_depth_min,
+    embed_frame_marker,
+    expand_projection,
+    pack_remote_frame,
+    pack_ros_debug_frame,
+    pack_stereo_remote_frame,
+    projection_from_vertical_fov,
+    unpack_remote_frame,
+    unpack_ros_debug_frame,
+    unpack_stereo_remote_frame,
+)
+
+
+def _projection_tangents(projection):
+    projection_x, projection_y, offset_x, offset_y = projection
+    return (
+        (offset_x - 1.0) / projection_x,
+        (offset_x + 1.0) / projection_x,
+        (offset_y - 1.0) / projection_y,
+        (offset_y + 1.0) / projection_y,
+    )
+
+
+def test_projection_guard_band_expands_each_asymmetric_frustum_edge():
+    source = (1.42, 1.73, 0.08, -0.04)
+    expanded = expand_projection(
+        source,
+        guard_band_degrees=4.0,
+        minimum_vertical_fov_deg=45.0,
+    )
+    source_left, source_right, source_bottom, source_top = _projection_tangents(
+        source
+    )
+    left, right, bottom, top = _projection_tangents(expanded)
+
+    assert np.arctan(left) < np.arctan(source_left)
+    assert np.arctan(right) > np.arctan(source_right)
+    assert np.arctan(bottom) < np.arctan(source_bottom)
+    assert np.arctan(top) > np.arctan(source_top)
+    assert not np.isclose(expanded[2], source[2] * expanded[0] / source[0])
+
+
+def test_projection_guard_band_preserves_zero_guard_projection():
+    source = (1.42, 1.73, 0.08, -0.04)
+    vertical_fov = np.rad2deg(
+        np.arctan(_projection_tangents(source)[3])
+        - np.arctan(_projection_tangents(source)[2])
+    )
+    expanded = expand_projection(
+        source,
+        guard_band_degrees=0.0,
+        minimum_vertical_fov_deg=vertical_fov,
+    )
+
+    assert np.allclose(expanded, source, atol=1e-6)
 
 
 def test_dynamic_depth_round_trip_uses_16_bit_precision():
@@ -115,6 +182,63 @@ def test_binary_colored_ply_loader_preserves_every_vertex(tmp_path):
     assert colors.shape == (2, 3)
     assert np.allclose(points[0], (1.0, 2.0, 3.0))
     assert np.array_equal(colors[1], (40, 50, 60))
+
+
+def test_eth3d_remote_scene_uses_alignment_and_centers_full_scan(tmp_path):
+    scan_path = tmp_path / "scan.ply"
+    header = (
+        "ply\n"
+        "format binary_little_endian 1.0\n"
+        "element vertex 2\n"
+        "property float x\n"
+        "property float y\n"
+        "property float z\n"
+        "property uchar red\n"
+        "property uchar green\n"
+        "property uchar blue\n"
+        "end_header\n"
+    ).encode("ascii")
+    scan_path.write_bytes(
+        header
+        + struct.pack("<fffBBB", 0.0, 0.0, 0.0, 10, 20, 30)
+        + struct.pack("<fffBBB", 2.0, 4.0, 1.0, 40, 50, 60)
+    )
+    (tmp_path / "scan_alignment.mlp").write_text(
+        """<MeshLabProject><MeshGroup>
+<MLMesh label="scan.ply" filename="scan.ply"><MLMatrix44>
+1 0 0 10
+0 1 0 -2
+0 0 1 3
+0 0 0 1
+</MLMatrix44></MLMesh>
+</MeshGroup></MeshLabProject>""",
+        encoding="utf-8",
+    )
+
+    scene = prepare_eth3d_remote_scene("delivery_area", tmp_path)
+    chunks = list(iter_eth3d_remote_scene_chunks(scene, chunk_size=10_000))
+    points, colors = chunks[0]
+
+    assert scene.point_count == 2
+    assert np.allclose(points.mean(axis=0), (0.0, 3.5, 0.0))
+    assert np.isclose(points[:, 1].min(), 0.0)
+    assert np.isclose(np.ptp(points[:, 2]), 28.0)
+    assert np.array_equal(colors, ((10, 20, 30), (40, 50, 60)))
+
+    lod_path, lod_count = prepare_eth3d_remote_scene_lod(
+        scene,
+        voxel_size_m=0.25,
+    )
+    cached_path, cached_count = prepare_eth3d_remote_scene_lod(
+        scene,
+        voxel_size_m=0.25,
+    )
+    lod_chunks = list(iter_eth3d_remote_scene_lod_chunks(lod_path))
+    assert lod_count == 2
+    assert cached_path == lod_path
+    assert cached_count == lod_count
+    assert np.allclose(lod_chunks[0][0], points)
+    assert np.array_equal(lod_chunks[0][1], colors)
 
 
 def test_real_point_cloud_raster_uses_metric_camera_z():
@@ -270,3 +394,211 @@ def test_pose_metadata_survives_ros_jpeg_transport():
     assert sequence == 418
     assert np.allclose(restored[0].position, pose[0].position, atol=0.01)
     assert abs(float(np.dot(restored[0].rotation, pose[0].rotation))) > 0.9999
+
+
+def test_remote_frame_contract_preserves_lossless_depth_codes_and_metadata():
+    near_m, far_m = 0.2, 80.0
+    depth = np.linspace(near_m, far_m, 320 * 180, dtype=np.float32).reshape(180, 320)
+    depth[0, 0] = np.inf
+    projection = projection_from_vertical_fov(104.0, 16.0 / 9.0)
+
+    encoded = pack_remote_frame(
+        depth,
+        sequence=0x12345678,
+        color_width=960,
+        color_height=540,
+        near_m=near_m,
+        far_m=far_m,
+        projection=projection,
+        position=(1.25, -2.5, 3.75),
+        rotation=(0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)),
+        capture_time_ns=123456789,
+    )
+    restored = unpack_remote_frame(encoded)
+    restored_depth = dequantize_depth(
+        restored.depth_codes,
+        near_m=restored.near_m,
+        far_m=restored.far_m,
+    )
+
+    assert encoded[80] == 2
+    assert len(encoded) < depth.nbytes
+    assert restored.sequence == 0x12345678
+    assert restored.capture_time_ns == 123456789
+    assert (restored.color_width, restored.color_height) == (960, 540)
+    assert (restored.depth_width, restored.depth_height) == (320, 180)
+    assert np.isinf(restored_depth[0, 0])
+    valid = np.isfinite(depth)
+    quantization_step = (far_m - near_m) / 65534.0
+    assert np.max(np.abs(depth[valid] - restored_depth[valid])) <= quantization_step * 1.1
+    assert np.allclose(restored.position, (1.25, -2.5, 3.75))
+    assert np.allclose(restored.rotation, (0.0, np.sqrt(0.5), 0.0, np.sqrt(0.5)))
+    assert np.allclose(
+        (
+            restored.projection_x,
+            restored.projection_y,
+            restored.projection_offset_x,
+            restored.projection_offset_y,
+        ),
+        projection,
+    )
+
+
+def test_remote_frame_contract_rejects_corrupted_depth():
+    depth = np.full((18, 32), 3.0, dtype=np.float32)
+    encoded = bytearray(
+        pack_remote_frame(
+            depth,
+            sequence=7,
+            color_width=320,
+            color_height=180,
+            near_m=0.2,
+            far_m=10.0,
+            projection=projection_from_vertical_fov(100.0, 16.0 / 9.0),
+            position=(0.0, 0.0, 0.0),
+            rotation=(0.0, 0.0, 0.0, 1.0),
+        )
+    )
+    encoded[-1] ^= 0x01
+
+    with np.testing.assert_raises_regex(ValueError, "checksum"):
+        unpack_remote_frame(encoded)
+
+
+def test_stereo_remote_frame_preserves_two_eye_depth_and_metadata():
+    near_m, far_m = 0.2, 40.0
+    left = np.linspace(near_m, 10.0, 24, dtype=np.float32).reshape(4, 6)
+    right = np.linspace(12.0, far_m, 24, dtype=np.float32).reshape(4, 6)
+    left[0, 0] = np.inf
+    depth = np.stack((left, right))
+    projections = (
+        (0.91, 1.62, 0.03, -0.01),
+        (0.92, 1.63, -0.03, -0.01),
+    )
+    positions = ((-0.032, 1.7, 0.0), (0.032, 1.7, 0.0))
+    rotations = (
+        (0.0, 0.0, 0.0, 1.0),
+        (0.0, 0.0, 0.0, 1.0),
+    )
+
+    restored = unpack_stereo_remote_frame(
+        pack_stereo_remote_frame(
+            depth,
+            sequence=73,
+            color_width=640,
+            color_height=360,
+            near_m=near_m,
+            far_m=far_m,
+            projections=projections,
+            positions=positions,
+            rotations=rotations,
+            capture_time_ns=987654321,
+        )
+    )
+    restored_depth = dequantize_depth(
+        restored.depth_codes,
+        near_m=restored.near_m,
+        far_m=restored.far_m,
+    )
+
+    assert restored.sequence == 73
+    assert restored.capture_time_ns == 987654321
+    assert restored.depth_codes.shape == (2, 4, 6)
+    assert np.isinf(restored_depth[0, 0, 0])
+    valid = np.isfinite(depth)
+    quantization_step = (far_m - near_m) / 65534.0
+    assert np.max(np.abs(depth[valid] - restored_depth[valid])) <= quantization_step * 1.1
+    assert np.allclose(restored.projections, projections)
+    assert np.allclose(restored.positions, positions)
+    assert np.allclose(restored.rotations, rotations)
+
+
+def test_ros_debug_frame_bundles_matching_jpeg_and_depth_metadata():
+    jpeg = b"\xff\xd8diagnostic-jpeg\xff\xd9"
+    frame_data = pack_remote_frame(
+        np.full((18, 32), 3.0, dtype=np.float32),
+        sequence=41,
+        color_width=640,
+        color_height=360,
+        near_m=0.2,
+        far_m=10.0,
+        projection=projection_from_vertical_fov(100.0, 16.0 / 9.0),
+        position=(1.0, 2.0, 3.0),
+        rotation=(0.0, 0.0, 0.0, 1.0),
+    )
+
+    restored_jpeg, restored_frame_data = unpack_ros_debug_frame(
+        pack_ros_debug_frame(jpeg, frame_data)
+    )
+
+    assert restored_jpeg == jpeg
+    assert unpack_remote_frame(restored_frame_data).sequence == 41
+
+
+def test_depth_downsampling_uses_nearest_finite_foreground():
+    depth = np.full((6, 6), np.inf, dtype=np.float32)
+    depth[0:3, 0:3] = 4.0
+    depth[1, 1] = 1.5
+    depth[3:6, 3:6] = 7.0
+
+    reduced = downsample_depth_min(depth, width=2, height=2)
+
+    assert reduced.shape == (2, 2)
+    assert reduced[0, 0] == 1.5
+    assert np.isinf(reduced[0, 1])
+    assert np.isinf(reduced[1, 0])
+    assert reduced[1, 1] == 7.0
+
+
+def test_reprojection_depth_invalidates_far_side_of_surface_discontinuity():
+    depth = np.full((6, 8), 4.0, dtype=np.float32)
+    depth[:, 4:] = 12.0
+
+    reduced = downsample_depth_for_reprojection(depth, width=4, height=3)
+
+    assert np.isfinite(reduced[:, :2]).all()
+    assert np.isinf(reduced[:, 2]).all()
+    assert np.all(reduced[:, 3] == 12.0)
+
+
+def test_reprojection_depth_supports_non_integer_scaling_without_false_edges():
+    rows = np.linspace(2.0, 2.05, 7, dtype=np.float32)[:, None]
+    columns = np.linspace(0.0, 0.05, 9, dtype=np.float32)[None, :]
+    depth = rows + columns
+
+    reduced = downsample_depth_for_reprojection(depth, width=4, height=3)
+
+    assert reduced.shape == (3, 4)
+    assert np.isfinite(reduced).all()
+
+
+def test_surfel_depth_preserves_both_sides_of_surface_discontinuity():
+    depth = np.full((6, 8), 4.0, dtype=np.float32)
+    depth[:, 4:] = 12.0
+
+    reduced = downsample_depth_for_surfels(depth, width=4, height=3)
+
+    assert reduced.shape == (3, 4)
+    assert np.all(reduced[:, :2] == 4.0)
+    assert np.all(reduced[:, 2:] == 12.0)
+
+
+def test_frame_marker_survives_jpeg_like_color_loss():
+    color = np.full((180, 640, 3), (84, 128, 172), dtype=np.uint8)
+    embed_frame_marker(color, 0xBEEF)
+    assert color.shape[1] >= FRAME_MARKER_WIDTH
+    assert color.shape[0] >= FRAME_MARKER_HEIGHT
+    np.testing.assert_array_equal(
+        color[:FRAME_MARKER_HEIGHT, :FRAME_MARKER_WIDTH],
+        color[-FRAME_MARKER_HEIGHT:, :FRAME_MARKER_WIDTH],
+    )
+
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        cv2.cvtColor(color, cv2.COLOR_RGB2BGR),
+        [cv2.IMWRITE_JPEG_QUALITY, 35],
+    )
+    assert ok
+    decoded = cv2.cvtColor(cv2.imdecode(encoded, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+
+    assert decode_frame_marker(decoded) == 0xBEEF
