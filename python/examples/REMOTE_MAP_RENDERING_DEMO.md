@@ -391,23 +391,16 @@ ros2 daemon stop
 ros2 daemon start
 ```
 
-## Design basis
+## Design references
 
-The implementation uses the applicable public design patterns from Azure
-Remote Rendering, Rerun, ALVR, and the 3D Streaming Toolkit: per-viewer camera
-synchronization, explicit render metadata, depth-aware local composition,
-hardware video encoding, bounded newest-frame delivery, pose prediction, and
-depth-discontinuity rejection.
-
-Azure Remote Rendering itself was a proprietary Azure service and was retired
-on September 30, 2025. Its public repository contains client integration
-samples rather than the service renderer.
+The remote-rendering work was informed by public documentation and examples
+from Azure Remote Rendering, the 3D Streaming Toolkit, and ALVR. These projects
+were consulted as conceptual references for remote camera synchronization,
+video delivery, and local composition. The HORUS implementation was developed
+independently and does not include source code from these projects.
 
 - Azure Remote Rendering:
   <https://github.com/Azure/azure-remote-rendering>
-- Azure Remote Rendering lifecycle:
-  <https://learn.microsoft.com/en-us/lifecycle/products/azure-remote-rendering>
 - 3D Streaming Toolkit:
   <https://github.com/3DStreamingToolkit/3DStreamingToolkit>
-- Rerun: <https://github.com/rerun-io/rerun>
 - ALVR: <https://github.com/alvr-org/ALVR>
