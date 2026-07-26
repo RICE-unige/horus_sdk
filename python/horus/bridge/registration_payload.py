@@ -34,6 +34,10 @@ _FIELD_TEAMMATE_CAPABILITY_DEFAULTS: Dict[str, bool] = {
     "communicative": True,
 }
 
+_WORKSPACE_VISUALIZATION_CAPABILITY_DEFAULTS: Dict[str, bool] = {
+    key: False for key in _CAPABILITY_KEYS
+}
+
 
 class FieldTeammateSafetyError(ValueError):
     """Raised when a field-teammate payload would expose a robot-control path.
@@ -827,19 +831,43 @@ def build_robot_config_dict(
     # Emitted for every entity so the MR runtime gates command paths on
     # capabilities instead of inferring permission from robot_type.
     raw_entity_kind = robot.get_metadata("entity_kind")
+    normalized_entity_kind = (
+        raw_entity_kind.strip().lower() if isinstance(raw_entity_kind, str) else ""
+    )
     entity_kind = (
-        "field_teammate"
-        if isinstance(raw_entity_kind, str)
-        and raw_entity_kind.strip().lower() == "field_teammate"
+        normalized_entity_kind
+        if normalized_entity_kind in ("field_teammate", "workspace_visualization")
         else "robot"
     )
     config["entity_kind"] = entity_kind
 
-    capability_defaults = (
-        _FIELD_TEAMMATE_CAPABILITY_DEFAULTS
-        if entity_kind == "field_teammate"
-        else _ROBOT_CAPABILITY_DEFAULTS
-    )
+    if entity_kind == "field_teammate":
+        capability_defaults = _FIELD_TEAMMATE_CAPABILITY_DEFAULTS
+    elif entity_kind == "workspace_visualization":
+        capability_defaults = _WORKSPACE_VISUALIZATION_CAPABILITY_DEFAULTS
+        config["robot_manager_config"] = {
+            "enabled": False,
+            "prefab_asset_path": "",
+            "prefab_resource_path": "",
+            "sections": {
+                "status": False,
+                "data_viz": False,
+                "teleop": False,
+                "tasks": False,
+            },
+        }
+        config["control"] = {
+            "drive_topic": "",
+            "teleop": {"enabled": False},
+            "tasks": {
+                "go_to_point": {"enabled": False},
+                "waypoint": {"enabled": False},
+            },
+        }
+        config["sensors"] = []
+        config["visualizations"] = []
+    else:
+        capability_defaults = _ROBOT_CAPABILITY_DEFAULTS
     capabilities = dict(capability_defaults)
     raw_capabilities = robot.get_metadata("entity_capabilities")
     if isinstance(raw_capabilities, dict):

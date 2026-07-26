@@ -333,6 +333,26 @@ python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profil
 python3 python/examples/mesh_map_registration.py
 ```
 
+### Remote Dense 3D Maps
+
+Use PC rendering for source maps that exceed the Quest geometry budget. HORUS
+keeps the dense source on the PC, prepares deterministic Rust LOD caches for
+large point scans where appropriate, rasterizes the current predicted view with
+CUDA, and sends synchronized color, depth, pose, and projection data to the Quest. The Quest
+uses a connected, depth-discontinuity-aware GPU surface for local stereo
+reprojection; it never receives or stores the multi-million-point source
+geometry.
+
+The paired ROS-compressed RGB-D carrier is the validated default for this
+release. The WebRTC carrier remains available as an experimental opt-in for
+future low-latency work. The curated examples include Sponza and San Miguel
+textured triangle meshes; experimental trained Dr Johnson, Playroom, Train,
+and Truck Gaussian models; a procedural industrial site; Voxblox Cow and
+Lady; and six ETH3D scans. See
+[the remote 3D map guide](python/examples/REMOTE_MAP_RENDERING_DEMO.md) for
+dataset preparation, commands for every scene, profiles, diagnostics,
+licenses, and the SDK API.
+
 ### Octomap Map
 
 Use this to showcase the octomap-style global map layer. This workflow is paired with the real-model robot-description fake runtime so the map appears with realistic robot bodies, TF, cameras, and task data.

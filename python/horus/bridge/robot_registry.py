@@ -1305,6 +1305,23 @@ class RobotRegistryClient:
             return topics
         try:
             for viz in dataviz.get_enabled_visualizations():
+                viz_type = str(getattr(getattr(viz, "viz_type", None), "value", "") or "")
+                if viz_type == "remote_render":
+                    render_options = getattr(viz, "render_options", {}) or {}
+                    transport = str(
+                        render_options.get("transport", "ros_compressed")
+                        or "ros_compressed"
+                    ).strip().lower()
+                    if transport == "ros_compressed":
+                        ros_topic = str(render_options.get("ros_compressed_topic", "") or "").strip()
+                        if ros_topic and ros_topic not in topics:
+                            topics.append(ros_topic)
+                    status_topic = str(
+                        render_options.get("status_topic", "") or ""
+                    ).strip()
+                    if status_topic and status_topic not in topics:
+                        topics.append(status_topic)
+                    continue
                 topic = viz.data_source.topic
                 if topic and topic not in topics:
                     topics.append(topic)
@@ -1901,6 +1918,75 @@ class RobotRegistryClient:
                 )
             if occupancy_payload:
                 payload["occupancy"] = occupancy_payload
+
+        if viz_type_value == "remote_render":
+            encoder = str(render_options.get("encoder", "auto") or "auto").strip().lower()
+            if encoder not in {"auto", "nvenc", "x264"}:
+                encoder = "auto"
+            remote_transport = str(
+                render_options.get("transport", "ros_compressed")
+                or "ros_compressed"
+            ).strip().lower()
+            if remote_transport not in {"webrtc", "ros_compressed"}:
+                remote_transport = "ros_compressed"
+            remote_format = (
+                "remote_stereo_rgbd_ros_v2"
+                if remote_transport == "ros_compressed"
+                else "remote_stereo_rgbd_webrtc_v2"
+            )
+            remote_render_payload = {
+                "format_version": remote_format,
+                "viewer_pose_topic": str(
+                    render_options.get(
+                        "viewer_pose_topic", "/horus/remote_render/viewer_pose"
+                    )
+                    or "/horus/remote_render/viewer_pose"
+                ).strip(),
+                "viewer_pose_rate_hz": max(
+                    1.0,
+                    min(
+                        120.0,
+                        self._payload_coerce_float(
+                            render_options.get("viewer_pose_rate_hz"), 60.0
+                        ),
+                    ),
+                ),
+                "transport": remote_transport,
+                "stream_topic": topic,
+                "frame_data_topic": str(
+                    render_options.get(
+                        "frame_data_topic", "/horus/remote_render/frame_data"
+                    )
+                    or "/horus/remote_render/frame_data"
+                ).strip(),
+                "ros_compressed_topic": str(
+                    render_options.get(
+                        "ros_compressed_topic",
+                        "/horus/remote_render/rgbd",
+                    )
+                    or "/horus/remote_render/rgbd"
+                ).strip(),
+                "client_signal_topic": str(
+                    render_options.get("client_signal_topic", "/horus/webrtc/client_signal")
+                ).strip(),
+                "server_signal_topic": str(
+                    render_options.get("server_signal_topic", "/horus/webrtc/server_signal")
+                ).strip(),
+                "status_topic": str(
+                    render_options.get("status_topic", "/horus/remote_render/agent_status")
+                ).strip(),
+                "encoder": encoder,
+                "bitrate_kbps": max(
+                    1000, int(self._payload_coerce_float(render_options.get("bitrate_kbps"), 12000.0))
+                ),
+                "framerate": max(
+                    1, min(60, int(self._payload_coerce_float(render_options.get("framerate"), 60.0)))
+                ),
+                "flip_y": self._payload_coerce_bool(render_options.get("flip_y"), False),
+            }
+            if not remote_render_payload["viewer_pose_topic"].startswith("/"):
+                remote_render_payload["viewer_pose_topic"] = "/horus/remote_render/viewer_pose"
+            payload["remote_render"] = remote_render_payload
 
         if viz_type_value == "point_cloud":
             point_cloud_payload: Dict[str, Any] = {}
@@ -2783,7 +2869,7 @@ class RobotRegistryClient:
             if len(datavizs) != len(robots):
                 return False, {"error": "Robot/dataviz length mismatch"}
 
-            cli.print_info("Building robot registration payloads...")
+            cli.print_info("Building HORUS registration payloads...")
             entries = []
             entry_by_name = {}
             core_topics = [
@@ -2826,12 +2912,20 @@ class RobotRegistryClient:
                     entry_control_topics,
                     entry_camera_topics,
                 )
-                for topic, group in self._build_topic_group_overrides(robot.name, entry_topics).items():
+                entity_kind = str(
+                    getattr(robot, "get_entity_kind", lambda: "robot")() or "robot"
+                ).strip().lower()
+                dashboard_group = (
+                    "Workspace Render"
+                    if entity_kind == "workspace_visualization"
+                    else robot.name
+                )
+                for topic, group in self._build_topic_group_overrides(dashboard_group, entry_topics).items():
                     topic_group_overrides[topic] = group
                 robot_topics = self._merge_topics(robot_topics, entry_data_topics)
                 robot_topics = self._merge_topics(robot_topics, entry_camera_topics)
                 control_topics = self._merge_topics(control_topics, entry_control_topics)
-            cli.print_info(f"Built {len(entries)} robot registration payload(s).")
+            cli.print_info(f"Built {len(entries)} registration payload(s).")
 
             bridge_running = self._ensure_bridge_running()
             if not bridge_running:
@@ -2938,7 +3032,7 @@ class RobotRegistryClient:
                 return True, {"success": True}
 
             def seed_all_registrations() -> None:
-                cli.print_info(f"Seeding registrations for {len(entries)} robot(s)...")
+                cli.print_info(f"Seeding {len(entries)} registration(s)...")
                 for _, _, msg in entries:
                     self.publisher.publish(msg)
 
@@ -3040,7 +3134,7 @@ class RobotRegistryClient:
                             dashboard.update_registration("Registered")
                             published = int((result or {}).get("published_count") or 0)
                             attempts = int((result or {}).get("attempt_count") or 1)
-                            dashboard.update_status(f"Replay complete ({published} robots, {attempts} attempts)")
+                            dashboard.update_status(f"Replay complete ({published} registrations, {attempts} attempts)")
 
                     if not is_connected:
                         if not wait_for_app_before_register and not seeded_before_app:

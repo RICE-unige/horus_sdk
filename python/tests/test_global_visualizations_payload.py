@@ -1,6 +1,9 @@
 """Tests for global visualization payload serialization and dedupe."""
 
+import pytest
+
 from horus.bridge.robot_registry import RobotRegistryClient
+from horus.dataviz import MapRenderTarget, MapUpdateMode
 from horus.robot import Robot, RobotType
 
 
@@ -157,6 +160,77 @@ def test_point_cloud_defaults_are_emitted_without_render_options():
     assert point_cloud["visible_points_budget"] == 120000
     assert point_cloud["max_visible_points_budget"] == 200000
     assert point_cloud["map_static_mode"] is True
+
+
+def test_3d_map_sdk_selects_static_quest_rendering():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_map(
+        topic="/bounded_map",
+        render_target=MapRenderTarget.QUEST,
+        update_mode=MapUpdateMode.STATIC,
+    )
+
+    config = _build_client()._build_robot_config_dict(robot, dataviz)
+    entry = next(
+        item for item in config["global_visualizations"] if item.get("type") == "point_cloud"
+    )
+
+    assert entry["topic"] == "/bounded_map"
+    assert entry["point_cloud"]["map_static_mode"] is True
+
+
+def test_3d_map_sdk_selects_pose_adaptive_remote_rendering():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_3d_map(
+        topic="/horus/remote_render/test_map",
+        render_target="remote",
+        render_options={"framerate": 60, "bitrate_kbps": 18000},
+    )
+
+    remote = _build_client()._build_global_visualizations_payload([dataviz])[0]
+
+    assert remote["type"] == "remote_render"
+    assert remote["topic"] == "/horus/remote_render/test_map"
+    assert remote["remote_render"]["format_version"] == "remote_stereo_rgbd_ros_v2"
+    assert remote["remote_render"]["transport"] == "ros_compressed"
+    assert remote["remote_render"]["frame_data_topic"] == (
+        "/horus/remote_render/frame_data"
+    )
+    assert remote["remote_render"]["framerate"] == 60
+
+
+def test_remote_render_rejects_quest_only_update_modes():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+
+    with pytest.raises(ValueError, match="always pose-adaptive"):
+        dataviz.add_3d_map(
+            topic="/horus/remote_render/test_map",
+            render_target="remote",
+            update_mode="refresh",
+        )
+
+
+def test_remote_render_ros_diagnostic_transport_is_explicit_and_complete():
+    robot = Robot(name="remote_debug", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_remote_rendered_map(
+        stream_topic="/horus/remote_render/map_portal",
+        render_options={
+            "transport": "ros_compressed",
+            "ros_compressed_topic": "/horus/remote_render/rgbd",
+        },
+    )
+
+    remote = _build_client()._build_global_visualizations_payload([dataviz])[0]
+
+    assert remote["remote_render"]["transport"] == "ros_compressed"
+    assert remote["remote_render"]["format_version"] == "remote_stereo_rgbd_ros_v2"
+    assert remote["remote_render"]["ros_compressed_topic"] == (
+        "/horus/remote_render/rgbd"
+    )
 
 
 def test_global_visualization_dedupes_point_cloud_across_multiple_robots():

@@ -28,6 +28,7 @@ class DataSourceType(Enum):
     OCCUPANCY_GRID = "occupancy_grid"
     COSTMAP = "costmap"
     MAP_3D = "map_3d"
+    REMOTE_RENDER = "remote_render"
     GLOBAL_NAVIGATION_PATH = "global_navigation_path"
 
     # Shared/Global data
@@ -56,6 +57,21 @@ class VisualizationType(Enum):
     GAUSSIAN_SPLAT = "gaussian_splat"
     HEATMAP = "heatmap"
     SEMANTIC_BOX = "semantic_box"
+    REMOTE_RENDER = "remote_render"
+
+
+class MapRenderTarget(str, Enum):
+    """Device responsible for turning 3D map data into pixels."""
+
+    QUEST = "quest"
+    REMOTE = "remote"
+
+
+class MapUpdateMode(str, Enum):
+    """How a 3D map visualization receives visual updates."""
+
+    STATIC = "static"
+    REFRESH = "refresh"
 
 
 @dataclass

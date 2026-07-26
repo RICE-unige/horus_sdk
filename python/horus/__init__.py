@@ -16,7 +16,13 @@ from .core import (
     subscribe,
     unsubscribe,
 )
-from .dataviz import DataSourceType, DataViz, VisualizationType
+from .dataviz import (
+    DataSourceType,
+    DataViz,
+    MapRenderTarget,
+    MapUpdateMode,
+    VisualizationType,
+)
 from .robot import (
     EntityCapabilities,
     FieldTeammate,
@@ -24,7 +30,9 @@ from .robot import (
     Robot,
     RobotDimensions,
     RobotType,
+    WorkspaceVisualization,
     is_registration_cancelled,
+    register_entities,
     register_robots,
 )
 from .sensors import Camera, LaserScan, Lidar3D, SensorType
@@ -46,6 +54,7 @@ __all__ = [
     "FieldTeammateConfig",
     "RobotDimensions",
     "RobotType",
+    "WorkspaceVisualization",
     "SensorType",
     "Camera",
     "LaserScan",
@@ -53,10 +62,14 @@ __all__ = [
     "DataViz",
     "VisualizationType",
     "DataSourceType",
+    "MapRenderTarget",
+    "MapUpdateMode",
     "ColorManager",
     "ColorScheme",
     "RGBColor",
     "is_registration_cancelled",
+    "register_entities",
+    "register_robots",
     "Event",
     "EventBus",
     "EventPriority",

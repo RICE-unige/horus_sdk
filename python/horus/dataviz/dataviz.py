@@ -5,13 +5,15 @@ Data visualization system for robot sensors and environmental data in HORUS SDK
 import colorsys
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..sensors import SensorInstance
 from .models import (
     DataSource,
     DataSourceType,
     EnvironmentDataSource,
+    MapRenderTarget,
+    MapUpdateMode,
     RobotDataSource,
     SensorDataSource,
     VisualizationConfig,
@@ -426,6 +428,32 @@ class DataViz:
             )
         render_options["transport_lane"] = normalized
 
+    @staticmethod
+    def _normalize_map_option(value: Any, option_type: Any, option_name: str):
+        if isinstance(value, option_type):
+            return value
+        try:
+            return option_type(str(value).strip().lower())
+        except ValueError as exception:
+            choices = ", ".join(item.value for item in option_type)
+            raise ValueError(
+                f"{option_name} must be one of ({choices}), got '{value}'"
+            ) from exception
+
+    @staticmethod
+    def _coerce_bool(value: Any, default: bool = False) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
     # Environment/World visualizations (robot-independent)
     def add_occupancy_grid(
         self,
@@ -459,9 +487,49 @@ class DataViz:
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
         transport_lane: Optional[str] = None,
+        render_target: Union[MapRenderTarget, str] = MapRenderTarget.QUEST,
+        update_mode: Optional[Union[MapUpdateMode, str]] = None,
     ) -> None:
-        """Add 3D map visualization"""
+        """Add a Quest-rendered or remotely rendered 3D map.
+
+        ``render_target="quest"`` consumes geometry from ``topic`` and renders it
+        on the headset. ``render_target="remote"`` treats ``topic`` as the color
+        source for the synchronized, pose-adaptive WebRTC RGB-D renderer.
+        """
+        target = self._normalize_map_option(
+            render_target, MapRenderTarget, "render_target"
+        )
+        if target is MapRenderTarget.REMOTE:
+            if update_mode is not None:
+                raise ValueError(
+                    "remote rendering is always pose-adaptive; update_mode only "
+                    "applies to Quest-rendered geometry"
+                )
+            if transport_lane is not None:
+                raise ValueError(
+                    "transport_lane applies to Quest geometry transport, not remote RGB-D streams"
+                )
+            self.add_remote_rendered_map(
+                stream_topic=topic,
+                frame_id=frame_id,
+                render_options=render_options,
+            )
+            return
+
         render_options = dict(render_options or {})
+        if update_mode is not None:
+            mode = self._normalize_map_option(
+                update_mode, MapUpdateMode, "update_mode"
+            )
+        else:
+            mode = (
+                MapUpdateMode.STATIC
+                if self._coerce_bool(render_options.get("map_static_mode"), True)
+                else MapUpdateMode.REFRESH
+            )
+        render_options["render_target"] = target.value
+        render_options["update_mode"] = mode.value
+        render_options["map_static_mode"] = mode is MapUpdateMode.STATIC
         self._apply_transport_lane(render_options, transport_lane)
         data_source = EnvironmentDataSource(
             name="map_3d",
@@ -530,6 +598,56 @@ class DataViz:
         )
 
         self._add_or_update_visualization(viz_config)
+
+    def add_remote_rendered_map(
+        self,
+        stream_topic: str = "/horus/remote_render/map_portal",
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add the pose-adaptive, workspace-level remote RGB-D renderer."""
+        options = dict(render_options or {})
+        options["render_target"] = MapRenderTarget.REMOTE.value
+        transport = str(
+            options.get("transport", "ros_compressed") or "ros_compressed"
+        ).strip().lower()
+        if transport not in {"webrtc", "ros_compressed"}:
+            raise ValueError("remote render transport must be 'webrtc' or 'ros_compressed'")
+        options["transport"] = transport
+        options["format_version"] = (
+            "remote_stereo_rgbd_ros_v2"
+            if transport == "ros_compressed"
+            else "remote_stereo_rgbd_webrtc_v2"
+        )
+        options.setdefault("viewer_pose_topic", "/horus/remote_render/viewer_pose")
+        options.setdefault("viewer_pose_rate_hz", 60.0)
+        options.setdefault("frame_data_topic", "/horus/remote_render/frame_data")
+        options.setdefault(
+            "ros_compressed_topic",
+            "/horus/remote_render/rgbd",
+        )
+        options.setdefault("client_signal_topic", "/horus/webrtc/client_signal")
+        options.setdefault("server_signal_topic", "/horus/webrtc/server_signal")
+        options.setdefault("status_topic", "/horus/remote_render/agent_status")
+        options.setdefault("encoder", "nvenc")
+        options.setdefault("bitrate_kbps", 12000)
+        options.setdefault("framerate", 60)
+        options.setdefault("flip_y", False)
+
+        data_source = EnvironmentDataSource(
+            name="remote_rendered_map",
+            source_type=DataSourceType.REMOTE_RENDER,
+            topic=stream_topic,
+            frame_id=frame_id,
+        )
+        self._add_or_update_visualization(
+            VisualizationConfig(
+                viz_type=VisualizationType.REMOTE_RENDER,
+                data_source=data_source,
+                render_options=options,
+                layer_priority=-4,
+            )
+        )
 
     def add_gaussian_splat_map(
         self,

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from .config import (
     ENTITY_KIND_FIELD_TEAMMATE,
     ENTITY_KIND_ROBOT,
+    ENTITY_KIND_WORKSPACE_VISUALIZATION,
     EntityCapabilities,
     FieldTeammateConfig,
     GoToPointTaskConfig,
@@ -741,7 +742,7 @@ class Robot:
         )
 
     def get_entity_kind(self) -> str:
-        """Return the normalized entity kind (``robot`` or ``field_teammate``)."""
+        """Return the normalized registration entity kind."""
         return normalize_entity_kind(
             self.get_metadata(self._ENTITY_KIND_METADATA_KEY), ENTITY_KIND_ROBOT
         )
@@ -762,6 +763,37 @@ class Robot:
         """Return the field-teammate contract dict if this entity is one."""
         raw = self.get_metadata(self._FIELD_TEAMMATE_METADATA_KEY)
         return raw if isinstance(raw, dict) else None
+
+    def configure_workspace_visualization(self) -> None:
+        """Mark this registration envelope as a workspace-level visualization.
+
+        The envelope participates in normal ACK and multi-operator replay, but
+        HORUS MR must not instantiate a robot, interactor, manager, or controls.
+        """
+        self.add_metadata(
+            self._ENTITY_KIND_METADATA_KEY,
+            ENTITY_KIND_WORKSPACE_VISUALIZATION,
+        )
+        self.configure_capabilities(
+            controllable=False,
+            teleoperable=False,
+            taskable=False,
+            guidable=False,
+            observable=False,
+            communicative=False,
+        )
+        self.configure_robot_manager(
+            enabled=False,
+            status=False,
+            data_viz=False,
+            teleop=False,
+            tasks=False,
+        )
+        self.configure_teleop(enabled=False)
+        self.configure_navigation_tasks(
+            go_to_point_enabled=False,
+            waypoint_enabled=False,
+        )
 
     def configure_field_teammate(
         self,
@@ -1021,6 +1053,31 @@ class Robot:
         return result if isinstance(result, str) else None
 
 
+class WorkspaceVisualization(Robot):
+    """A first-class workspace resource carried by the registration protocol.
+
+    It reuses the established ACK/replay envelope for compatibility, while its
+    entity contract prevents HORUS MR from constructing any robot runtime.
+    """
+
+    def __init__(self, name: str, *, metadata: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(
+            name=name,
+            robot_type=RobotType.WHEELED,
+            metadata=dict(metadata or {}),
+        )
+        self.configure_workspace_visualization()
+
+    def create_dataviz(self, dataviz_name: Optional[str] = None) -> "DataViz":
+        """Create a workspace collection without an implicit robot TF stream."""
+        from ..dataviz import DataViz
+
+        return DataViz(name=dataviz_name or f"{self.name}_viz")
+
+    def __str__(self) -> str:
+        return f"WorkspaceVisualization(name='{self.name}')"
+
+
 class FieldTeammate(Robot):
     """A human field teammate represented inside the HORUS workspace.
 
@@ -1110,6 +1167,31 @@ class FieldTeammate(Robot):
         return f"FieldTeammate(name='{self.name}')"
 
 
+def register_entities(
+    entities,
+    keep_alive: bool = True,
+    show_dashboard: bool = True,
+    timeout_sec: float = 10.0,
+    workspace_scale: Optional[float] = None,
+    compass_enabled: Optional[bool] = None,
+    wait_for_app_before_register: bool = True,
+    datavizs=None,
+):
+    """Register robots or workspace resources using one shared session."""
+    registry = _get_registry_client()
+    return _invoke_register_robots(
+        registry,
+        entities,
+        datavizs=datavizs,
+        timeout_sec=timeout_sec,
+        keep_alive=keep_alive,
+        show_dashboard=show_dashboard,
+        workspace_scale=workspace_scale,
+        compass_enabled=compass_enabled,
+        wait_for_app_before_register=wait_for_app_before_register,
+    )
+
+
 def register_robots(
     robots,
     keep_alive: bool = True,
@@ -1120,10 +1202,8 @@ def register_robots(
     wait_for_app_before_register: bool = True,
     datavizs=None,
 ):
-    """Register multiple robots using a shared registry session."""
-    registry = _get_registry_client()
-    return _invoke_register_robots(
-        registry,
+    """Register robots using the generic entity registration session."""
+    return register_entities(
         robots,
         datavizs=datavizs,
         timeout_sec=timeout_sec,

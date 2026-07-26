@@ -1,7 +1,14 @@
 """Tests for semantic Robot/Camera configuration helpers."""
 
 from horus.bridge.robot_registry import RobotRegistryClient
-from horus.robot import DeadmanPolicy, Robot, RobotType, TeleopProfile, TeleopResponseMode
+from horus.robot import (
+    DeadmanPolicy,
+    Robot,
+    RobotType,
+    TeleopProfile,
+    TeleopResponseMode,
+    WorkspaceVisualization,
+)
 from horus.sensors import Camera, CameraTransport
 
 
@@ -118,6 +125,78 @@ def test_camera_view_helpers_keep_payload_shape():
     assert camera_config["immersive_ros_flip_y"] is True
     assert camera_config["webrtc_bitrate_kbps"] == 1500
     assert camera_config["webrtc_framerate"] == 20
+
+
+def test_workspace_remote_render_is_global_and_has_no_robot_controls():
+    client = _build_client()
+    resource = WorkspaceVisualization("workspace_remote_map")
+    dataviz = resource.create_dataviz()
+    dataviz.add_remote_rendered_map(
+        render_options={
+            "status_topic": "/horus/remote_render/agent_status",
+            "frame_data_topic": "/horus/remote_render/frame_data",
+        }
+    )
+    global_visualizations = client._build_global_visualizations_payload([dataviz])
+    config = client._build_robot_config_dict(
+        resource,
+        dataviz,
+        global_visualizations=global_visualizations,
+        workspace_scale=0.1,
+    )
+
+    assert config["entity_kind"] == "workspace_visualization"
+    assert config["sensors"] == []
+    assert config["visualizations"] == []
+    assert config["robot_manager_config"]["enabled"] is False
+    assert config["control"]["teleop"]["enabled"] is False
+    assert config["control"]["tasks"]["go_to_point"]["enabled"] is False
+    assert len(config["global_visualizations"]) == 1
+    remote = config["global_visualizations"][0]
+    assert remote["type"] == "remote_render"
+    assert remote["scope"] == "global"
+    assert remote["topic"] == "/horus/remote_render/map_portal"
+    assert remote["remote_render"]["format_version"] == (
+        "remote_stereo_rgbd_ros_v2"
+    )
+    assert remote["remote_render"]["viewer_pose_topic"] == "/horus/remote_render/viewer_pose"
+    assert remote["remote_render"]["viewer_pose_rate_hz"] == 60.0
+    assert remote["remote_render"]["transport"] == "ros_compressed"
+    assert remote["remote_render"]["ros_compressed_topic"] == (
+        "/horus/remote_render/rgbd"
+    )
+    assert remote["remote_render"]["frame_data_topic"] == "/horus/remote_render/frame_data"
+    assert remote["remote_render"]["encoder"] == "nvenc"
+    assert remote["remote_render"]["bitrate_kbps"] == 12000
+    assert remote["remote_render"]["client_signal_topic"] == "/horus/webrtc/client_signal"
+    assert remote["remote_render"]["server_signal_topic"] == "/horus/webrtc/server_signal"
+    assert remote["remote_render"]["status_topic"] == "/horus/remote_render/agent_status"
+    assert client._collect_topics(dataviz) == [
+        "/horus/remote_render/rgbd",
+        "/horus/remote_render/agent_status",
+    ]
+    assert "/horus/remote_render/map_portal" not in client._collect_topics(dataviz)
+
+
+def test_workspace_remote_render_pose_contract_is_serialized():
+    client = _build_client()
+    resource = WorkspaceVisualization("workspace_remote_map")
+    dataviz = resource.create_dataviz()
+    dataviz.add_remote_rendered_map(
+        render_options={
+            "viewer_pose_topic": "/test/remote_map/viewer_pose",
+            "viewer_pose_rate_hz": 72.0,
+            "frame_data_topic": "/test/remote_map/frame_data",
+        }
+    )
+
+    remote = client._build_global_visualizations_payload([dataviz])[0]["remote_render"]
+
+    assert remote["format_version"] == "remote_stereo_rgbd_ros_v2"
+    assert remote["transport"] == "ros_compressed"
+    assert remote["viewer_pose_topic"] == "/test/remote_map/viewer_pose"
+    assert remote["viewer_pose_rate_hz"] == 72.0
+    assert remote["frame_data_topic"] == "/test/remote_map/frame_data"
 
 
 def test_metadata_aliases_remain_available():
