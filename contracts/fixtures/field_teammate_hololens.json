@@ -38,6 +38,8 @@
     "camera_frame": "field_teammate_1/camera",
     "topics": {
       "first_person_video": "/field_teammate_1/fpv/image_raw/compressed",
+      "first_person_video_camera_pose": "/field_teammate_1/fpv/camera_pose",
+      "first_person_video_camera_info": "/field_teammate_1/fpv/camera_info",
       "localization_confidence": "/field_teammate_1/localization_confidence",
       "guidance_request": "/field_teammate_1/guidance/request",
       "guidance_response": "/field_teammate_1/guidance/response",

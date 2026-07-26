@@ -689,6 +689,8 @@ class FieldTeammateConfig:
     base_frame: str = "field_teammate/base"
     camera_frame: str = "field_teammate/camera"
     first_person_video_topic: str = ""
+    first_person_video_camera_pose_topic: str = ""
+    first_person_video_camera_info_topic: str = ""
     localization_confidence_topic: str = ""
     guidance_request_topic: str = ""
     guidance_response_topic: str = ""
@@ -718,6 +720,8 @@ class FieldTeammateConfig:
         base_frame: Any = None,
         camera_frame: Any = None,
         first_person_video_topic: Any = None,
+        first_person_video_camera_pose_topic: Any = None,
+        first_person_video_camera_info_topic: Any = None,
         localization_confidence_topic: Any = None,
         guidance_request_topic: Any = None,
         guidance_response_topic: Any = None,
@@ -772,6 +776,12 @@ class FieldTeammateConfig:
             first_person_video_topic=_topic(
                 first_person_video_topic, f"{prefix}/fpv/image_raw/compressed"
             ),
+            first_person_video_camera_pose_topic=_topic(
+                first_person_video_camera_pose_topic, f"{prefix}/fpv/camera_pose"
+            ),
+            first_person_video_camera_info_topic=_topic(
+                first_person_video_camera_info_topic, f"{prefix}/fpv/camera_info"
+            ),
             localization_confidence_topic=_topic(
                 localization_confidence_topic, f"{prefix}/localization_confidence"
             ),
@@ -812,6 +822,8 @@ class FieldTeammateConfig:
             "camera_frame": self.camera_frame,
             "topics": {
                 "first_person_video": self.first_person_video_topic,
+                "first_person_video_camera_pose": self.first_person_video_camera_pose_topic,
+                "first_person_video_camera_info": self.first_person_video_camera_info_topic,
                 "localization_confidence": self.localization_confidence_topic,
                 "guidance_request": self.guidance_request_topic,
                 "guidance_response": self.guidance_response_topic,
