@@ -41,7 +41,9 @@ def build_cuda_mesh_renderer_library() -> Path:
     if not compiler:
         raise CudaMeshRendererError("nvcc is required for remote mesh rendering")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
-    cache_root = Path.home() / ".cache" / "horus" / "remote_renderer"
+    runtime_root = os.environ.get("HORUS_REMOTE_CACHE_ROOT")
+    cache_root = (Path(runtime_root).expanduser() / "native" if runtime_root else
+                  Path.home() / ".cache" / "horus" / "remote_renderer")
     library = cache_root / f"libhorus_cuda_mesh_{digest}.so"
     if library.is_file():
         return library

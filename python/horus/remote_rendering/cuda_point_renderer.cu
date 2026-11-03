@@ -182,7 +182,8 @@ int render_views_impl(
   int point_radius,
   unsigned char * host_color,
   float * host_depth,
-  float * elapsed_ms)
+  float * elapsed_ms,
+  bool device_outputs = false)
 {
   if (renderer == nullptr || camera_positions == nullptr || world_to_camera == nullptr ||
       projections == nullptr ||
@@ -255,11 +256,18 @@ int render_views_impl(
   if (!check_cuda(cudaGetLastError(), "CUDA render kernel") ||
       !check_cuda(cudaEventSynchronize(renderer->end), "CUDA render synchronize") ||
       !check_cuda(
-        cudaMemcpy(host_color, renderer->output_colors, output_count * sizeof(uchar3), cudaMemcpyDeviceToHost),
+        cudaMemcpy(host_color, renderer->output_colors, output_count * sizeof(uchar3),
+          device_outputs ? cudaMemcpyDeviceToDevice : cudaMemcpyDeviceToHost),
         "cudaMemcpy output color") ||
       !check_cuda(
-        cudaMemcpy(host_depth, renderer->output_depth, output_count * sizeof(float), cudaMemcpyDeviceToHost),
+        cudaMemcpy(host_depth, renderer->output_depth, output_count * sizeof(float),
+          device_outputs ? cudaMemcpyDeviceToDevice : cudaMemcpyDeviceToHost),
         "cudaMemcpy output depth")) {
+    return 4;
+  }
+  // External consumers can use a different CUDA stream. Finish the two copies
+  // before returning their owned tensors; never expose the reusable scratch buffers.
+  if (device_outputs && !check_cuda(cudaStreamSynchronize(nullptr), "CUDA output synchronize")) {
     return 4;
   }
   if (elapsed_ms != nullptr) {
@@ -385,6 +393,28 @@ int horus_cuda_render_views(
     host_color,
     host_depth,
     elapsed_ms);
+}
+
+int horus_cuda_render_views_device(
+  void * handle,
+  const float * camera_positions,
+  const float * world_to_camera,
+  const float * projections,
+  int view_count,
+  int width,
+  int height,
+  float vertical_fov_degrees,
+  float near_m,
+  float far_m,
+  int point_radius,
+  unsigned char * device_color,
+  float * device_depth,
+  float * elapsed_ms)
+{
+  g_last_error.clear();
+  return render_views_impl(static_cast<Renderer *>(handle), camera_positions,
+    world_to_camera, projections, view_count, width, height, vertical_fov_degrees,
+    near_m, far_m, point_radius, device_color, device_depth, elapsed_ms, true);
 }
 
 int horus_cuda_render(

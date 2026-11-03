@@ -10,6 +10,12 @@ use std::sync::Arc;
 struct Args {
     #[arg(long, default_value = "SdkBot_E2E")]
     robot_name: String,
+    #[arg(long, default_value_t = 10.0)]
+    timeout: f64,
+    #[arg(long)]
+    payload_only: bool,
+    #[arg(long)]
+    unregister: bool,
 }
 
 fn main() {
@@ -30,12 +36,16 @@ fn main() {
     let client = RobotRegistryClient::new();
     let payload = client.build_robot_config_dict(&robot, &dataviz, None, None);
 
-    if payload.robot_name == args.robot_name && !payload.sensors.is_empty() {
-        println!("Native registration payload check OK: {}", payload.robot_name);
-        println!("Live bridge registration is Python-only for now.");
-        std::process::exit(0);
+    if args.payload_only {
+        println!("{}", serde_json::to_string(&payload).unwrap());
+        return;
     }
-
-    eprintln!("Native registration payload check failed");
-    std::process::exit(2);
+    let (ok, result) = client.register_robot(&mut robot, &dataviz, args.timeout, false, false, None);
+    println!("{result}");
+    if !ok { drop(client); std::process::exit(2); }
+    if args.unregister {
+        let (ok, result) = client.unregister_robot(&robot.name, args.timeout);
+        println!("{result}");
+        if !ok { drop(client); std::process::exit(3); }
+    }
 }

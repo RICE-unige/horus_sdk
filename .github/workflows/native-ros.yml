@@ -1,0 +1,128 @@
+name: Native ROS Qualification
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        type: string
+        required: true
+
+jobs:
+  jazzy:
+    runs-on: ubuntu-24.04
+    container: ros:jazzy-ros-base
+    env:
+      ROS_DOMAIN_ID: '194'
+      ROS_LOCALHOST_ONLY: '1'
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision }}
+      - name: Install native build tools
+        run: apt-get update && apt-get install -y cmake g++ nlohmann-json3-dev libssl-dev libzstd-dev libeigen3-dev libassimp-dev libtinyxml2-dev zlib1g-dev libpng-dev libjpeg-dev libwebp-dev libtiff-dev ros-jazzy-rosbag2-cpp ros-jazzy-nav2-msgs ros-jazzy-map-msgs ros-jazzy-xacro ros-jazzy-visualization-msgs ros-jazzy-tf2-ros python3-venv
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and test ROS-enabled C++
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cmake -S cpp -B build/cpp-ros -DHORUS_ENABLE_ROS2=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/cpp-ros --parallel 2
+          ctest --test-dir build/cpp-ros --output-on-failure
+          cmake --install build/cpp-ros --prefix "$PWD/build/install"
+          cmake -S .github/fixtures/native_consumer -B build/consumer \
+            -Dhorus_cpp_sdk_DIR="$PWD/build/install/share/horus_cpp_sdk/cmake"
+          cmake --build build/consumer --parallel 2
+          ./build/consumer/consumer
+          ./build/install/bin/examples/e2e_registration_check --payload-only
+      - name: Test ROS-enabled Rust and packaged sources
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cd rust
+          cargo test --features ros2 --all-targets --locked
+          cargo build --features ros2 --examples --locked
+          cargo package --features ros2 --locked
+      - name: Check both clients against an isolated ROS acknowledgement peer
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 .github/scripts/check_native_registration.py \
+            "$PWD/build/cpp-ros/examples/e2e_registration_check" \
+            "$PWD/rust/target/debug/examples/e2e_registration_check"
+      - name: Run an external Rust consumer
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          cargo run --manifest-path .github/fixtures/native_rust_consumer/Cargo.toml --features ros2 --locked
+      - name: Check native mesh delivery and late-join repair
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 .github/scripts/check_native_mesh.py \
+            "$PWD/build/cpp-ros/examples/native_mesh_transport_check" \
+            "$PWD/rust/target/debug/examples/native_mesh_transport_check"
+      - name: Check actual native TF publication and retained fixed frames
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 .github/scripts/check_native_tf.py \
+            "$PWD/build/cpp-ros/examples/fake_tf_publisher" \
+            "$PWD/rust/target/debug/examples/fake_tf_publisher"
+      - name: Check native collision-risk sensor processing
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 .github/scripts/check_native_collision.py \
+            "$PWD/build/cpp-ros/examples/native_collision_check" \
+            "$PWD/rust/target/debug/examples/native_collision_check"
+      - name: Check native Teach capture and Python interoperability
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 -m venv --system-site-packages build/teach-venv
+          build/teach-venv/bin/pip install -e '.[teaching]' Pillow numpy plyfile
+          build/teach-venv/bin/python .github/scripts/check_native_teach.py \
+            "$PWD/build/cpp-ros/examples/native_teach_transport_check" \
+            "$PWD/rust/target/debug/examples/native_teach_transport_check"
+          build/teach-venv/bin/python .github/scripts/check_native_atlas.py \
+            "$PWD/build/cpp-ros/examples/native_atlas_check" \
+            "$PWD/rust/target/debug/examples/native_atlas_check"
+      - name: Check native Marker conversion, late transforms and repair
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 .github/scripts/check_native_mesh_sources.py \
+            "$PWD/build/cpp-ros/examples/native_mesh_source_check" \
+            "$PWD/rust/target/debug/examples/native_mesh_source_check"
+      - name: Check native costmap snapshots and incremental recovery
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          python3 .github/scripts/check_native_costmap.py \
+            "$PWD/build/cpp-ros/examples/native_costmap_transport_check" \
+            "$PWD/rust/target/debug/examples/native_costmap_transport_check"
+      - name: Check native model compilation and paced delivery
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          build/teach-venv/bin/python .github/scripts/check_native_models.py \
+            "$PWD/build/cpp-ros/examples/native_model_transport_check" \
+            "$PWD/rust/target/debug/examples/native_model_transport_check"
+      - name: Check native remote-view framing against Python
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          build/teach-venv/bin/python .github/scripts/check_native_remote_protocol.py \
+            --cpp "$PWD/build/cpp-ros/tests/cpp_remote_protocol_tests" \
+            --rust "$PWD/rust/target/debug/examples/native_remote_protocol_check"
+      - name: Check native renderer view exchange and scene import
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          build/teach-venv/bin/python .github/scripts/check_native_remote_transport.py \
+            "$PWD/build/cpp-ros/examples/native_remote_transport_check" \
+            "$PWD/rust/target/debug/examples/native_remote_transport_check"
+          build/teach-venv/bin/python .github/scripts/check_native_scene.py \
+            "$PWD/build/cpp-ros/tests/cpp_remote_scene_tests" \
+            "$PWD/rust/target/debug/examples/native_scene_check"
+          python3 .github/scripts/check_native_remote_registration.py \
+            "$PWD/build/cpp-ros/examples/remote_map_registration" \
+            "$PWD/rust/target/debug/examples/remote_map_registration"
+          build/teach-venv/bin/python .github/scripts/generate_scene_catalog.py --check
+          build/teach-venv/bin/python .github/scripts/check_native_datasets.py \
+            "$PWD/build/cpp-ros/examples/native_dataset_check" \
+            "$PWD/rust/target/debug/examples/native_dataset_check"
+          build/teach-venv/bin/python .github/scripts/check_native_gaussian.py \
+            "$PWD/build/cpp-ros/examples/native_gaussian_check" \
+            "$PWD/rust/target/debug/examples/native_gaussian_check"

@@ -6,6 +6,17 @@
   "license": "Apache-2.0",
   "supports": "!uwp",
   "dependencies": [
+    "nlohmann-json",
+    "openssl",
+    "zstd",
+    "eigen3",
+    "assimp",
+    "tinyxml2",
+    "zlib",
+    "libpng",
+    "libjpeg-turbo",
+    "libwebp",
+    "tiff",
     {
       "name": "vcpkg-cmake",
       "host": true

@@ -18,6 +18,8 @@ pub enum RobotType {
     /// contract, not by this tag.
     #[serde(rename = "human")]
     Human,
+    #[serde(rename = "humanoid")]
+    Humanoid,
 }
 
 impl RobotType {
@@ -28,6 +30,7 @@ impl RobotType {
             Self::Aerial => "aerial",
             Self::Drone => "drone",
             Self::Human => "human",
+            Self::Humanoid => "humanoid",
         }
     }
 }
@@ -152,6 +155,7 @@ pub enum DataSourceType {
     GlobalMarkers,
     CoordinateFrame,
     SemanticBox,
+    RemoteRender,
 }
 
 impl DataSourceType {
@@ -175,6 +179,7 @@ impl DataSourceType {
             Self::GlobalMarkers => "global_markers",
             Self::CoordinateFrame => "coordinate_frame",
             Self::SemanticBox => "semantic_box",
+            Self::RemoteRender => "remote_render",
         }
     }
 }
@@ -198,6 +203,8 @@ pub enum VisualizationType {
     OdometryTrail,
     CollisionRisk,
     Heatmap,
+    Costmap,
+    RemoteRender,
 }
 
 impl VisualizationType {
@@ -220,6 +227,8 @@ impl VisualizationType {
             Self::OdometryTrail => "odometry_trail",
             Self::CollisionRisk => "collision_risk",
             Self::Heatmap => "heatmap",
+            Self::Costmap => "costmap",
+            Self::RemoteRender => "remote_render",
         }
     }
 }

@@ -4,6 +4,7 @@ Data visualization system for robot sensors and environmental data in HORUS SDK
 
 import colorsys
 import hashlib
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -481,6 +482,50 @@ class DataViz:
 
         self._add_or_update_visualization(viz_config)
 
+    def add_costmap(
+        self,
+        topic: str,
+        frame_id: str = "map",
+        *,
+        alpha: float = 0.65,
+        show_unknown_space: bool = False,
+        height_offset: float = 0.01,
+        stale_timeout: float = 5.0,
+        tf_topic: str = "/tf",
+    ) -> None:
+        """Add a full nav_msgs/OccupancyGrid cost layer in a workspace fixed frame.
+
+        Nav2 publishers must set ``always_send_full_costmap: true``. Raw 0..255
+        costmaps and incremental ``*_updates`` messages are not this wire type.
+        Free cells are transparent; costs use the RViz costmap palette. Offset
+        is in workspace metres (after scaling). A zero timeout retains static
+        grids indefinitely; otherwise stale layers are hidden, not shown as live.
+        """
+        for name, value in (("topic", topic), ("frame_id", frame_id), ("tf_topic", tf_topic)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if not isinstance(show_unknown_space, bool):
+            raise ValueError("show_unknown_space must be a boolean")
+        values = {"alpha": alpha, "height_offset": height_offset, "stale_timeout": stale_timeout}
+        for name, value in values.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number")
+        if not 0.0 <= alpha <= 1.0:
+            raise ValueError("alpha must be between 0 and 1")
+        if not 0.0 <= height_offset <= 1.0 or stale_timeout < 0.0:
+            raise ValueError("height_offset must be between 0 and 1; stale_timeout must be non-negative")
+        topic = topic.strip()
+        self._add_or_update_visualization(VisualizationConfig(
+            viz_type=VisualizationType.COSTMAP,
+            data_source=EnvironmentDataSource(
+                name=f"costmap:{topic}", source_type=DataSourceType.COSTMAP,
+                topic=topic, frame_id=frame_id.strip(),
+            ),
+            render_options={**values, "show_unknown_space": show_unknown_space,
+                            "tf_topic": tf_topic.strip(), "transport_lane": "bulk_replaceable"},
+            layer_priority=-9,
+        ))
+
     def add_3d_map(
         self,
         topic: str,
@@ -573,6 +618,118 @@ class DataViz:
 
         self._add_or_update_visualization(viz_config)
 
+    def add_nvblox_mesh(
+        self,
+        topic: str = "/horus/nvblox/mesh",
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Add a live nvblox mesh using the bounded native Quest path.
+
+        The nvblox adapter publishes lossless spatial page replacements on
+        ``<topic>/indexed``. These defaults preserve every triangle while bounding
+        main-thread upload work so live mapping cannot monopolize a Quest frame.
+        Callers may override any value through ``render_options``.
+        """
+        self.add_live_mesh(topic, frame_id, render_options)
+
+    def add_live_mesh(
+        self,
+        topic: str = "/horus/maps/live",
+        frame_id: str = "map",
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Register any HMSH v2 map adapter with revision-based repair.
+
+        This registers the adapter output, not its raw source topic. It does not
+        start a source adapter; use ``python -m horus.mapping.ros_mesh`` for ROS
+        TRIANGLE_LIST maps, or another HMSH v2 producer for other map formats.
+        """
+        options: Dict[str, Any] = {
+            "max_triangles": 2_000_000,
+            "use_vertex_colors": True,
+            "double_sided": False,
+            "source_coordinate_space": "enu",
+            "use_indexed_binary": True,
+            "indexed_live": True,
+            "static_mesh": False,
+            "max_chunk_renderers": 1024,
+            "max_chunk_uploads_per_frame": 2,
+            "max_triangle_uploads_per_frame": 20_000,
+            "max_upload_milliseconds_per_frame": 2.5,
+            "enable_perf_diagnostics": True,
+        }
+        options.update(dict(render_options or {}))
+        if "display" in options:
+            from .mesh_display import mesh_display_options
+            options["display"] = mesh_display_options(options["display"])
+        self.add_3d_mesh(
+            topic=topic,
+            frame_id=frame_id,
+            render_options=options,
+            transport_lane="bulk_strict",
+        )
+
+    def add_adaptive_mesh(
+        self,
+        topic: str,
+        frame_id: str = "map",
+        interests: Optional[List[Dict[str, Any]]] = None,
+        initial_triangle_budget: int = 500_000,
+        min_triangle_budget: int = 100_000,
+        max_triangle_budget: int = 2_000_000,
+        memory_budget_mib: int = 192,
+        render_options: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Register independent adaptive views from ``horus.mapping.adaptive_mesh_ros``.
+
+        The server retains original geometry and supplies a colour-aware context
+        approximation outside the interest areas. A frame-bound region follows
+        TF; a region without ``frame`` becomes a movable, two-hand-resizable volume.
+        Budgets are policy settings, not guaranteed headset triangle capacities.
+        """
+        import math
+        if not topic.startswith("/") or topic.endswith("/") or not frame_id.strip():
+            raise ValueError("adaptive mesh requires an absolute topic and a map frame")
+        if not 1000 <= min_triangle_budget <= initial_triangle_budget <= max_triangle_budget:
+            raise ValueError("adaptive triangle budgets must satisfy min <= initial <= max")
+        if not 16 <= memory_budget_mib <= 384:
+            raise ValueError("adaptive headset memory budget must be 16..384 MiB")
+        regions = list(interests) if interests is not None else [
+            {"id": "inspection", "shape": "box", "center": [0, 0, 1], "size": [2, 2, 2]}]
+        if len(regions) > 16:
+            raise ValueError("at most 16 interest regions per headset")
+        ids = set()
+        for region in regions:
+            if not isinstance(region, dict) or not isinstance(region.get("id"), str) or not region["id"] or region["id"] in ids:
+                raise ValueError("interest regions require unique IDs")
+            ids.add(region["id"])
+            if region.get("shape", "box") not in ("box", "sphere"):
+                raise ValueError("interest shape must be box or sphere")
+            for name, default in (("center", [0, 0, 0]), ("size", [2, 2, 2]), ("rotation", [0, 0, 0, 1])):
+                value = region.get(name, default)
+                if not isinstance(value, (list, tuple)) or len(value) != len(default) or not all(
+                    not isinstance(x, bool) and math.isfinite(float(x)) for x in value):
+                    raise ValueError(f"interest {name} requires {len(default)} finite numbers")
+                if name == "size" and not all(.1 <= float(x) <= 30 for x in value):
+                    raise ValueError("interest size must be 0.1..30 metres")
+                if name == "rotation" and sum(float(x) ** 2 for x in value) < 1e-12:
+                    raise ValueError("interest rotation must be nonzero")
+            for name, default, low, high in (("priority", 1, 0, 100), ("min_fraction", .25, 0, 1)):
+                value = region.get(name, default)
+                if isinstance(value, bool) or not math.isfinite(float(value)) or not low <= float(value) <= high:
+                    raise ValueError(f"interest {name} must be between {low} and {high}")
+            if region.get("shape", "box") == "sphere" and len(set(float(x) for x in region.get("size", [2, 2, 2]))) != 1:
+                raise ValueError("sphere diameters must be equal on all three axes")
+        options = dict(render_options or {})
+        options["adaptive"] = {
+            "enabled": True, "initial_triangle_budget": initial_triangle_budget,
+            "min_triangle_budget": min_triangle_budget, "max_triangle_budget": max_triangle_budget,
+            "memory_budget_mib": memory_budget_mib, "frame_headroom": .15,
+            "regions": regions,
+        }
+        self.add_live_mesh(topic, frame_id, options)
+
     def add_3d_octomap(
         self,
         topic: str,
@@ -605,30 +762,93 @@ class DataViz:
         frame_id: str = "map",
         render_options: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Add the pose-adaptive, workspace-level remote RGB-D renderer."""
+        """Add a versioned workspace-level remote renderer.
+
+        V3 WebRTC is the production default: exact display-time stereo views
+        are rendered from the complete PC-resident scene. The older RGB-D v2
+        contract remains available only when requested explicitly.
+        """
         options = dict(render_options or {})
         options["render_target"] = MapRenderTarget.REMOTE.value
+        protocol_version = str(
+            options.get("protocol_version", "horus.remote_render.v3")
+            or "horus.remote_render.v3"
+        ).strip()
+        if protocol_version not in {
+            "remote_stereo_rgbd_v2",
+            "horus.remote_render.v3",
+        }:
+            raise ValueError(
+                "remote render protocol_version must be "
+                "'remote_stereo_rgbd_v2' or 'horus.remote_render.v3'"
+            )
+        options["protocol_version"] = protocol_version
+        default_transport = (
+            "webrtc"
+            if protocol_version == "horus.remote_render.v3"
+            else "ros_compressed"
+        )
         transport = str(
-            options.get("transport", "ros_compressed") or "ros_compressed"
+            options.get("transport", default_transport) or default_transport
         ).strip().lower()
         if transport not in {"webrtc", "ros_compressed"}:
             raise ValueError("remote render transport must be 'webrtc' or 'ros_compressed'")
         options["transport"] = transport
-        options["format_version"] = (
-            "remote_stereo_rgbd_ros_v2"
-            if transport == "ros_compressed"
-            else "remote_stereo_rgbd_webrtc_v2"
-        )
-        options.setdefault("viewer_pose_topic", "/horus/remote_render/viewer_pose")
-        options.setdefault("viewer_pose_rate_hz", 60.0)
+        if protocol_version == "horus.remote_render.v3":
+            image_type = str(
+                options.get(
+                    "image_type",
+                    "h264" if transport == "webrtc" else "raw",
+                )
+                or "raw"
+            ).strip().lower()
+            if image_type not in {"raw", "h264"}:
+                raise ValueError(
+                    "remote render image_type must be 'raw' or 'h264'"
+                )
+            options["image_type"] = image_type
+            options["format_version"] = (
+                "horus.remote_render.v3.webrtc"
+                if transport == "webrtc"
+                else "horus.remote_render.v3.ros"
+            )
+            options.setdefault(
+                "viewer_pose_topic",
+                "/horus/remote_render/v3/view_state",
+            )
+            options.setdefault(
+                "ros_compressed_topic",
+                "/horus/remote_render/v3/stereo",
+            )
+            options.setdefault("status_topic", "/horus/remote_render/v3/status")
+            options.setdefault("session_id", "")
+            options.setdefault("reference_space_id", "workspace-local")
+            options.setdefault("workspace_revision", 0)
+            options.setdefault("viewport_width", 1024)
+            options.setdefault("viewport_height", 1024)
+            options.setdefault("display_refresh_rate_hz", 72.0)
+            options.setdefault("maximum_frame_age_ms", 250)
+            options.setdefault("viewer_pose_rate_hz", 72.0)
+            if transport == "webrtc":
+                # V3 frame identity rides inside the encoded access unit. It
+                # does not use the independent v2 depth data channel.
+                options["frame_data_topic"] = ""
+        else:
+            options["format_version"] = (
+                "remote_stereo_rgbd_ros_v2"
+                if transport == "ros_compressed"
+                else "remote_stereo_rgbd_webrtc_v2"
+            )
+            options.setdefault("viewer_pose_topic", "/horus/remote_render/viewer_pose")
+            options.setdefault("viewer_pose_rate_hz", 60.0)
+            options.setdefault(
+                "ros_compressed_topic",
+                "/horus/remote_render/rgbd",
+            )
+            options.setdefault("status_topic", "/horus/remote_render/agent_status")
         options.setdefault("frame_data_topic", "/horus/remote_render/frame_data")
-        options.setdefault(
-            "ros_compressed_topic",
-            "/horus/remote_render/rgbd",
-        )
         options.setdefault("client_signal_topic", "/horus/webrtc/client_signal")
         options.setdefault("server_signal_topic", "/horus/webrtc/server_signal")
-        options.setdefault("status_topic", "/horus/remote_render/agent_status")
         options.setdefault("encoder", "nvenc")
         options.setdefault("bitrate_kbps", 12000)
         options.setdefault("framerate", 60)
@@ -664,6 +884,9 @@ class DataViz:
         options.setdefault("chunk_begin_topic", "/horus/gaussian_splat/chunk_begin")
         options.setdefault("chunk_item_topic", "/horus/gaussian_splat/chunk_item")
         options.setdefault("chunk_end_topic", "/horus/gaussian_splat/chunk_end")
+        options.setdefault("binary_chunks", False)
+        if not isinstance(options["binary_chunks"], bool):
+            raise ValueError("binary_chunks must be a boolean")
         options.setdefault("asset_format", "3dgs_ply")
         options.setdefault("source_coordinate_space", "colmap")
         options.setdefault("render_mode", "splats")
@@ -677,6 +900,14 @@ class DataViz:
         options.setdefault("splat_scale", 1.0)
         options.setdefault("contribution_cull_threshold", 0.1)
         options.setdefault("high_precision_rt", False)
+        options.setdefault("preserve_source_detail", False)
+        if not isinstance(options["preserve_source_detail"], bool):
+            raise ValueError("preserve_source_detail must be a boolean")
+        if options["preserve_source_detail"]:
+            # max_splats becomes an admission limit, never a prefix selection.
+            options.update(render_scale=1.0, sh_order=3, half_precision_sh=False,
+                           adaptive_sort=False, sort_passes=4,
+                           contribution_cull_threshold=0.0, high_precision_rt=True)
         options.setdefault("pointcloud_fallback", True)
         options.setdefault("fallback_topic", preview_topic)
         options.setdefault("fallback_frame", frame_id)

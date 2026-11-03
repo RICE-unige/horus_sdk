@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Synthetic controller and sensors only. The SDK starts its normal bridge.
+set -eo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/jazzy/setup.bash
+if [[ -f "$HOME/horus_ws/install/local_setup.bash" ]]; then
+    source "$HOME/horus_ws/install/local_setup.bash"
+fi
+export ROS_DOMAIN_ID="${HORUS_TEACH_DOMAIN_ID:-58}"
+export ROS_LOCALHOST_ONLY=1
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export HORUS_SDK_BRIDGE_AUTOSTART_MODE=ros2
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
+export PYTHONPATH="$ROOT/python:$ROOT/python/examples${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+PYTHON="${HORUS_TEACH_PYTHON:-${XDG_CACHE_HOME:-$HOME/.cache}/horus/teach-demo-venv/bin/python}"
+if [[ ! -x "$PYTHON" ]]; then PYTHON=/usr/bin/python3; fi
+if ! "$PYTHON" -c 'import mcap, scipy, rclpy, rich' >/dev/null 2>&1; then
+    printf '%s\n' 'Teach dependencies are missing. See docs/python-sdk/teaching-demo.md for one-time setup.' >&2
+    exit 1
+fi
+exec "$PYTHON" "$ROOT/python/examples/humanoid_teach_demo.py" "$@"

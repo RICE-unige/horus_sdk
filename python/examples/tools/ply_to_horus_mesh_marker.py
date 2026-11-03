@@ -11,6 +11,7 @@ messages on /map_3d_mesh.
 from __future__ import annotations
 
 import argparse
+from array import array
 import importlib.util
 import math
 import struct
@@ -87,7 +88,26 @@ def parse_args() -> argparse.Namespace:
         help="voxel_surface merges nearby points into exterior voxel faces; triangle_shell draws one shell per point.",
     )
     parser.add_argument("--max-triangles", type=int, default=0, help="0 means no cap.")
-    parser.add_argument("--chunk-max-triangles", type=int, default=5000)
+    parser.add_argument(
+        "--chunk-max-triangles",
+        type=int,
+        default=20000,
+        help=(
+            "Triangles per spatial chunk. The 20k default keeps a dense two-million-triangle "
+            "snapshot near 100 Quest renderers while retaining useful frustum-culling bounds."
+        ),
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("indexed_binary", "marker"),
+        default="indexed_binary",
+        help="indexed_binary is the compact, low-allocation Quest path; marker is a compatibility fallback.",
+    )
+    parser.add_argument(
+        "--no-spatial-chunks",
+        action="store_true",
+        help="Keep source triangle order instead of Morton-ordering chunks for Quest frustum culling.",
+    )
     parser.add_argument("--triangle-size", type=float, default=0.025)
     parser.add_argument("--shape", choices=("triangle", "triad"), default="triangle")
     parser.add_argument(
@@ -381,6 +401,87 @@ def chunk_points(
             marker_id += 1
 
 
+def spatially_order_geometry(geometry: MeshGeometry) -> MeshGeometry:
+    """Morton-order triangles so each Quest renderer owns a compact spatial region."""
+    import numpy as np
+
+    if geometry.triangle_count <= 1:
+        return geometry
+
+    points = np.asarray(geometry.points, dtype=np.float32).reshape((-1, 3, 3))
+    colors = np.asarray(geometry.colors, dtype=np.float32).reshape((-1, 3, 4))
+    centroids = points.mean(axis=1)
+    minimum = centroids.min(axis=0)
+    extent = np.maximum(centroids.max(axis=0) - minimum, 1e-6)
+    quantized = np.clip(((centroids - minimum) / extent * 1023.0).astype(np.uint32), 0, 1023)
+
+    def spread_10_bits(values: object) -> object:
+        values = values & np.uint32(0x000003FF)
+        values = (values | (values << np.uint32(16))) & np.uint32(0x030000FF)
+        values = (values | (values << np.uint32(8))) & np.uint32(0x0300F00F)
+        values = (values | (values << np.uint32(4))) & np.uint32(0x030C30C3)
+        values = (values | (values << np.uint32(2))) & np.uint32(0x09249249)
+        return values
+
+    morton = (
+        spread_10_bits(quantized[:, 0])
+        | (spread_10_bits(quantized[:, 1]) << np.uint32(1))
+        | (spread_10_bits(quantized[:, 2]) << np.uint32(2))
+    )
+    order = np.argsort(morton, kind="stable")
+    ordered_points = points[order].reshape((-1, 3))
+    ordered_colors = colors[order].reshape((-1, 4))
+    return MeshGeometry(
+        points=[tuple(map(float, row)) for row in ordered_points],
+        colors=[tuple(map(float, row)) for row in ordered_colors],
+        triangle_count=geometry.triangle_count,
+        source_vertex_count=geometry.source_vertex_count,
+        occupied_voxel_count=geometry.occupied_voxel_count,
+    )
+
+
+def build_indexed_binary_payload(
+    chunk_id: int,
+    points: list[tuple[float, float, float]],
+    colors: list[tuple[float, float, float, float]],
+) -> bytes:
+    """Build one HMSH v1 chunk with exact position/color vertex deduplication."""
+    vertex_lookup: dict[bytes, int] = {}
+    vertices = bytearray()
+    indices = array("I")
+    for point, color in zip(points, colors):
+        rgba = tuple(max(0, min(255, int(round(channel * 255.0)))) for channel in color)
+        packed_vertex = struct.pack(
+            "<fffBBBB",
+            float(point[0]),
+            float(point[1]),
+            float(point[2]),
+            rgba[0],
+            rgba[1],
+            rgba[2],
+            rgba[3],
+        )
+        index = vertex_lookup.get(packed_vertex)
+        if index is None:
+            index = len(vertex_lookup)
+            vertex_lookup[packed_vertex] = index
+            vertices.extend(packed_vertex)
+        indices.append(index)
+
+    if sys.byteorder != "little":
+        indices.byteswap()
+    header = struct.pack(
+        "<IIIIIB3x",
+        0x484D5348,
+        1,
+        int(chunk_id) & 0xFFFFFFFF,
+        len(vertex_lookup),
+        len(indices),
+        1,
+    )
+    return header + bytes(vertices) + indices.tobytes()
+
+
 def build_triangle_shell_geometry(args: argparse.Namespace, vertices: list[Vertex]) -> MeshGeometry:
     points: list[tuple[float, float, float]] = []
     colors: list[tuple[float, float, float, float]] = []
@@ -511,7 +612,7 @@ def run_ros2(args: argparse.Namespace, geometry: MeshGeometry) -> None:
     from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-    from std_msgs.msg import ColorRGBA
+    from std_msgs.msg import ColorRGBA, UInt8MultiArray
     from visualization_msgs.msg import Marker
 
     class PlyMeshPublisher(Node):
@@ -521,8 +622,18 @@ def run_ros2(args: argparse.Namespace, geometry: MeshGeometry) -> None:
             qos.reliability = ReliabilityPolicy.RELIABLE
             if not args.no_transient_local:
                 qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-            self.pub = self.create_publisher(Marker, args.topic, qos)
-            self.markers = self.build_markers()
+            self.indexed_binary = args.transport == "indexed_binary"
+            self.output_topic = f"{args.topic}/indexed" if self.indexed_binary else args.topic
+            self.pub = self.create_publisher(
+                UInt8MultiArray if self.indexed_binary else Marker,
+                self.output_topic,
+                qos,
+            )
+            self.messages = (
+                self.build_indexed_messages()
+                if self.indexed_binary
+                else self.build_markers()
+            )
             if args.no_wait_for_subscriber:
                 self.publish_all()
                 self.has_published_initial_snapshot = True
@@ -535,7 +646,8 @@ def run_ros2(args: argparse.Namespace, geometry: MeshGeometry) -> None:
                 else self.create_timer(0.5, self.publish_when_subscribed)
             )
             self.get_logger().info(
-                f"Publishing {len(self.markers)} chunks on {args.topic} frame={args.frame_id}"
+                f"Publishing {len(self.messages)} spatial {args.transport} chunks on "
+                f"{self.output_topic} frame={args.frame_id}"
             )
             if not args.no_wait_for_subscriber:
                 self.get_logger().info(
@@ -564,6 +676,19 @@ def run_ros2(args: argparse.Namespace, geometry: MeshGeometry) -> None:
                 marker.colors = [ColorRGBA(r=r, g=g, b=b, a=a) for r, g, b, a in colors]
                 markers.append(marker)
             return markers
+
+        def build_indexed_messages(self) -> list[UInt8MultiArray]:
+            messages: list[UInt8MultiArray] = []
+            for chunk_id, points, colors in chunk_points(
+                geometry.points,
+                geometry.colors,
+                args.chunk_max_triangles,
+            ):
+                payload = build_indexed_binary_payload(chunk_id, points, colors)
+                message = UInt8MultiArray()
+                message.data = array("B", payload)
+                messages.append(message)
+            return messages
 
         def publish_delete_all(self) -> None:
             marker = Marker()
@@ -605,11 +730,12 @@ def run_ros2(args: argparse.Namespace, geometry: MeshGeometry) -> None:
         def publish_all(self) -> None:
             stamp = self.get_clock().now().to_msg()
             delay = max(0.0, float(args.chunk_publish_delay))
-            if args.publish_delete_all:
+            if args.publish_delete_all and not self.indexed_binary:
                 self.publish_delete_all()
-            for marker in self.markers:
-                marker.header.stamp = stamp
-                self.pub.publish(marker)
+            for message in self.messages:
+                if not self.indexed_binary:
+                    message.header.stamp = stamp
+                self.pub.publish(message)
                 if delay > 0:
                     time.sleep(delay)
 
@@ -640,6 +766,9 @@ def main() -> None:
     if not math.isfinite(args.subscriber_wait_timeout) or args.subscriber_wait_timeout < 0:
         raise SystemExit("--subscriber-wait-timeout must be >= 0")
     geometry = load_geometry(args)
+    if not args.no_spatial_chunks:
+        geometry = spatially_order_geometry(geometry)
+        print("[ply] spatial chunk order=Morton (Quest frustum-culling optimized)")
     if args.dry_run:
         return
     run_ros2(args, geometry)

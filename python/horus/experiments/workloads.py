@@ -79,6 +79,11 @@ def load_workload_config(path: Path) -> WorkloadConfig:
 
 
 def workload_from_dict(payload: Dict[str, Any]) -> WorkloadConfig:
+    # Do not consume the caller's configuration or nest `extra` on round trips.
+    payload = dict(payload)
+    explicit_extra = payload.pop("extra", {})
+    if not isinstance(explicit_extra, dict):
+        raise ValueError("Workload extra must be an object")
     camera = CameraWorkload(**payload.pop("camera", {}))
     pointcloud = PointCloudWorkload(**payload.pop("pointcloud", {}))
     map_workload = MapWorkload(**payload.pop("map", {}))
@@ -95,7 +100,7 @@ def workload_from_dict(payload: Dict[str, Any]) -> WorkloadConfig:
         "robot_profile",
         "map_profile",
     }
-    extra = {key: value for key, value in payload.items() if key not in known}
+    extra = {**explicit_extra, **{key: value for key, value in payload.items() if key not in known}}
     values = {key: payload[key] for key in known if key in payload}
     return WorkloadConfig(
         **values,

@@ -59,18 +59,59 @@ impl ConnectionDashboard {
     }
 
     pub fn render(&self) {
-        println!(
-            "[dashboard] bridge={} ip={} port={} app={} registration={} detail={} rows={} counts={}",
-            self.bridge_status,
-            self.ip,
-            self.port,
-            self.app_link_state,
-            self.registration_state,
-            self.sub_status,
-            self.topic_rows.len(),
-            self.show_counts
-        );
+        let state = serde_json::json!({
+            "app_connected": self.app_link_state.to_ascii_lowercase().starts_with("connected"),
+            "heartbeat_seen": self.app_link_state.to_ascii_lowercase().starts_with("disconnected"),
+            "bridge_state": format!("{} | {}:{}", self.bridge_status, self.ip, self.port),
+            "registration_state": self.registration_state,
+            "error": self.sub_status,
+            "topics": self.topic_rows,
+            "show_counts": self.show_counts,
+        });
+        match render_snapshot(&state, 100, 24, 0, false) {
+            Ok(text) => print!("{text}"),
+            Err(error) => eprintln!("HORUS dashboard: {error}"),
+        }
     }
+}
+
+/// Render `RobotRegistryClient::status()` without acquiring sensor subscriptions.
+/// Live registration uses the same renderer with terminal sizing and pagination.
+pub fn render_snapshot(
+    snapshot: &serde_json::Value,
+    width: u32,
+    rows: u32,
+    page: u32,
+    color: bool,
+) -> anyhow::Result<String> {
+    use std::ffi::{c_char, CStr, CString};
+    extern "C" {
+        fn horus_dashboard_render(
+            snapshot: *const c_char,
+            width: u32,
+            rows: u32,
+            page: u32,
+            color: i32,
+        ) -> *mut c_char;
+        fn horus_teach_free(value: *mut c_char);
+    }
+    let input = CString::new(serde_json::to_vec(snapshot)?)?;
+    let result = unsafe { horus_dashboard_render(input.as_ptr(), width, rows, page, color.into()) };
+    if result.is_null() {
+        anyhow::bail!("Native dashboard allocation failed");
+    }
+    let json = unsafe {
+        let parsed = serde_json::from_slice::<serde_json::Value>(CStr::from_ptr(result).to_bytes());
+        horus_teach_free(result);
+        parsed?
+    };
+    if json["ok"] != true {
+        anyhow::bail!("{}", json["error"]);
+    }
+    json["value"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("Native dashboard returned invalid text"))
 }
 
 pub fn parse_bool_flag(value: Option<&str>, default: bool) -> bool {

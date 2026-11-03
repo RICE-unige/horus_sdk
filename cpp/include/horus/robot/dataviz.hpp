@@ -15,6 +15,14 @@ namespace dataviz {
 
 using RenderOptions = std::map<std::string, std::any>;
 
+struct CostmapOptions {
+    double alpha{0.65};
+    bool show_unknown_space{false};
+    double height_offset{0.01};
+    double stale_timeout{5.0};
+    std::string tf_topic{"/tf"};
+};
+
 struct Vector3PayloadLike {
     float x{0.0f};
     float y{0.0f};
@@ -101,6 +109,10 @@ public:
         const std::string& frame_id = "map",
         RenderOptions render_options = {});
 
+    // Full OccupancyGrid cost layer. Raw/incremental sources need reconstruction.
+    void add_costmap(const std::string& topic, const std::string& frame_id = "map",
+                     CostmapOptions options = {});
+
     void add_3d_map(
         const std::string& topic,
         const std::string& frame_id = "map",
@@ -108,6 +120,17 @@ public:
 
     void add_3d_mesh(
         const std::string& topic,
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
+
+    // Registers an HMSH v2 producer's output; does not start a source adapter.
+    void add_live_mesh(
+        const std::string& topic = "/horus/maps/live",
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
+
+    void add_nvblox_mesh(
+        const std::string& topic = "/horus/nvblox/mesh",
         const std::string& frame_id = "map",
         RenderOptions render_options = {});
 
@@ -121,6 +144,12 @@ public:
         const std::string& frame_id = "map",
         RenderOptions render_options = {},
         const std::string& preview_topic = "/map_gaussian_splat_preview");
+
+    // Registers a remote view; the rendering agent is started separately.
+    void add_remote_rendered_map(
+        const std::string& stream_topic = "/horus/remote_render/map_portal",
+        const std::string& frame_id = "map",
+        RenderOptions render_options = {});
 
     void add_semantic_box(
         const std::string& semantic_id,

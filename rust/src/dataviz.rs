@@ -6,6 +6,21 @@ use std::collections::HashMap;
 pub type RenderOptions = HashMap<String, serde_json::Value>;
 
 #[derive(Debug, Clone)]
+pub struct CostmapOptions {
+    pub alpha: f64,
+    pub show_unknown_space: bool,
+    pub height_offset: f64,
+    pub stale_timeout: f64,
+    pub tf_topic: String,
+}
+impl Default for CostmapOptions {
+    fn default() -> Self {
+        Self { alpha: 0.65, show_unknown_space: false, height_offset: 0.01,
+               stale_timeout: 5.0, tf_topic: "/tf".into() }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DataSource {
     pub name: String,
     pub source_type: DataSourceType,
@@ -45,6 +60,68 @@ pub struct DataViz {
 }
 
 impl DataViz {
+    /// Register an external renderer's view; this does not start the rendering agent.
+    pub fn add_remote_rendered_map(&mut self, stream_topic: &str, frame_id: &str,
+                                   render_options: Option<RenderOptions>) -> Result<(), String> {
+        use serde_json::json;
+        let mut options = render_options.unwrap_or_default();
+        let text = |key: &str, fallback: &str| options.get(key).and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty()).unwrap_or(fallback).trim().to_string();
+        let protocol = text("protocol_version", "horus.remote_render.v3");
+        if !["horus.remote_render.v3", "remote_stereo_rgbd_v2"].contains(&protocol.as_str()) {
+            return Err("Unsupported remote render protocol_version".into());
+        }
+        let v3 = protocol == "horus.remote_render.v3";
+        let transport = text("transport", if v3 { "webrtc" } else { "ros_compressed" }).to_ascii_lowercase();
+        if !["webrtc", "ros_compressed"].contains(&transport.as_str()) {
+            return Err("Unsupported remote render transport".into());
+        }
+        let webrtc = transport == "webrtc";
+        let image_type = text("image_type", if webrtc { "h264" } else { "raw" }).to_ascii_lowercase();
+        if v3 && !["raw", "h264"].contains(&image_type.as_str()) {
+            return Err("Unsupported remote render image_type".into());
+        }
+        options.insert("render_target".into(), json!("remote"));
+        options.insert("protocol_version".into(), json!(protocol));
+        options.insert("transport".into(), json!(transport));
+        if v3 {
+            options.insert("image_type".into(), json!(image_type));
+            options.insert("format_version".into(), json!(if webrtc { "horus.remote_render.v3.webrtc" } else { "horus.remote_render.v3.ros" }));
+            for (key, value) in [
+                ("viewer_pose_topic", json!("/horus/remote_render/v3/view_state")),
+                ("ros_compressed_topic", json!("/horus/remote_render/v3/stereo")),
+                ("status_topic", json!("/horus/remote_render/v3/status")),
+                ("session_id", json!("")), ("reference_space_id", json!("workspace-local")),
+                ("workspace_revision", json!(0)), ("viewport_width", json!(1024)),
+                ("viewport_height", json!(1024)), ("display_refresh_rate_hz", json!(72.0)),
+                ("maximum_frame_age_ms", json!(250)), ("viewer_pose_rate_hz", json!(72.0)),
+            ] { options.entry(key.into()).or_insert(value); }
+            if webrtc { options.insert("frame_data_topic".into(), json!("")); }
+        } else {
+            options.insert("format_version".into(), json!(if webrtc { "remote_stereo_rgbd_webrtc_v2" } else { "remote_stereo_rgbd_ros_v2" }));
+            for (key, value) in [
+                ("viewer_pose_topic", json!("/horus/remote_render/viewer_pose")),
+                ("ros_compressed_topic", json!("/horus/remote_render/rgbd")),
+                ("status_topic", json!("/horus/remote_render/agent_status")),
+                ("viewer_pose_rate_hz", json!(60.0)),
+            ] { options.entry(key.into()).or_insert(value); }
+        }
+        for (key, value) in [
+            ("frame_data_topic", json!("/horus/remote_render/frame_data")),
+            ("client_signal_topic", json!("/horus/webrtc/client_signal")),
+            ("server_signal_topic", json!("/horus/webrtc/server_signal")),
+            ("encoder", json!("nvenc")), ("bitrate_kbps", json!(12000)),
+            ("framerate", json!(60)), ("flip_y", json!(false)),
+        ] { options.entry(key.into()).or_insert(value); }
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::RemoteRender, display_name: "remote_rendered_map".into(),
+            data_source: DataSource { name: "remote_rendered_map".into(), source_type: DataSourceType::RemoteRender,
+                topic: stream_topic.into(), frame_id: frame_id.into(), robot_name: None, metadata: HashMap::new() },
+            enabled: true, render_options: options, layer_priority: -4,
+        });
+        Ok(())
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
         assert!(!name.is_empty(), "DataViz name cannot be empty");
@@ -369,6 +446,34 @@ impl DataViz {
         });
     }
 
+    /// A full OccupancyGrid cost layer; raw/incremental sources need reconstruction.
+    pub fn add_costmap(&mut self, topic: &str, frame_id: &str, options: CostmapOptions) -> Result<(), String> {
+        if topic.trim().is_empty() || frame_id.trim().is_empty() || options.tf_topic.trim().is_empty() {
+            return Err("Costmap topic, frame and TF topic must be nonempty".into());
+        }
+        if !options.alpha.is_finite() || !(0.0..=1.0).contains(&options.alpha) ||
+            !options.height_offset.is_finite() || !(0.0..=1.0).contains(&options.height_offset) ||
+            !options.stale_timeout.is_finite() || options.stale_timeout < 0.0 {
+            return Err("Invalid costmap alpha, height offset or stale timeout".into());
+        }
+        let name = format!("costmap:{}", topic.trim());
+        self.add_or_update_visualization(VisualizationConfig {
+            viz_type: VisualizationType::Costmap, display_name: name.clone(), enabled: true,
+            layer_priority: -9,
+            data_source: DataSource { name, source_type: DataSourceType::Costmap,
+                topic: topic.trim().into(), frame_id: frame_id.trim().into(), robot_name: None, metadata: HashMap::new() },
+            render_options: HashMap::from([
+                ("alpha".into(), serde_json::json!(options.alpha)),
+                ("show_unknown_space".into(), serde_json::json!(options.show_unknown_space)),
+                ("height_offset".into(), serde_json::json!(options.height_offset)),
+                ("stale_timeout".into(), serde_json::json!(options.stale_timeout)),
+                ("tf_topic".into(), serde_json::json!(options.tf_topic.trim())),
+                ("transport_lane".into(), serde_json::json!("bulk_replaceable")),
+            ]),
+        });
+        Ok(())
+    }
+
     pub fn add_3d_map(
         &mut self,
         topic: &str,
@@ -413,6 +518,44 @@ impl DataViz {
             render_options: render_options.unwrap_or_default(),
             layer_priority: -4,
         });
+    }
+
+    /// Registers an HMSH v2 producer's output; does not start a source adapter.
+    pub fn add_live_mesh(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
+        let mut options = render_options.unwrap_or_default();
+        for (key, value) in [
+            ("max_triangles", serde_json::json!(2_000_000)),
+            ("use_vertex_colors", serde_json::json!(true)),
+            ("double_sided", serde_json::json!(false)),
+            ("source_coordinate_space", serde_json::json!("enu")),
+            ("use_indexed_binary", serde_json::json!(true)),
+            ("indexed_live", serde_json::json!(true)),
+            ("static_mesh", serde_json::json!(false)),
+            ("max_chunk_renderers", serde_json::json!(1024)),
+            ("max_chunk_uploads_per_frame", serde_json::json!(2)),
+            ("max_triangle_uploads_per_frame", serde_json::json!(20_000)),
+            ("max_upload_milliseconds_per_frame", serde_json::json!(2.5)),
+            ("enable_perf_diagnostics", serde_json::json!(true)),
+        ] {
+            options.entry(key.into()).or_insert(value);
+        }
+        options.entry("transport_lane".into()).or_insert_with(|| serde_json::json!("bulk_strict"));
+        self.add_3d_mesh(topic, frame_id, Some(options));
+    }
+
+    /// Registers the output of an nvblox-to-HMSH producer.
+    pub fn add_nvblox_mesh(
+        &mut self,
+        topic: &str,
+        frame_id: &str,
+        render_options: Option<RenderOptions>,
+    ) {
+        self.add_live_mesh(topic, frame_id, render_options);
     }
 
     pub fn add_3d_octomap(

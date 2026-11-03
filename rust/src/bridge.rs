@@ -2,14 +2,11 @@ use crate::dataviz::{DataSource, DataViz, VisualizationConfig};
 use crate::robot::Robot;
 use crate::sensors::{Camera, LaserScan};
 use once_cell::sync::Lazy;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -49,6 +46,18 @@ pub struct CameraConfigPayload {
     pub webrtc_server_signal_topic: String,
     pub webrtc_bitrate_kbps: i32,
     pub webrtc_framerate: i32,
+    #[serde(default)]
+    pub webrtc_minimap_bitrate_kbps: i32,
+    #[serde(default)]
+    pub webrtc_minimap_framerate: i32,
+    #[serde(default)]
+    pub webrtc_minimap_priority: i32,
+    #[serde(default)]
+    pub webrtc_teleop_priority: i32,
+    #[serde(default)]
+    pub webrtc_teleop_bitrate_kbps: i32,
+    #[serde(default)]
+    pub webrtc_teleop_framerate: i32,
     pub webrtc_stun_server_url: String,
     pub webrtc_turn_server_url: String,
     pub webrtc_turn_username: String,
@@ -135,6 +144,12 @@ pub struct VisualizationPayload {
     pub octomap: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_box: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub costmap: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_render: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport_lane: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +194,8 @@ pub struct WorkspaceConfigPayload {
     pub compass: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tutorial: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experiment: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +264,10 @@ pub struct RobotRegistrationPayload {
     pub robot_description_payload_json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field_teammate_config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub teaching: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controller_hints: Option<Value>,
 }
 
 /// Resolve the entity capability contract from robot metadata, defaulting by
@@ -403,7 +424,7 @@ fn coerce_float(value: Option<&Value>, default: f32) -> f32 {
 }
 
 fn coerce_f64(value: Option<&Value>, default: f64) -> f64 {
-    match value {
+    let number = match value {
         Some(Value::Number(n)) => n.as_f64().unwrap_or(default),
         Some(Value::String(s)) => s.trim().parse::<f64>().unwrap_or(default),
         Some(Value::Bool(v)) => {
@@ -414,7 +435,8 @@ fn coerce_f64(value: Option<&Value>, default: f64) -> f64 {
             }
         }
         _ => default,
-    }
+    };
+    if number.is_finite() { number } else { default }
 }
 
 fn clamp_f64(value: f64, min: f64, max: f64) -> f64 {
@@ -422,18 +444,9 @@ fn clamp_f64(value: f64, min: f64, max: f64) -> f64 {
 }
 
 fn coerce_int(value: Option<&Value>, default: i32) -> i32 {
-    match value {
-        Some(Value::Number(n)) => n.as_i64().map(|v| v as i32).unwrap_or(default),
-        Some(Value::String(s)) => s.trim().parse::<i32>().unwrap_or(default),
-        Some(Value::Bool(v)) => {
-            if *v {
-                1
-            } else {
-                0
-            }
-        }
-        _ => default,
-    }
+    let value = coerce_f64(value, f64::from(default));
+    // Rust's saturating float conversion avoids wrapping large JSON integers.
+    if value.is_finite() { value as i32 } else { default }
 }
 
 fn coerce_vec3(value: Option<&Value>, default_xyz: (f32, f32, f32)) -> Vector3Payload {
@@ -613,6 +626,12 @@ fn build_camera_config(sensor: &Camera) -> CameraConfigPayload {
             .to_string(),
         webrtc_bitrate_kbps: coerce_int(metadata.get("webrtc_bitrate_kbps"), 2000),
         webrtc_framerate: coerce_int(metadata.get("webrtc_framerate"), sensor.fps as i32),
+        webrtc_minimap_bitrate_kbps: coerce_int(metadata.get("webrtc_minimap_bitrate_kbps"), 0),
+        webrtc_minimap_framerate: coerce_int(metadata.get("webrtc_minimap_framerate"), 0),
+        webrtc_minimap_priority: coerce_int(metadata.get("webrtc_minimap_priority"), 0),
+        webrtc_teleop_priority: coerce_int(metadata.get("webrtc_teleop_priority"), 0),
+        webrtc_teleop_bitrate_kbps: coerce_int(metadata.get("webrtc_teleop_bitrate_kbps"), 0),
+        webrtc_teleop_framerate: coerce_int(metadata.get("webrtc_teleop_framerate"), 0),
         webrtc_stun_server_url: metadata
             .get("webrtc_stun_server_url")
             .and_then(Value::as_str)
@@ -673,6 +692,51 @@ fn build_camera_config(sensor: &Camera) -> CameraConfigPayload {
     }
 }
 
+fn remote_render_options(options: &crate::dataviz::RenderOptions, topic: &str) -> Value {
+    let text = |key: &str, fallback: &str| coerce_text(options.get(key), fallback);
+    let optional_topic = |key: &str, fallback: &str| options.get(key).and_then(Value::as_str)
+        .map(str::trim).unwrap_or(fallback).to_owned();
+    let protocol = if text("protocol_version", "remote_stereo_rgbd_v2") == "horus.remote_render.v3" {
+        "horus.remote_render.v3"
+    } else { "remote_stereo_rgbd_v2" };
+    let v3 = protocol == "horus.remote_render.v3";
+    let webrtc = text("transport", "ros_compressed").to_ascii_lowercase() == "webrtc";
+    let format = if v3 { if webrtc { "horus.remote_render.v3.webrtc" } else { "horus.remote_render.v3.ros" } }
+        else if webrtc { "remote_stereo_rgbd_webrtc_v2" } else { "remote_stereo_rgbd_ros_v2" };
+    let encoder = match text("encoder", "auto").to_ascii_lowercase().as_str() {
+        "nvenc" => "nvenc", "x264" => "x264", _ => "auto",
+    };
+    let mut viewer = text("viewer_pose_topic", "/horus/remote_render/viewer_pose");
+    if !viewer.starts_with('/') { viewer = "/horus/remote_render/viewer_pose".into(); }
+    let mut result = json!({
+        "protocol_version": protocol, "format_version": format,
+        "transport": if webrtc { "webrtc" } else { "ros_compressed" },
+        "viewer_pose_topic": viewer,
+        "viewer_pose_rate_hz": coerce_f64(options.get("viewer_pose_rate_hz"), 60.0).clamp(1.0, 120.0),
+        "stream_topic": topic,
+        "frame_data_topic": optional_topic("frame_data_topic", if v3 && webrtc { "" } else { "/horus/remote_render/frame_data" }),
+        "ros_compressed_topic": text("ros_compressed_topic", "/horus/remote_render/rgbd"),
+        "client_signal_topic": optional_topic("client_signal_topic", "/horus/webrtc/client_signal"),
+        "server_signal_topic": optional_topic("server_signal_topic", "/horus/webrtc/server_signal"),
+        "status_topic": optional_topic("status_topic", "/horus/remote_render/agent_status"),
+        "encoder": encoder,
+        "image_type": if text("image_type", "raw").eq_ignore_ascii_case("h264") { "h264" } else { "raw" },
+        "bitrate_kbps": coerce_int(options.get("bitrate_kbps"), 12000).max(1000),
+        "framerate": coerce_int(options.get("framerate"), 60).clamp(1, 60),
+        "flip_y": coerce_bool(options.get("flip_y"), false),
+    });
+    if v3 {
+        result["session_id"] = json!(text("session_id", ""));
+        result["reference_space_id"] = json!(text("reference_space_id", "workspace-local"));
+        for (key, default, minimum) in [("workspace_revision", 0, 0), ("viewport_width", 1024, 1),
+            ("viewport_height", 1024, 1), ("maximum_frame_age_ms", 250, 1)] {
+            result[key] = json!(coerce_int(options.get(key), default).max(minimum));
+        }
+        result["display_refresh_rate_hz"] = json!(coerce_f64(options.get("display_refresh_rate_hz"), 72.0).max(1.0));
+    }
+    result
+}
+
 fn serialize_visualization_payload(
     visualization: &VisualizationConfig,
     scope_override: Option<&str>,
@@ -698,6 +762,24 @@ fn serialize_visualization_payload(
     };
 
     let mut occupancy = None;
+    let options = &visualization.render_options;
+    let remote_render = (visualization.viz_type.as_str() == "remote_render")
+        .then(|| remote_render_options(options, &data_source.topic));
+    let number = |key: &str, fallback: f64| options.get(key)
+        .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+        .filter(|v| v.is_finite()).unwrap_or(fallback);
+    let costmap = (visualization.viz_type.as_str() == "costmap").then(|| json!({
+        "alpha": number("alpha", 0.65),
+        "show_unknown_space": coerce_bool(options.get("show_unknown_space"), false),
+        "height_offset": number("height_offset", 0.01),
+        "stale_timeout": number("stale_timeout", 5.0),
+        "tf_topic": options.get("tf_topic").and_then(Value::as_str).filter(|v| !v.is_empty()).unwrap_or("/tf"),
+    }));
+    let transport_lane = if ["point_cloud", "gaussian_splat", "mesh", "octomap", "occupancy_grid", "costmap"]
+        .contains(&visualization.viz_type.as_str()) {
+        options.get("transport_lane").and_then(Value::as_str).map(|v| v.trim().to_lowercase())
+            .filter(|v| ["strict", "replaceable", "bulk_strict", "bulk_replaceable"].contains(&v.as_str()))
+    } else { None };
     let mut path = None;
     let mut velocity = None;
     let mut trail = None;
@@ -796,6 +878,12 @@ fn serialize_visualization_payload(
     }
     if visualization.viz_type.as_str() == "point_cloud" {
         let options = &visualization.render_options;
+        let color_mode = match coerce_text(options.get("color_mode"), "rgb").to_ascii_lowercase().as_str() {
+            "flat" => "flat", "height" => "height", "rgb_height" => "rgb_height", _ => "rgb",
+        };
+        let height_min = coerce_f64(options.get("height_min_m"), -1.0);
+        let mut height_max = coerce_f64(options.get("height_max_m"), 2.0);
+        if height_max <= height_min { height_max = height_min + 3.0; }
         let min_point_size = coerce_float(options.get("min_point_size"), 0.002).max(0.0001);
         let max_point_size = coerce_float(options.get("max_point_size"), 0.04).max(min_point_size);
         let max_visible = coerce_int(options.get("max_visible_points_budget"), 200_000).max(1_000);
@@ -820,6 +908,7 @@ fn serialize_visualization_payload(
         };
         let max_points_raw = coerce_int(options.get("max_points_per_frame"), 0);
         point_cloud = Some(json!({
+            "color_mode": color_mode, "height_min_m": height_min, "height_max_m": height_max,
             "point_size": coerce_float(options.get("point_size"), 0.05).max(0.001),
             "max_points_per_frame": if max_points_raw <= 0 { 0 } else { max_points_raw.max(1) },
             "base_sample_stride": coerce_int(options.get("base_sample_stride"), 1).max(1),
@@ -877,6 +966,8 @@ fn serialize_visualization_payload(
             "chunk_begin_topic": coerce_text(options.get("chunk_begin_topic"), "/horus/gaussian_splat/chunk_begin"),
             "chunk_item_topic": coerce_text(options.get("chunk_item_topic"), "/horus/gaussian_splat/chunk_item"),
             "chunk_end_topic": coerce_text(options.get("chunk_end_topic"), "/horus/gaussian_splat/chunk_end"),
+            "binary_chunks": coerce_bool(options.get("binary_chunks"), false),
+            "preserve_source_detail": coerce_bool(options.get("preserve_source_detail"), false),
             "asset_format": asset_format,
             "source_coordinate_space": coordinate_space,
             "render_mode": render_mode,
@@ -910,11 +1001,30 @@ fn serialize_visualization_payload(
         };
         mesh = Some(json!({
             "use_vertex_colors": coerce_bool(options.get("use_vertex_colors"), true),
-            "alpha": clamp_f32(coerce_float(options.get("alpha"), 1.0), 0.0, 1.0),
+            "alpha": clamp_f64(coerce_f64(options.get("alpha"), 1.0), 0.0, 1.0),
             "double_sided": coerce_bool(options.get("double_sided"), true),
             "max_triangles": coerce_int(options.get("max_triangles"), 200_000).max(1_000),
             "source_coordinate_space": coordinate_space,
+            "use_indexed_binary": coerce_bool(options.get("use_indexed_binary"), true),
+            "static_mesh": coerce_bool(options.get("static_mesh"), false),
+            "indexed_live": coerce_bool(options.get("indexed_live"), false),
+            "max_chunk_renderers": coerce_int(options.get("max_chunk_renderers"), 1024).clamp(8, 1024),
+            "max_chunk_uploads_per_frame": coerce_int(options.get("max_chunk_uploads_per_frame"), 2).clamp(1, 32),
+            "max_triangle_uploads_per_frame": coerce_int(options.get("max_triangle_uploads_per_frame"), 20_000).max(2_000),
+            "max_upload_milliseconds_per_frame": clamp_f64(coerce_f64(options.get("max_upload_milliseconds_per_frame"), 2.5), 0.25, 8.0),
+            "static_finalize_delay_seconds": clamp_f64(coerce_f64(options.get("static_finalize_delay_seconds"), 0.75), 0.1, 10.0),
+            "enable_perf_diagnostics": coerce_bool(options.get("enable_perf_diagnostics"), false),
         }));
+        if let Some(adaptive) = options.get("adaptive").filter(|value| value.is_object()) {
+            if let Some(payload) = mesh.as_mut() {
+                payload["adaptive"] = adaptive.clone();
+            }
+        }
+        if let Some(display) = options.get("display").filter(|value| value.is_object()) {
+            if let Some(payload) = mesh.as_mut() {
+                payload["display"] = display.clone();
+            }
+        }
     }
     if visualization.viz_type.as_str() == "octomap" {
         let options = &visualization.render_options;
@@ -934,15 +1044,21 @@ fn serialize_visualization_payload(
         };
         octomap = Some(json!({
             "render_mode": render_mode,
+            "static_mesh": coerce_bool(options.get("static_mesh"), false),
             "use_vertex_colors": coerce_bool(options.get("use_vertex_colors"), true),
             "alpha": clamp_f32(coerce_float(options.get("alpha"), 1.0), 0.0, 1.0),
             "double_sided": coerce_bool(options.get("double_sided"), false),
             "max_triangles": coerce_int(options.get("max_triangles"), 60_000).max(1_000),
             "source_coordinate_space": coordinate_space,
             "native_topic": coerce_text(options.get("native_topic"), "/map_3d_octomap"),
-            "native_frame": coerce_text(options.get("native_frame"), "map"),
+            "native_frame": coerce_text(options.get("native_frame"), frame.as_deref().unwrap_or("map")),
             "native_binary_only": coerce_bool(options.get("native_binary_only"), true),
         }));
+        for key in ["native_frame", "native_topic"] {
+            if options.get(key).and_then(Value::as_str).is_some_and(|s| s.trim().is_empty()) {
+                octomap.as_mut().unwrap().as_object_mut().unwrap().remove(key);
+            }
+        }
     }
     if visualization.viz_type.as_str() == "semantic_box" {
         let id = coerce_text(visualization.render_options.get("id"), "");
@@ -973,6 +1089,8 @@ fn serialize_visualization_payload(
             .and_then(Value::as_str)
             .map(ToString::to_string),
         occupancy,
+        costmap,
+        transport_lane,
         path,
         velocity,
         trail,
@@ -982,6 +1100,7 @@ fn serialize_visualization_payload(
         mesh,
         octomap,
         semantic_box,
+        remote_render,
     })
 }
 
@@ -1029,6 +1148,7 @@ fn build_teleop_control(robot: &Robot) -> TeleopControlPayload {
         "legged" => "legged",
         "aerial" => "aerial",
         "drone" => "drone",
+        "humanoid" => "custom",
         _ => "wheeled",
     };
     let mut robot_profile = coerce_text(get("robot_profile"), default_profile).to_ascii_lowercase();
@@ -1059,7 +1179,7 @@ fn build_teleop_control(robot: &Robot) -> TeleopControlPayload {
     }
 
     TeleopControlPayload {
-        enabled: coerce_bool(get("enabled"), true),
+        enabled: coerce_bool(get("enabled"), robot.get_type_str() != "humanoid"),
         command_topic: coerce_text(get("command_topic"), &robot.resolve_topic("cmd_vel")),
         raw_input_topic: coerce_text(
             get("raw_input_topic"),
@@ -1116,7 +1236,7 @@ fn build_task_control(robot: &Robot) -> TaskControlPayload {
 
     TaskControlPayload {
         go_to_point: json!({
-            "enabled": coerce_bool(go.and_then(|m| m.get("enabled")), true),
+            "enabled": coerce_bool(go.and_then(|m| m.get("enabled")), robot.get_type_str() != "humanoid"),
             "goal_topic": coerce_text(go.and_then(|m| m.get("goal_topic")), &robot.resolve_topic("goal_pose")),
             "cancel_topic": coerce_text(go.and_then(|m| m.get("cancel_topic")), &robot.resolve_topic("goal_cancel")),
             "status_topic": coerce_text(go.and_then(|m| m.get("status_topic")), &robot.resolve_topic("goal_status")),
@@ -1125,9 +1245,10 @@ fn build_task_control(robot: &Robot) -> TaskControlPayload {
             "yaw_tolerance_deg": clamp_f64(coerce_f64(go.and_then(|m| m.get("yaw_tolerance_deg")), 12.0), 0.1, 180.0),
             "min_altitude_m": min_altitude,
             "max_altitude_m": max_altitude,
+            "allow_unbounded_placement": coerce_bool(go.and_then(|m|m.get("allow_unbounded_placement")),false),
         }),
         waypoint: json!({
-            "enabled": coerce_bool(waypoint.and_then(|m| m.get("enabled")), true),
+            "enabled": coerce_bool(waypoint.and_then(|m| m.get("enabled")), robot.get_type_str() != "humanoid"),
             "path_topic": coerce_text(waypoint.and_then(|m| m.get("path_topic")), &robot.resolve_topic("waypoint_path")),
             "status_topic": coerce_text(waypoint.and_then(|m| m.get("status_topic")), &robot.resolve_topic("waypoint_status")),
             "frame_id": coerce_text(waypoint.and_then(|m| m.get("frame_id")), "map"),
@@ -1199,186 +1320,124 @@ fn build_workspace_config(
         }
     });
 
-    if position_scale.is_none() && compass.is_none() && tutorial.is_none() {
+    let experiment = robot.metadata.get("workspace_experiment_config").and_then(Value::as_object)
+        .filter(|m|m.contains_key("enabled")).map(|m|json!({
+            "enabled":coerce_bool(m.get("enabled"),false),
+            "contract_version":coerce_text(m.get("contract_version"),"experiment.v1"),
+        }));
+    if position_scale.is_none() && compass.is_none() && tutorial.is_none() && experiment.is_none() {
         None
     } else {
         Some(WorkspaceConfigPayload {
             position_scale,
             compass,
             tutorial,
+            experiment,
         })
     }
 }
 
-#[derive(Debug, Clone)]
-struct NativeJointDescription {
-    name: String,
-    joint_type: String,
-    parent_link: String,
-    child_link: String,
+
+fn build_robot_description_artifact(robot: &Robot) -> anyhow::Result<Option<(Value, String)>> {
+    let Some(config) = robot.metadata.get("robot_description_config") else { return Ok(None); };
+    if !coerce_bool(config.get("enabled"), true) { return Ok(None); }
+    let mut options = config.clone();
+    options["robot_name"] = json!(robot.name);
+    if let Some(dimensions) = &robot.dimensions {
+        options["mesh_proxy_size"] = json!([
+            (dimensions.length * 0.35).clamp(0.05, 0.35),
+            (dimensions.width * 0.35).clamp(0.05, 0.30),
+            ((if dimensions.height > 0.0 { dimensions.height } else { 0.2 }) * 0.25).clamp(0.05, 0.30),
+        ]);
+    }
+    let artifact = crate::description::resolve(&options)?;
+    Ok(Some((artifact.manifest, artifact.payload_json)))
 }
 
-fn capture_xml_attribute(text: &str, attribute: &str) -> Option<String> {
-    let pattern = Regex::new(&format!(
-        r#"\b{}\s*=\s*["']([^"']+)["']"#,
-        regex::escape(attribute)
-    ))
-    .ok()?;
-    pattern
-        .captures(text)
-        .and_then(|captures| captures.get(1))
-        .map(|match_| match_.as_str().to_string())
+fn apply_registration_metadata(robot: &mut Robot, ack: &Value) {
+    if ack["success"].as_bool() != Some(true) || queued_reason_from_ack(ack).is_some() { return; }
+    robot.add_metadata("horus_registered", json!(true));
+    robot.add_metadata("horus_robot_id", ack.get("robot_id").cloned().unwrap_or_else(|| json!(robot.name)));
+    robot.add_metadata("horus_color", ack.get("assigned_color").or_else(|| ack.get("color")).cloned().unwrap_or(Value::Null));
 }
 
-fn extract_urdf_link_names(urdf: &str) -> Vec<String> {
-    let Ok(pattern) = Regex::new(r#"<link\b[^>]*>"#) else {
-        return Vec::new();
-    };
-    pattern
-        .find_iter(urdf)
-        .filter_map(|match_| capture_xml_attribute(match_.as_str(), "name"))
-        .collect()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryOptions {
+    pub auto_launch: bool,
+    pub bridge_executable: String,
+    pub bridge_arguments: Vec<String>,
 }
-
-fn extract_urdf_joints(urdf: &str) -> Vec<NativeJointDescription> {
-    let Ok(joint_pattern) = Regex::new(r#"<joint\b[\s\S]*?</joint>"#) else {
-        return Vec::new();
-    };
-    let Ok(parent_pattern) = Regex::new(r#"<parent\b[^>]*>"#) else {
-        return Vec::new();
-    };
-    let Ok(child_pattern) = Regex::new(r#"<child\b[^>]*>"#) else {
-        return Vec::new();
-    };
-
-    joint_pattern
-        .find_iter(urdf)
-        .filter_map(|match_| {
-            let block = match_.as_str();
-            let name = capture_xml_attribute(block, "name")?;
-            let parent_link = parent_pattern
-                .find(block)
-                .and_then(|parent| capture_xml_attribute(parent.as_str(), "link"))
-                .unwrap_or_default();
-            let child_link = child_pattern
-                .find(block)
-                .and_then(|child| capture_xml_attribute(child.as_str(), "link"))
-                .unwrap_or_default();
-            Some(NativeJointDescription {
-                name,
-                joint_type: capture_xml_attribute(block, "type")
-                    .unwrap_or_else(|| "fixed".to_string()),
-                parent_link,
-                child_link,
-            })
-        })
-        .collect()
-}
-
-fn build_robot_description_artifact(robot: &Robot) -> Option<(Value, String)> {
-    let config = robot
-        .metadata
-        .get("robot_description_config")
-        .and_then(Value::as_object)?;
-    if !coerce_bool(config.get("enabled"), true) {
-        return None;
+impl Default for RegistryOptions {
+    fn default() -> Self {
+        Self { auto_launch: true, bridge_executable: String::new(), bridge_arguments: Vec::new() }
     }
-    let urdf_path = coerce_text(config.get("urdf_path"), "");
-    if urdf_path.trim().is_empty() {
-        return None;
-    }
-
-    let urdf = fs::read_to_string(&urdf_path).ok()?;
-    if urdf.trim().is_empty() {
-        return None;
-    }
-    let links = extract_urdf_link_names(&urdf);
-    let joints = extract_urdf_joints(&urdf);
-    let collision_count = Regex::new(r#"<collision\b"#)
-        .map(|re| re.find_iter(&urdf).count())
-        .unwrap_or(0);
-    let mut body_mesh_mode = coerce_text(config.get("body_mesh_mode"), "preview_mesh")
-        .trim()
-        .to_ascii_lowercase();
-    if !["collision_only", "preview_mesh", "runtime_high_mesh"].contains(&body_mesh_mode.as_str()) {
-        body_mesh_mode = "preview_mesh".to_string();
-    }
-    let include_visual_meshes =
-        coerce_bool(config.get("include_visual_meshes"), true) && body_mesh_mode != "collision_only";
-    let mesh_assets = if include_visual_meshes {
-        crate::description::bake_visual_meshes(&urdf, &urdf_path)
-    } else {
-        Vec::new()
-    };
-    let mesh_asset_encoded_bytes: usize = mesh_assets.iter().map(|asset| asset.encoded_bytes()).sum();
-    let supports_visual_meshes = !mesh_assets.is_empty();
-    let base_frame = coerce_text(config.get("base_frame"), "base_link");
-    let source = coerce_text(config.get("source"), "ros");
-    let chunk_size = clamp_i32(
-        coerce_int(config.get("chunk_size_bytes"), 12000),
-        1024,
-        64000,
-    );
-    let mut payload = json!({
-        "base_frame": base_frame.clone(),
-        "joints": joints.iter().map(|joint| json!({
-            "axis_xyz": [0.0, 0.0, 1.0],
-            "child_link": joint.child_link.clone(),
-            "name": joint.name.clone(),
-            "origin_rpy": [0.0, 0.0, 0.0],
-            "origin_xyz": [0.0, 0.0, 0.0],
-            "parent_link": joint.parent_link.clone(),
-            "type": joint.joint_type.clone(),
-        })).collect::<Vec<_>>(),
-        "links": links.iter().map(|name| json!({
-            "collisions": [],
-            "name": name,
-        })).collect::<Vec<_>>(),
-        "robot_name": robot.name.clone(),
-        "version": "v2",
-    });
-    if !mesh_assets.is_empty() {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert(
-                "mesh_assets".to_string(),
-                Value::Array(mesh_assets.iter().map(|asset| asset.to_value()).collect()),
-            );
-        }
-    }
-    let payload_json = serde_json::to_string(&payload).ok()?;
-    let description_hash = Sha256::digest(payload_json.as_bytes());
-
-    let manifest = json!({
-        "version": "v2",
-        "description_id": format!("sha256:{description_hash:x}"),
-        "source": source,
-        "base_frame": base_frame,
-        "link_count": links.len() as i64,
-        "joint_count": joints.len() as i64,
-        "collision_count": collision_count as i64,
-        "supports_collision": collision_count > 0,
-        "supports_joints": !joints.is_empty(),
-        "supports_visual_meshes": supports_visual_meshes,
-        "mesh_asset_count": mesh_assets.len() as i64,
-        "mesh_asset_encoded_bytes": mesh_asset_encoded_bytes as i64,
-        "is_transparent": coerce_bool(config.get("is_transparent"), false),
-        "encoding": "json+gzip+base64",
-        "chunk_size_bytes": chunk_size,
-        "body_mesh_mode": body_mesh_mode,
-    });
-    Some((manifest, payload_json))
 }
 
 #[derive(Default)]
 pub struct RobotRegistryClient {
     registration_lock: AtomicBool,
+    runtime: once_cell::sync::OnceCell<crate::native_registry::NativeRegistry>,
+    options: RegistryOptions,
+    stopped: AtomicBool,
 }
 
 impl RobotRegistryClient {
     pub fn new() -> Self {
+        Self::with_options(RegistryOptions::default())
+    }
+
+    pub fn with_options(options: RegistryOptions) -> Self {
         Self {
             registration_lock: AtomicBool::new(false),
+            runtime: once_cell::sync::OnceCell::new(),
+            options,
+            stopped: AtomicBool::new(false),
         }
+    }
+
+    /// Initialize a private ROS context without changing the caller's ROS context.
+    pub fn connect(&self) -> Result<(), String> {
+        if self.stopped.load(Ordering::Acquire) { return Err("Registry stopped; create a new client to restart".into()); }
+        let runtime = self.runtime.get_or_try_init(|| crate::native_registry::NativeRegistry::new(&self.options))?;
+        if self.stopped.load(Ordering::Acquire) {
+            runtime.stop();
+            return Err("Registry stopped; create a new client to restart".into());
+        }
+        Ok(())
+    }
+
+    /// Cancel a blocking keep-alive/registration call. Recreate the client to restart.
+    pub fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        if let Some(runtime) = self.runtime.get() { runtime.stop(); }
+    }
+
+    pub fn status(&self) -> Value {
+        self.runtime.get().map(|runtime| runtime.status())
+            .unwrap_or_else(|| json!({"app_connected":false,"registration_subscribers":0,"initialized":false,
+                "stopped": self.stopped.load(Ordering::Acquire)}))
+    }
+
+    fn register_payloads(&self, payloads: Vec<RobotRegistrationPayload>, timeout: f64,
+                         keep_alive: bool, show_status: bool) -> (bool, Value) {
+        if self.registration_lock.swap(true, Ordering::AcqRel) {
+            return (false, json!({"success":false,"error":"Registration already in progress"}));
+        }
+        struct Unlock<'a>(&'a AtomicBool);
+        impl Drop for Unlock<'_> { fn drop(&mut self) { self.0.store(false, Ordering::Release); } }
+        let _unlock = Unlock(&self.registration_lock);
+        for payload in &payloads {
+            if let Err(error) = validate_field_teammate_safety(payload) {
+                return (false, json!({"success":false,"error":error}));
+            }
+        }
+        if let Err(error) = self.connect() {
+            let mut result = json!({"success":false,"error":error,"payload":payloads.first(), "payloads":payloads});
+            if !cfg!(feature = "ros2") { result["unsupported_feature"] = json!("bridge_registration"); }
+            return (false, result);
+        }
+        let result = self.runtime.get().unwrap().register(&json!(payloads), timeout, keep_alive, show_status);
+        (result["success"].as_bool().unwrap_or(false), result)
     }
 
     pub fn register_robot(
@@ -1390,32 +1449,19 @@ impl RobotRegistryClient {
         show_dashboard: bool,
         workspace_scale: Option<f64>,
     ) -> (bool, Value) {
-        if self
-            .registration_lock
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return (false, json!({"error": "Registration already in progress"}));
-        }
+        if let Err(error) = robot.teaching_registration() { return (false, json!({"success":false,"error":error.to_string()})); }
         let global_payload =
             self.build_global_visualizations_payload(std::slice::from_ref(dataviz));
-        let payload =
-            self.build_robot_config_dict(robot, dataviz, Some(global_payload), workspace_scale);
-        self.registration_lock.store(false, Ordering::SeqCst);
-
-        (
-            false,
-            json!({
-                "success": false,
-                "error": "Rust live registration transport is not implemented; use build_robot_config_dict to generate a payload, or use the Python SDK for live HORUS registration.",
-                "unsupported_feature": "bridge_registration",
-                "robot_name": robot.name,
-                "payload": payload,
-                "timeout_sec": timeout_sec,
-                "keep_alive": keep_alive,
-                "show_dashboard": show_dashboard,
-            }),
-        )
+        let payload = match self.try_build_robot_config_dict(robot, dataviz, Some(global_payload), workspace_scale) {
+            Ok(value) => value,
+            Err(error) => return (false, json!({"success":false,"error":error.to_string()})),
+        };
+        let (success, result) = self.register_payloads(vec![payload], timeout_sec, keep_alive, show_dashboard);
+        if success {
+            let ack = result.get("registrations").and_then(|v| v.get(&robot.name)).unwrap_or(&result);
+            apply_registration_metadata(robot, ack);
+        }
+        (success, result)
     }
 
     pub fn register_robots(
@@ -1427,61 +1473,49 @@ impl RobotRegistryClient {
         show_dashboard: bool,
         workspace_scale: Option<f64>,
     ) -> (bool, Value) {
-        if self
-            .registration_lock
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_err()
-        {
-            return (false, json!({"error": "Registration already in progress"}));
-        }
-
         let datavizs =
             datavizs.unwrap_or_else(|| robots.iter().map(|r| r.create_dataviz(None)).collect());
         if datavizs.len() != robots.len() {
-            self.registration_lock.store(false, Ordering::SeqCst);
             return (false, json!({"error": "Robot/dataviz length mismatch"}));
         }
         let mut payloads = Vec::with_capacity(robots.len());
         let global_payload = self.build_global_visualizations_payload(&datavizs);
         for (robot, dataviz) in robots.iter_mut().zip(datavizs.iter()) {
-            let payload = self.build_robot_config_dict(
+            if let Err(error) = robot.teaching_registration() { return (false, json!({"success":false,"error":error.to_string()})); }
+            let payload = match self.try_build_robot_config_dict(
                 robot,
                 dataviz,
                 Some(global_payload.clone()),
                 workspace_scale,
-            );
+            ) {
+                Ok(value) => value,
+                Err(error) => return (false, json!({"success":false,"error":error.to_string()})),
+            };
             payloads.push(payload);
         }
-        self.registration_lock.store(false, Ordering::SeqCst);
-        (
-            false,
-            json!({
-                "success": false,
-                "error": "Rust live registration transport is not implemented; use build_robot_config_dict to generate payloads, or use the Python SDK for live HORUS registration.",
-                "unsupported_feature": "bridge_registration",
-                "payloads": payloads,
-                "timeout_sec": timeout_sec,
-                "keep_alive": keep_alive,
-                "show_dashboard": show_dashboard,
-            }),
-        )
+        let (success, result) = self.register_payloads(payloads, timeout_sec, keep_alive, show_dashboard);
+        for robot in robots {
+            if let Some(ack) = result.get("registrations").and_then(|v| v.get(&robot.name)) {
+                apply_registration_metadata(robot, ack);
+            } else if success && result.get("robot_name").and_then(Value::as_str) == Some(&robot.name) {
+                apply_registration_metadata(robot, &result);
+            }
+        }
+        (success, result)
     }
 
     pub fn unregister_robot(&self, robot_id: &str, timeout_sec: f64) -> (bool, Value) {
-        (
-            false,
-            json!({
-                "success": false,
-                "error": "Rust live registration transport is not implemented; no HORUS backend unregister was sent.",
-                "unsupported_feature": "bridge_registration",
-                "robot_id": robot_id,
-                "timeout_sec": timeout_sec,
-            }),
-        )
+        if let Err(error) = self.connect() {
+            let mut result = json!({"success":false,"error":error});
+            if !cfg!(feature = "ros2") { result["unsupported_feature"] = json!("bridge_registration"); }
+            return (false, result);
+        }
+        let result = self.runtime.get().unwrap().unregister(robot_id, timeout_sec);
+        (result["success"].as_bool().unwrap_or(false), result)
     }
 
     pub fn check_backend_availability(&self) -> bool {
-        false
+        self.status()["registration_subscribers"].as_u64().unwrap_or(0) > 0
     }
 
     pub fn build_global_visualizations_payload(
@@ -1514,12 +1548,20 @@ impl RobotRegistryClient {
     }
 
     pub fn build_robot_config_dict(
+        &self, robot: &Robot, dataviz: &DataViz,
+        global_visualizations: Option<Vec<VisualizationPayload>>, workspace_scale: Option<f64>,
+    ) -> RobotRegistrationPayload {
+        self.try_build_robot_config_dict(robot, dataviz, global_visualizations, workspace_scale)
+            .expect("Invalid registration configuration; use try_build_robot_config_dict for fallible construction")
+    }
+
+    pub fn try_build_robot_config_dict(
         &self,
         robot: &Robot,
         dataviz: &DataViz,
         global_visualizations: Option<Vec<VisualizationPayload>>,
         workspace_scale: Option<f64>,
-    ) -> RobotRegistrationPayload {
+    ) -> anyhow::Result<RobotRegistrationPayload> {
         let dimensions = robot.dimensions.as_ref().map(|d| DimensionsPayload {
             length: d.length as f32,
             width: d.width as f32,
@@ -1610,20 +1652,14 @@ impl RobotRegistryClient {
 
         let teleop_control = build_teleop_control(robot);
         let drive_topic = teleop_control.command_topic.clone();
-        let robot_description_artifact = build_robot_description_artifact(robot);
+        let robot_description_artifact = build_robot_description_artifact(robot)?;
         let robot_description_manifest = robot_description_artifact
             .as_ref()
             .map(|(manifest, _)| manifest.clone());
         let robot_description_payload_json =
             robot_description_artifact
                 .as_ref()
-                .and_then(|(_, payload_json)| {
-                    if payload_json.len() <= 250_000 {
-                        Some(payload_json.clone())
-                    } else {
-                        None
-                    }
-                });
+                .map(|(_, payload_json)| payload_json.clone());
         let description_has_visual_mesh = robot_description_manifest
             .as_ref()
             .and_then(|manifest| manifest.get("supports_visual_meshes"))
@@ -1640,15 +1676,7 @@ impl RobotRegistryClient {
             })
             .unwrap_or(false);
 
-        let entity_kind = match robot
-            .metadata
-            .get("entity_kind")
-            .and_then(Value::as_str)
-            .map(str::trim)
-        {
-            Some("field_teammate") => "field_teammate".to_string(),
-            _ => "robot".to_string(),
-        };
+        let entity_kind = robot.get_entity_kind();
         let capabilities = resolve_entity_capabilities(robot, &entity_kind);
         let field_teammate_config = robot
             .metadata
@@ -1656,7 +1684,7 @@ impl RobotRegistryClient {
             .filter(|value| value.is_object())
             .cloned();
 
-        RobotRegistrationPayload {
+        let mut payload = RobotRegistrationPayload {
             action: "register".to_string(),
             robot_name: robot.name.clone(),
             robot_type: robot.get_type_str().to_string(),
@@ -1718,7 +1746,27 @@ impl RobotRegistryClient {
             robot_description_manifest,
             robot_description_payload_json,
             field_teammate_config,
+            teaching: robot.teaching_registration()?,
+            controller_hints: robot.metadata.get("controller_hints").map(|v|
+                crate::ControllerHints::from_value(v.clone()).and_then(|h| h.to_value())).transpose()?,
+        };
+        if payload.entity_kind == "workspace_visualization" {
+            payload.capabilities = CapabilitiesPayload { controllable: false, teleoperable: false,
+                taskable: false, guidable: false, observable: false, communicative: false };
+            payload.robot_manager_config = RobotManagerConfigPayload { enabled: false,
+                prefab_asset_path: String::new(), prefab_resource_path: String::new(),
+                sections: RobotManagerSectionsPayload { status: false, data_viz: false, teleop: false, tasks: false } };
+            payload.control.drive_topic.clear();
+            payload.control.teleop.enabled = false;
+            payload.control.teleop.command_topic.clear();
+            payload.control.teleop.raw_input_topic.clear();
+            payload.control.teleop.head_pose_topic.clear();
+            payload.control.tasks.go_to_point = json!({"enabled": false});
+            payload.control.tasks.waypoint = json!({"enabled": false});
+            payload.sensors.clear();
+            payload.visualizations.clear();
         }
+        Ok(payload)
     }
 
     pub fn extract_camera_topic_profiles(
@@ -1768,11 +1816,18 @@ impl RobotRegistryClient {
     }
 }
 
-static REGISTRY_CLIENT: Lazy<Mutex<RobotRegistryClient>> =
-    Lazy::new(|| Mutex::new(RobotRegistryClient::new()));
+static REGISTRY_CLIENT: Lazy<Mutex<Option<Arc<RobotRegistryClient>>>> = Lazy::new(|| Mutex::new(None));
 
-pub fn get_robot_registry_client() -> std::sync::MutexGuard<'static, RobotRegistryClient> {
+pub fn get_robot_registry_client() -> Arc<RobotRegistryClient> {
     REGISTRY_CLIENT.lock().unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(|| Arc::new(RobotRegistryClient::new())).clone()
+}
+
+/// Cancel shared convenience calls and release the owned runtime when they return.
+/// Long-running calls never hold the singleton lock while waiting for ROS.
+pub fn shutdown_robot_registry() {
+    let previous = REGISTRY_CLIENT.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(client) = previous { client.stop(); }
 }
 
 pub fn build_global_visualizations_payload(datavizs: &[DataViz]) -> Vec<VisualizationPayload> {

@@ -107,6 +107,12 @@ public:
         std::string server_signal_topic{"/horus/webrtc/server_signal"};
         std::optional<int> bitrate_kbps;
         std::optional<int> framerate;
+        std::optional<int> minimap_bitrate_kbps;
+        std::optional<int> minimap_framerate;
+        std::optional<int> teleop_bitrate_kbps;
+        std::optional<int> teleop_framerate;
+        std::optional<int> minimap_priority;
+        std::optional<int> teleop_priority;
         std::optional<std::string> stun_server_url;
         std::optional<std::string> turn_server_url;
         std::optional<std::string> turn_username;

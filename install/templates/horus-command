@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$BIN_DIR/.." && pwd)"
+LIB="$ROOT/lib/installer"
+ACTION="$(basename "$0")"
+
+case "$ACTION" in
+  horus-python|horus-start|horus-status)
+    # shellcheck disable=SC1091
+    source "$BIN_DIR/horus-env"
+    ;;
+esac
+
+case "$ACTION" in
+  horus-python)
+    exec "$ROOT/sdk/.venv/bin/python" "$@"
+    ;;
+  horus-start)
+    exec /usr/bin/python3 "$LIB/launch_manager.py" "$ROOT" start \
+      ros2 launch horus_backend horus_complete_backend.launch.py "$@"
+    ;;
+  horus-stop)
+    exec /usr/bin/python3 "$LIB/launch_manager.py" "$ROOT" stop
+    ;;
+  horus-status)
+    printf 'Install root: %s\nROS distribution: %s\n' "$ROOT" "$HORUS_ROS_DISTRO"
+    "$ROOT/sdk/.venv/bin/python" -c 'import horus, rclpy; print("SDK / ROS Python imports: OK")'
+    for package in horus_backend horus_unity_bridge; do
+      prefix="$(ros2 pkg prefix "$package")"
+      case "$prefix" in "$ROOT"/ros2/install/*) ;; *) printf 'Wrong overlay: %s\n' "$prefix" >&2; exit 1 ;; esac
+      test -n "$(ros2 pkg executables "$package")"
+      printf '%s: %s\n' "$package" "$prefix"
+    done
+    /usr/bin/python3 - "$ROOT" "$LIB" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from launch_manager import read_running
+state = read_running(Path(sys.argv[1]) / "state/launch.json")
+print("Helper-owned launch: " + ("running" if state else "not running"))
+print("This checks installation health, not headset connectivity or an SDK-owned launch.")
+PY
+    ;;
+  horus-update)
+    # shellcheck disable=SC1091
+    source "$ROOT/state/install-config.env"
+    tmp="$(mktemp -d -t horus-update.XXXXXXXX)"
+    trap 'rm -rf -- "$tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60
+    git init -q "$tmp/installer"
+    git -C "$tmp/installer" remote add origin "${HORUS_INSTALLER_REPO_URL:-https://github.com/RICE-unige/horus_sdk.git}"
+    git -C "$tmp/installer" fetch --depth 1 origin "${HORUS_INSTALLER_REF:-main}"
+    git -C "$tmp/installer" checkout -q --detach FETCH_HEAD
+    /usr/bin/python3 - "$tmp/installer/install/manifest/releases.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+manifest = json.loads(Path(sys.argv[1]).read_text())
+if manifest.get("installer_api_version") != 2:
+    raise SystemExit("Requested installer is incompatible with guarded updates. No installed files were changed; use a compatible release installer.")
+PY
+    bash "$tmp/installer/install/install.sh" --yes --install-root "$ROOT" \
+      --channel "$HORUS_CHANNEL" --ros-distro "$HORUS_ROS_DISTRO" \
+      --webrtc "$HORUS_WEBRTC" --shell-config "$HORUS_SHELL_CONFIG" "$@"
+    ;;
+  horus-uninstall)
+    case "${1:-}" in
+      --help|-h)
+        printf '%s\n' 'Usage: horus-uninstall [--yes]' 'Removes shell integration and renames the installation to a sibling backup.' 'Source, datasets and logs are retained. Shared apt packages are never removed.'
+        exit 0 ;;
+      --yes|'') ;;
+      *) printf 'Unsupported option: %s\n' "$1" >&2; exit 1 ;;
+    esac
+    [ "$#" -le 1 ] || exit 1
+    [ "$(cat "$ROOT/state/install-root")" = "$ROOT" ] || { echo 'Install marker mismatch' >&2; exit 1; }
+    exec {runtime_lock}>"$ROOT/state/runtime.lock"
+    flock -n "$runtime_lock" || { echo 'Stop horus-start / finish the update before uninstalling.' >&2; exit 1; }
+    exec {install_lock}>"$ROOT/state/installer.lock"
+    flock -n "$install_lock" || { echo 'An installer is running.' >&2; exit 1; }
+    if [ "${1:-}" != --yes ]; then
+      { exec {terminal}<>/dev/tty; } 2>/dev/null || { echo 'No terminal; use --yes.' >&2; exit 1; }
+      printf 'Retire installation %s, keeping its files? [y/N]: ' "$ROOT" >&"$terminal"
+      IFS= read -r answer <&"$terminal"
+      exec {terminal}>&-
+      case "$answer" in y|Y|yes|YES) ;; *) exit 0 ;; esac
+    fi
+    /usr/bin/python3 "$LIB/manage.py" shell "$ROOT" manual
+    backup="$ROOT.removed-$(date -u +%Y%m%dT%H%M%S)-$$"
+    mv -T -- "$ROOT" "$backup"
+    printf 'HORUS removed from shell startup. All files retained at:\n%s\nOpen a new shell to clear the old PATH. No apt packages were removed.\n' "$backup"
+    ;;
+  *) printf 'Unknown helper: %s\n' "$ACTION" >&2; exit 1 ;;
+esac

@@ -3,6 +3,7 @@
 #include "horus/bridge/robot_registry.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <stdexcept>
 
 namespace horus {
@@ -236,6 +237,7 @@ void Robot::configure_navigation_tasks(const NavigationTaskOptions& options) {
     put_optional(go_to_point, "yaw_tolerance_deg", options.yaw_tolerance_deg);
     put_optional(go_to_point, "min_altitude_m", options.min_altitude_m);
     put_optional(go_to_point, "max_altitude_m", options.max_altitude_m);
+    put_optional(go_to_point, "allow_unbounded_placement", options.allow_unbounded_placement);
 
     std::map<std::string, std::any> waypoint{
         {"enabled", options.waypoint_enabled},
@@ -246,10 +248,69 @@ void Robot::configure_navigation_tasks(const NavigationTaskOptions& options) {
     put_optional(waypoint, "position_tolerance_m", options.position_tolerance_m);
     put_optional(waypoint, "yaw_tolerance_deg", options.yaw_tolerance_deg);
 
-    metadata_["task_config"] = std::map<std::string, std::any>{
-        {"go_to_point", go_to_point},
-        {"waypoint", waypoint},
-    };
+    auto existing = metadata_.find("task_config");
+    auto tasks = existing != metadata_.end() && existing->second.type() == typeid(std::map<std::string, std::any>)
+        ? std::any_cast<std::map<std::string, std::any>>(existing->second) : std::map<std::string, std::any>{};
+    tasks["go_to_point"] = std::move(go_to_point);
+    tasks["waypoint"] = std::move(waypoint);
+    metadata_["task_config"] = std::move(tasks);
+}
+
+void Robot::configure_go_to_point_task(const GoToPointTaskOptions& o) {
+    std::map<std::string, std::any> payload{{"enabled",o.enabled}};
+    put_optional(payload,"goal_topic",o.goal_topic); put_optional(payload,"cancel_topic",o.cancel_topic);
+    put_optional(payload,"status_topic",o.status_topic); put_optional(payload,"frame_id",o.frame_id);
+    put_optional(payload,"position_tolerance_m",o.position_tolerance_m);
+    put_optional(payload,"yaw_tolerance_deg",o.yaw_tolerance_deg);
+    put_optional(payload,"min_altitude_m",o.min_altitude_m); put_optional(payload,"max_altitude_m",o.max_altitude_m);
+    put_optional(payload,"allow_unbounded_placement",o.allow_unbounded_placement);
+    auto existing = metadata_.find("task_config");
+    auto tasks = existing != metadata_.end() && existing->second.type() == typeid(std::map<std::string,std::any>)
+        ? std::any_cast<std::map<std::string,std::any>>(existing->second) : std::map<std::string,std::any>{};
+    tasks["go_to_point"] = std::move(payload); metadata_["task_config"] = std::move(tasks);
+}
+void Robot::configure_waypoint_task(const WaypointTaskOptions& o) {
+    std::map<std::string,std::any> payload{{"enabled",o.enabled}};
+    put_optional(payload,"path_topic",o.path_topic); put_optional(payload,"status_topic",o.status_topic);
+    put_optional(payload,"frame_id",o.frame_id); put_optional(payload,"position_tolerance_m",o.position_tolerance_m);
+    put_optional(payload,"yaw_tolerance_deg",o.yaw_tolerance_deg);
+    auto existing = metadata_.find("task_config");
+    auto tasks = existing != metadata_.end() && existing->second.type() == typeid(std::map<std::string,std::any>)
+        ? std::any_cast<std::map<std::string,std::any>>(existing->second) : std::map<std::string,std::any>{};
+    tasks["waypoint"] = std::move(payload); metadata_["task_config"] = std::move(tasks);
+}
+void Robot::configure_workspace_experiment(bool enabled, const std::string& version) {
+    const auto first=version.find_first_not_of(" \t\r\n"), last=version.find_last_not_of(" \t\r\n");
+    metadata_["workspace_experiment_config"] = std::map<std::string,std::any>{
+        {"enabled",enabled},{"contract_version",first==std::string::npos ? std::string("experiment.v1") : version.substr(first,last-first+1)}};
+}
+void Robot::configure_capabilities(const EntityCapabilities& c) {
+    metadata_["entity_capabilities"] = std::map<std::string,std::any>{
+        {"controllable",c.controllable},{"teleoperable",c.teleoperable},{"taskable",c.taskable},
+        {"guidable",c.guidable},{"observable",c.observable},{"communicative",c.communicative}};
+}
+EntityCapabilities Robot::get_capabilities() const {
+    auto c=get_entity_kind()=="field_teammate" ? EntityCapabilities::for_field_teammate() : EntityCapabilities::for_robot();
+    const auto value=get_metadata("entity_capabilities");
+    if (!value || value->type()!=typeid(std::map<std::string,std::any>)) return c;
+    const auto& raw=std::any_cast<const std::map<std::string,std::any>&>(*value);
+    const std::pair<const char*,bool*> fields[]={{"controllable",&c.controllable},{"teleoperable",&c.teleoperable},
+        {"taskable",&c.taskable},{"guidable",&c.guidable},{"observable",&c.observable},{"communicative",&c.communicative}};
+    for (const auto& [name,target]:fields) {
+        auto it=raw.find(name); if(it!=raw.end()) if(auto boolean=any_to_bool(it->second)) *target=*boolean;
+    }
+    return c;
+}
+std::optional<std::map<std::string,std::any>> Robot::get_field_teammate_config() const {
+    auto raw=get_metadata("field_teammate_config");
+    if(raw && raw->type()==typeid(std::map<std::string,std::any>)) return std::any_cast<std::map<std::string,std::any>>(*raw);
+    return std::nullopt;
+}
+
+void Robot::configure_teaching(const horus::teaching::TeachConfig& config) {
+    if (get_type_str() != "humanoid" || get_entity_kind() != "robot")
+        throw std::invalid_argument("Teach requires a humanoid robot");
+    metadata_["teaching_config"] = config.to_dict();
 }
 
 void Robot::configure_robot_description(const RobotDescriptionOptions& options) {
@@ -277,6 +338,10 @@ void Robot::configure_robot_description(const RobotDescriptionOptions& options) 
         {"include_visual_meshes", include_visual_meshes},
         {"visual_mesh_triangle_budget", std::clamp(options.visual_mesh_triangle_budget, 2000, 500000)},
         {"body_mesh_mode", body_mesh_mode},
+        {"mesh_root", options.mesh_root},
+        {"robot_description_topic", options.robot_description_topic},
+        {"urdf_package", options.urdf_package},
+        {"visual_link_pose_source", options.visual_link_pose_source},
     };
 }
 
@@ -357,6 +422,8 @@ void Robot::configure_field_teammate(const FieldTeammateOptions& options) {
 
     std::map<std::string, std::any> topics{
         {"first_person_video", topic_or(options.first_person_video_topic, prefix + "/fpv/image_raw/compressed")},
+        {"first_person_video_camera_pose", topic_or(options.first_person_video_camera_pose_topic, prefix + "/fpv/camera_pose")},
+        {"first_person_video_camera_info", topic_or(options.first_person_video_camera_info_topic, prefix + "/fpv/camera_info")},
         {"localization_confidence", topic_or(options.localization_confidence_topic, prefix + "/localization_confidence")},
         {"guidance_request", topic_or(options.guidance_request_topic, prefix + "/guidance/request")},
         {"guidance_response", topic_or(options.guidance_response_topic, prefix + "/guidance/response")},
@@ -375,12 +442,34 @@ void Robot::configure_field_teammate(const FieldTeammateOptions& options) {
         {"can_complete", options.can_complete},
     };
 
+    const double height = std::isfinite(options.profile_height_m)
+        ? std::clamp(options.profile_height_m, 1.35, 2.10) : 1.75;
+    auto lowercase = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    };
+    std::string sex = lowercase(options.profile_sex);
+    if (sex != "female" && sex != "male" && sex != "unspecified") {
+        sex = "unspecified";
+    }
+    std::string body_model = lowercase(options.body_model);
+    if (body_model.empty()) {
+        body_model = "meta_avatar";
+    }
+    std::map<std::string, std::any> profile{
+        {"human_height_m", height},
+        {"sex", sex},
+        {"body_model", body_model},
+    };
+
     metadata_["field_teammate_config"] = std::map<std::string, std::any>{
         {"wearable_type", wearable},
         {"base_frame", frame_or(options.base_frame, leaf + "/base")},
         {"camera_frame", frame_or(options.camera_frame, leaf + "/camera")},
         {"topics", topics},
         {"interactions", interactions},
+        {"profile", profile},
         {"contract_version", std::string("field_teammate.v1")},
     };
 
@@ -397,12 +486,29 @@ void Robot::configure_field_teammate(const FieldTeammateOptions& options) {
 
 std::string Robot::get_entity_kind() const {
     if (const auto value = get_metadata("entity_kind")) {
-        if (value->type() == typeid(std::string) &&
-            std::any_cast<std::string>(*value) == "field_teammate") {
-            return "field_teammate";
+        if (value->type() == typeid(std::string)) {
+            const auto& kind = std::any_cast<const std::string&>(*value);
+            if (kind == "field_teammate" || kind == "workspace_visualization") return kind;
         }
     }
     return "robot";
+}
+
+void Robot::configure_workspace_visualization() {
+    metadata_["entity_kind"] = std::string("workspace_visualization");
+    metadata_["entity_capabilities"] = std::map<std::string, std::any>{
+        {"controllable", false}, {"teleoperable", false}, {"taskable", false},
+        {"guidable", false}, {"observable", false}, {"communicative", false},
+    };
+    configure_robot_manager(RobotManagerOptions{false, false, false, false, false});
+    configure_teleop(TeleopOptions{.enabled = false});
+    configure_navigation_tasks(NavigationTaskOptions{.go_to_point_enabled = false, .waypoint_enabled = false});
+}
+
+Robot make_workspace_visualization(const std::string& name) {
+    Robot robot(name, core::RobotType::WHEELED);
+    robot.configure_workspace_visualization();
+    return robot;
 }
 
 Robot make_field_teammate(const std::string& name, const FieldTeammateOptions& options) {
@@ -465,6 +571,7 @@ std::vector<std::shared_ptr<Sensor>> Robot::get_sensors_by_type(core::SensorType
 std::shared_ptr<dataviz::DataViz> Robot::create_dataviz(const std::string& dataviz_name) const {
     const auto name = dataviz_name.empty() ? (name_ + "_viz") : dataviz_name;
     auto dataviz = std::make_shared<dataviz::DataViz>(name);
+    if (get_entity_kind() == "workspace_visualization") return dataviz;
     for (const auto& sensor : sensors_) {
         dataviz->add_sensor_visualization(sensor, name_);
     }
@@ -531,7 +638,7 @@ std::pair<bool, std::map<std::string, std::any>> Robot::unregister_from_horus() 
         return {false, {{"error", std::string("Robot not registered with HORUS")}}};
     }
     auto& registry = bridge::get_robot_registry_client();
-    auto result = registry.unregister_robot(*id, 5.0);
+    auto result = registry.unregister_robot(get_name(), 5.0);
     if (result.first) {
         metadata_.erase("horus_robot_id");
         metadata_.erase("horus_color");

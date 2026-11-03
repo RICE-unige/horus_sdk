@@ -1,0 +1,21 @@
+{
+  "mode": "diagnostic",
+  "session_id": "native-map",
+  "view_topic": "/horus/remote_render/v3/view_state",
+  "stream_topic": "/horus/remote_render/v3/stereo",
+  "status_topic": "/horus/remote_render/v3/status",
+  "maximum_view_age_seconds": 0.25,
+  "maximum_frame_age_ms": 250,
+  "width": 640,
+  "height": 480,
+  "fps": 30,
+  "near_m": 0.05,
+  "far_m": 100.0,
+  "point_radius": 1,
+  "depth_strip_height": 120,
+  "bitrate_kbps": 12000,
+  "duration_seconds": 0,
+  "world_scale": 1.0,
+  "workspace_scale": 0.1,
+  "bake_lighting": true
+}

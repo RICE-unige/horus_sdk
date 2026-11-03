@@ -10,6 +10,7 @@ std::string robot_type_to_string(RobotType type) {
         case RobotType::AERIAL: return "aerial";
         case RobotType::DRONE: return "drone";
         case RobotType::HUMAN: return "human";
+        case RobotType::HUMANOID: return "humanoid";
         default: return "unknown";
     }
 }
@@ -78,6 +79,7 @@ std::string data_source_type_to_string(DataSourceType type) {
         case DataSourceType::GLOBAL_MARKERS: return "global_markers";
         case DataSourceType::COORDINATE_FRAME: return "coordinate_frame";
         case DataSourceType::SEMANTIC_BOX: return "semantic_box";
+        case DataSourceType::REMOTE_RENDER: return "remote_render";
         default: return "unknown";
     }
 }
@@ -101,6 +103,8 @@ std::string visualization_type_to_string(VisualizationType type) {
         case VisualizationType::ODOMETRY_TRAIL: return "odometry_trail";
         case VisualizationType::COLLISION_RISK: return "collision_risk";
         case VisualizationType::HEATMAP: return "heatmap";
+        case VisualizationType::COSTMAP: return "costmap";
+        case VisualizationType::REMOTE_RENDER: return "remote_render";
         default: return "unknown";
     }
 }

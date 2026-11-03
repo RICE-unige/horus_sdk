@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Local process settings only; the SDK starts the normal bridge automatically.
+set -eo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/jazzy/setup.bash
+if [[ -f "$HOME/horus_ws/install/local_setup.bash" ]]; then
+    source "$HOME/horus_ws/install/local_setup.bash"
+fi
+export ROS_DOMAIN_ID="${HORUS_MAPPING_DOMAIN:-20}"
+export ROS_LOCALHOST_ONLY=1
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export HORUS_SDK_BRIDGE_AUTOSTART_MODE=ros2
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
+export PYTHONPATH="$ROOT/python${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+PYTHON=/usr/bin/python3
+_previous=""
+for _argument in "$@"; do
+    if [[ "$_argument" == --render-target=remote || ( "$_previous" == --render-target && "$_argument" == remote ) ]]; then
+        if [[ -f "$ROOT/python/examples/.local_assets/mapping-runtime.sh" ]]; then
+            source "$ROOT/python/examples/.local_assets/mapping-runtime.sh"
+        fi
+        PYTHON="${HORUS_REMOTE_PYTHON:-python3}"
+        break
+    fi
+    _previous="$_argument"
+done
+if ! command -v "$PYTHON" >/dev/null 2>&1; then
+    printf 'HORUS replay Python is unavailable: %s\n' "$PYTHON" >&2
+    exit 2
+fi
+exec "$PYTHON" "$ROOT/python/examples/saved_map_registration.py" "$@"

@@ -1,0 +1,15 @@
+{
+  "type": "costmap",
+  "topic": "/local_costmap/costmap",
+  "scope": "global",
+  "enabled": true,
+  "frame": "odom",
+  "transport_lane": "bulk_replaceable",
+  "costmap": {
+    "alpha": 0.65,
+    "show_unknown_space": false,
+    "height_offset": 0.01,
+    "stale_timeout": 5.0,
+    "tf_topic": "/tf"
+  }
+}

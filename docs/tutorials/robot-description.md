@@ -85,6 +85,37 @@ python3 python/examples/robot_description_registration.py
 - the body anchor matches the real base frame
 - camera panels and task overlays still attach correctly after the body upgrade
 
+## Python mesh cache location
+
+The Python SDK uses `~/.cache/horus/robot_description_meshes` by default. To keep
+registration working when that location is on a disconnected external drive,
+choose a local directory **before starting the registration process**:
+
+```bash
+export HORUS_ROBOT_MESH_CACHE="$HOME/.local/share/horus/robot_description_meshes"
+```
+
+The directory is created when the mesh baker initializes. This applies to the
+robot-description resolver used by normal SDK registration; no custom resolver
+or filesystem-link replacement is needed. Direct users of the public baker can
+override the environment for a particular instance:
+
+```python
+from horus.description import RobotMeshBaker
+
+baker = RobotMeshBaker(cache_root="~/project-cache/robot-meshes")
+print(baker.cache_root)
+```
+
+Selection order is explicit `cache_root`, then `HORUS_ROBOT_MESH_CACHE`, then the
+original default. `~` is expanded; empty settings use the next default, while
+whitespace-only settings are rejected. Existing files and symlinks are not
+replaced or deleted. If the selected directory cannot be created, registration
+reports the path and configuration options instead of silently using another
+disk. Removing the environment setting restores the original default; it does
+not remove either cache. This setting changes only cache storage, not mesh
+geometry, colors, quality, ROS topics or recording locations.
+
 ## What comes next
 
 Once URDF-backed bodies are working, the next natural step is shared environment context. Continue with [Tutorial 6: Global maps](global-maps.md).

@@ -1,236 +1,147 @@
+"""Low-rate ROS graph monitoring. Endpoint presence is not message activity."""
+
 import logging
 import threading
 import time
-from typing import Dict, List, Optional, Set
 
 try:
     import rclpy
-    from rclpy.node import Node
-
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
 
+from .dashboard_status import topic_graph
 from .topic_status import get_topic_status_board
 
 logger = logging.getLogger(__name__)
 
 
 class TopicSubscriptionMonitor:
-    """
-    Monitor ROS2 graph to detect when the Unity bridge has a live
-    subscriber for a topic AND that topic has >=1 publishers.
-
-    SUBSCRIBED: backend subscriber present AND publishers > 0
-    UNSUBSCRIBED: subscriber destroyed OR publishers==0 for >= debounce_s OR unwatch/teardown
-    """
-
-    def __init__(self, debounce_s: float = 2.0, poll_hz: float = 2.0):
-        self._debounce_s = debounce_s
+    def __init__(self, debounce_s=2.0, poll_hz=2.0):
+        self._debounce_s = max(0.0, debounce_s)
         self._poll_interval = 1.0 / max(poll_hz, 0.1)
-        self._topics: Set[str] = set()
-        self._topic_modes: Dict[str, str] = {}
+        self._topics = set()
+        self._topic_modes = {}
         self._lock = threading.RLock()
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._node: Optional[Node] = None
-        # per-topic state
-        self._is_subscribed: Dict[str, bool] = {}
-        self._zero_since: Dict[str, Optional[float]] = {}
+        self._thread = None
+        self._node = None
+        self._stop = threading.Event()
+        self._is_subscribed = {}
+        self._zero_since = {}
 
     def start(self):
         if not ROS2_AVAILABLE:
             return
-        if self._running:
-            return
-        self._running = True
-        if not (rclpy.ok() if ROS2_AVAILABLE else False):
-            try:
-                rclpy.init()
-            except Exception:
-                logger.debug("Failed to initialize ROS 2 for topic monitor", exc_info=True)
-                self._running = False
+        with self._lock:
+            if self._running or (self._thread and self._thread.is_alive()):
                 return
-        if self._node is None:
             try:
+                if not rclpy.ok():
+                    rclpy.init()
                 self._node = rclpy.create_node("horus_topic_subscription_monitor")
             except Exception:
-                logger.debug("Failed to create topic monitor node", exc_info=True)
-                self._running = False
+                logger.debug("Failed to start topic monitor", exc_info=True)
                 return
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+            self._stop.clear()
+            self._running = True
+            get_topic_status_board().start()
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
 
     def stop(self):
+        self._stop.set()
         self._running = False
-        if self._thread:
-            self._thread.join(timeout=0.5)
-        if self._node is not None:
-            try:
-                self._node.destroy_node()
-            except Exception:
-                logger.debug("Failed to destroy topic monitor node", exc_info=True)
-            self._node = None
+        if self._thread and self._thread is not threading.current_thread():
+            self._thread.join(timeout=2.0)
+        # The worker owns node teardown, even if a graph query outlives this wait.
 
-    def watch_topics(self, topics: List[str], modes: Optional[Dict[str, str]] = None):
+    def watch_topics(self, topics, modes=None):
         with self._lock:
-            for t in topics:
-                if not isinstance(t, str) or not t:
+            for topic in topics:
+                if not isinstance(topic, str) or not topic:
                     continue
-                if t not in self._topics:
-                    self._topics.add(t)
-                    self._is_subscribed.setdefault(t, False)
-                    self._zero_since.setdefault(t, None)
-                    # Seed dashboard state so newly watched topics are never "unknown".
-                    try:
-                        get_topic_status_board().on_unsubscribe(t)
-                    except Exception:
-                        logger.debug("Failed to seed topic status for %s", t, exc_info=True)
-                if modes and t in modes:
-                    mode = modes[t]
-                    if mode == "sdk_sub":
-                        self._topic_modes[t] = "backend_pub"
-                    else:
-                        self._topic_modes[t] = "backend_sub"
+                if topic not in self._topics:
+                    self._topics.add(topic)
+                    self._is_subscribed[topic] = False
+                    self._zero_since[topic] = None
+                    get_topic_status_board().on_unknown(topic)
+                if modes and topic in modes:
+                    self._topic_modes[topic] = (
+                        "backend_pub" if modes[topic] in {"sdk_sub", "backend_pub"} else "backend_sub"
+                    )
                 else:
-                    self._topic_modes.setdefault(t, "backend_sub")
+                    self._topic_modes.setdefault(topic, "backend_sub")
 
-    def unwatch_topics(self, topics: List[str], emit_unsubscribed: bool = False):
+    def unwatch_topics(self, topics, emit_unsubscribed=False):
         with self._lock:
-            for t in topics:
-                if t in self._topics:
-                    self._topics.remove(t)
-                if emit_unsubscribed and self._is_subscribed.get(t, False):
-                    # Emit UNSUBSCRIBED immediately on unwatch
-                    try:
-                        get_topic_status_board().on_unsubscribe(t)
-                    except Exception:
-                        logger.debug("Failed to emit topic unwatch for %s", t, exc_info=True)
-                self._is_subscribed.pop(t, None)
-                self._zero_since.pop(t, None)
-                self._topic_modes.pop(t, None)
+            for topic in topics:
+                self._topics.discard(topic)
+                self._topic_modes.pop(topic, None)
+                self._is_subscribed.pop(topic, None)
+                self._zero_since.pop(topic, None)
+                if emit_unsubscribed:
+                    get_topic_status_board().on_unsubscribe(topic)
 
     def _loop(self):
-        while self._running and self._node is not None:
-            topics_snapshot: List[str]
+        try:
+            while not self._stop.is_set():
+                with self._lock:
+                    topics = list(self._topics)
+                for topic in topics:
+                    if self._stop.is_set():
+                        break
+                    self._check_topic(topic, time.monotonic())
+                self._stop.wait(self._poll_interval)
+        finally:
             with self._lock:
-                topics_snapshot = list(self._topics)
-            now = time.time()
-            for topic in topics_snapshot:
-                try:
-                    self._check_topic(topic, now)
-                except Exception:
-                    logger.debug("Topic monitor check failed for %s", topic, exc_info=True)
-            time.sleep(self._poll_interval)
-
-    def _check_topic(self, topic: str, now: float):
-        assert self._node is not None
-        mode = self._topic_modes.get(topic, "backend_sub")
-
-        def _is_backend_node(node_name: Optional[str]) -> bool:
-            if not node_name:
-                return False
-            normalized = str(node_name).strip().lstrip("/")
-            if not normalized:
-                return False
-            if normalized in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
-                return True
-            if normalized.startswith("horus_unity_bridge"):
-                return True
-            if "horus_backend" in normalized:
-                return True
-            if normalized.endswith("_RosSubscriber"):
-                return True
-            return False
-
-        if mode == "backend_pub":
-            pub_infos = self._node.get_publishers_info_by_topic(topic)
-            has_backend_pub = any(_is_backend_node(info.node_name) for info in pub_infos)
-            pub_count = len(pub_infos)
-
-            currently_subscribed = self._is_subscribed.get(topic, False)
-            if has_backend_pub:
-                if not currently_subscribed:
-                    self._is_subscribed[topic] = True
-                    self._zero_since[topic] = None
+                for topic in self._topics:
+                    get_topic_status_board().on_unknown(topic)
+                if self._node is not None:
                     try:
-                        get_topic_status_board().on_subscribe(topic)
+                        self._node.destroy_node()
                     except Exception:
-                        logger.debug("Failed to mark topic subscribed for %s", topic, exc_info=True)
-                else:
-                    self._zero_since[topic] = None
+                        logger.debug("Failed to destroy topic monitor node", exc_info=True)
+                    self._node = None
+                self._running = False
+
+    def _check_topic(self, topic, now):
+        with self._lock:
+            if topic not in self._topics or self._node is None:
                 return
-
-            # No backend publisher
-            if currently_subscribed:
-                zs = self._zero_since.get(topic)
-                if zs is None:
-                    self._zero_since[topic] = now
-                elif (now - zs) >= self._debounce_s:
-                    self._is_subscribed[topic] = False
-                    self._zero_since[topic] = None
-                    try:
-                        get_topic_status_board().on_unsubscribe(topic)
-                    except Exception:
-                        logger.debug("Failed to mark topic unsubscribed for %s", topic, exc_info=True)
-            else:
-                self._zero_since[topic] = None
-            return
-
-        # backend_sub mode: check backend subscriber presence and publisher count
-        sub_infos = self._node.get_subscriptions_info_by_topic(topic)
-        has_backend_sub = any(_is_backend_node(info.node_name) for info in sub_infos)
-        pub_infos = self._node.get_publishers_info_by_topic(topic)
-        pub_count = len(pub_infos)
-
-        currently_subscribed = self._is_subscribed.get(topic, False)
-
-        if has_backend_sub and pub_count > 0:
-            # Transition to SUBSCRIBED
-            if not currently_subscribed:
-                self._is_subscribed[topic] = True
-                self._zero_since[topic] = None
-                try:
-                    get_topic_status_board().on_subscribe(topic)
-                except Exception:
-                    logger.debug("Failed to mark topic subscribed for %s", topic, exc_info=True)
-            else:
-                self._zero_since[topic] = None
-            return
-
-        # Not meeting SUBSCRIBED criteria
-        if currently_subscribed:
-            # If backend subscriber disappeared -> immediate UNSUBSCRIBED
-            if not has_backend_sub:
+            graph = topic_graph(self._node, topic, self._topic_modes.get(topic, "backend_sub"))
+            state = graph["link"]
+            board = get_topic_status_board()
+            if state == "UNKNOWN":
                 self._is_subscribed[topic] = False
                 self._zero_since[topic] = None
-                try:
-                    get_topic_status_board().on_unsubscribe(topic)
-                except Exception:
-                    logger.debug("Failed to mark topic unsubscribed for %s", topic, exc_info=True)
-                return
-            # Backend subscriber still present but publishers == 0 -> debounce
-            if pub_count == 0:
-                zs = self._zero_since.get(topic)
-                if zs is None:
-                    self._zero_since[topic] = now
-                elif (now - zs) >= self._debounce_s:
-                    self._is_subscribed[topic] = False
-                    self._zero_since[topic] = None
-                    try:
-                        get_topic_status_board().on_unsubscribe(topic)
-                    except Exception:
-                        logger.debug("Failed to mark topic unsubscribed for %s", topic, exc_info=True)
-        else:
-            # Not subscribed, reset timer
-            self._zero_since[topic] = None
+                board.on_unknown(topic)
+            elif state == "OK":
+                self._is_subscribed[topic] = True
+                self._zero_since[topic] = None
+                board.on_subscribe(topic)
+            else:
+                # Debounce only disappearing sources. Missing bridge endpoints
+                # or failed graph queries invalidate the observation immediately.
+                if state == "NO_SOURCE" and self._is_subscribed.get(topic):
+                    since = self._zero_since.get(topic)
+                    if since is None:
+                        self._zero_since[topic] = now
+                        return
+                    if now - since < self._debounce_s:
+                        return
+                self._is_subscribed[topic] = False
+                self._zero_since[topic] = None
+                board.on_unsubscribe(topic)
 
 
-_singleton_monitor: Optional[TopicSubscriptionMonitor] = None
+_singleton_monitor = None
+_singleton_lock = threading.Lock()
 
 
-def get_topic_monitor() -> TopicSubscriptionMonitor:
+def get_topic_monitor():
     global _singleton_monitor
-    if _singleton_monitor is None:
-        _singleton_monitor = TopicSubscriptionMonitor()
-    return _singleton_monitor
+    with _singleton_lock:
+        if _singleton_monitor is None:
+            _singleton_monitor = TopicSubscriptionMonitor()
+        return _singleton_monitor

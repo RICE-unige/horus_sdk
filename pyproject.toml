@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "horus-sdk"
 version = "0.1.0-alpha"
 description = "HORUS Mixed Reality Robot Management SDK"
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     {name = "Omotoye S. Adekoya", email = "omotoye.adekoya@edu.unige.it"},
     {name = "RICE Lab", email = "rice@dibris.unige.it"},
@@ -19,11 +20,11 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Human Machine Interfaces",
     "Topic :: System :: Distributed Computing",
@@ -36,6 +37,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+remote-rendering = ["opencv-python-headless>=4.8,<5", "pillow>=9"]
+teaching = ["mcap==1.3.1"]
+teaching-motion = ["mcap==1.3.1", "scipy>=1.11,<2"]
+camera-portal = ["torch>=2.6,<3", "transformers>=4.45,<5", "safetensors>=0.5,<1", "pillow>=10,<13", "opencv-python-headless>=4.8,<5"]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -49,6 +54,9 @@ dev = [
     "pre-commit>=3.0.0",
 ]
 test = [
+    "PyYAML>=6,<7",
+    "opencv-python-headless>=4.8,<5",
+    "pillow>=9",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-xvfb>=3.0.0",
@@ -70,7 +78,7 @@ where = ["python"]
 include = ["horus*"]
 
 [tool.setuptools.package-data]
-horus = ["py.typed", "remote_rendering/*.cu"]
+horus = ["py.typed", "remote_rendering/*.cu", "mapping/native/*.cpp", "mapping/native/vendor/*.cpp", "mapping/native/vendor/*.h", "mapping/native/vendor/*.md"]
 
 # Black configuration
 [tool.black]

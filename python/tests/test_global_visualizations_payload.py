@@ -15,6 +15,48 @@ def _build_client():
     return client
 
 
+def test_live_mesh_subscription_is_explicit_and_source_independent():
+    robot = Robot(name="any_system", robot_type=RobotType.WHEELED)
+    viz = robot.create_dataviz()
+    viz.add_live_mesh(topic="/vendor/custom_surface", frame_id="site")
+    entry = _build_client()._build_global_visualizations_payload([viz])[0]
+    assert entry["topic"] == "/vendor/custom_surface"
+    assert entry["mesh"]["indexed_live"] is True
+    assert entry["mesh"]["use_indexed_binary"] is True
+    assert entry["mesh"]["static_mesh"] is False
+    viz.add_3d_mesh(topic="/legacy_mesh")
+    entry = _build_client()._build_global_visualizations_payload([viz])[0]
+    assert entry["mesh"]["indexed_live"] is False
+
+
+def test_gaussian_source_detail_is_explicit_and_serialized():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    viz = robot.create_dataviz()
+    options = {"preserve_source_detail": True, "max_splats": 100000, "render_scale": 0.25}
+    viz.add_gaussian_splat_map(render_options=options)
+    entry = _build_client()._build_global_visualizations_payload([viz])[0]
+    settings = entry["gaussian_splat"]
+    assert settings["preserve_source_detail"] is True
+    assert settings["max_splats"] == 100000
+    assert settings["render_scale"] == 1.0
+    assert settings["sh_order"] == 3
+    assert settings["half_precision_sh"] is False
+    assert settings["sort_passes"] == 4
+    assert settings["contribution_cull_threshold"] == 0.0
+    assert options["render_scale"] == 0.25
+
+
+def test_gaussian_default_remains_compatible_and_rejects_ambiguous_quality_flag():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    viz = robot.create_dataviz()
+    viz.add_gaussian_splat_map()
+    entry = _build_client()._build_global_visualizations_payload([viz])[0]
+    assert entry["gaussian_splat"]["preserve_source_detail"] is False
+    assert entry["gaussian_splat"]["render_scale"] == 0.5
+    with pytest.raises(ValueError, match="must be a boolean"):
+        viz.add_gaussian_splat_map(render_options={"preserve_source_detail": "false"})
+
+
 def test_occupancy_grid_serialized_as_global_visualization():
     robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
     dataviz = robot.create_dataviz()
@@ -193,11 +235,10 @@ def test_3d_map_sdk_selects_pose_adaptive_remote_rendering():
 
     assert remote["type"] == "remote_render"
     assert remote["topic"] == "/horus/remote_render/test_map"
-    assert remote["remote_render"]["format_version"] == "remote_stereo_rgbd_ros_v2"
-    assert remote["remote_render"]["transport"] == "ros_compressed"
-    assert remote["remote_render"]["frame_data_topic"] == (
-        "/horus/remote_render/frame_data"
-    )
+    assert remote["remote_render"]["format_version"] == "horus.remote_render.v3.webrtc"
+    assert remote["remote_render"]["transport"] == "webrtc"
+    assert remote["remote_render"]["image_type"] == "h264"
+    assert remote["remote_render"]["frame_data_topic"] == ""
     assert remote["remote_render"]["framerate"] == 60
 
 
@@ -219,6 +260,7 @@ def test_remote_render_ros_diagnostic_transport_is_explicit_and_complete():
     dataviz.add_remote_rendered_map(
         stream_topic="/horus/remote_render/map_portal",
         render_options={
+            "protocol_version": "remote_stereo_rgbd_v2",
             "transport": "ros_compressed",
             "ros_compressed_topic": "/horus/remote_render/rgbd",
         },
@@ -299,6 +341,37 @@ def test_mesh_defaults_are_emitted_without_render_options():
     assert mesh["double_sided"] is True
     assert mesh["max_triangles"] == 200000
     assert mesh["source_coordinate_space"] == "enu"
+    assert mesh["use_indexed_binary"] is True
+    assert mesh["static_mesh"] is False
+    assert mesh["max_chunk_renderers"] == 1024
+    assert mesh["max_chunk_uploads_per_frame"] == 2
+    assert mesh["max_triangle_uploads_per_frame"] == 20000
+    assert mesh["max_upload_milliseconds_per_frame"] == 2.5
+    assert mesh["static_finalize_delay_seconds"] == 0.75
+    assert mesh["enable_perf_diagnostics"] is False
+
+
+def test_nvblox_mesh_uses_live_lossless_bounded_defaults():
+    robot = Robot(name="test_bot", robot_type=RobotType.WHEELED)
+    dataviz = robot.create_dataviz()
+    dataviz.add_nvblox_mesh()
+
+    config = _build_client()._build_robot_config_dict(robot, dataviz)
+    entry = next(
+        item for item in config["global_visualizations"] if item.get("type") == "mesh"
+    )
+    mesh = entry["mesh"]
+    assert entry["topic"] == "/horus/nvblox/mesh"
+    assert entry["frame"] == "map"
+    assert entry["transport_lane"] == "bulk_strict"
+    assert mesh["use_indexed_binary"] is True
+    assert mesh["static_mesh"] is False
+    assert mesh["double_sided"] is False
+    assert mesh["max_chunk_renderers"] == 1024
+    assert mesh["max_chunk_uploads_per_frame"] == 2
+    assert mesh["max_triangle_uploads_per_frame"] == 20000
+    assert mesh["max_upload_milliseconds_per_frame"] == 2.5
+    assert mesh["enable_perf_diagnostics"] is True
 
 
 def test_global_visualization_dedupes_mesh_across_multiple_robots():
@@ -328,6 +401,14 @@ def test_mesh_overrides_are_coerced_and_clamped():
             "double_sided": "false",
             "max_triangles": -10,
             "source_coordinate_space": "unknown_space",
+            "use_indexed_binary": "false",
+            "static_mesh": "false",
+            "max_chunk_renderers": 5000,
+            "max_chunk_uploads_per_frame": 0,
+            "max_triangle_uploads_per_frame": 100,
+            "max_upload_milliseconds_per_frame": 99.0,
+            "static_finalize_delay_seconds": 99.0,
+            "enable_perf_diagnostics": "true",
         },
     )
 
@@ -342,6 +423,14 @@ def test_mesh_overrides_are_coerced_and_clamped():
     assert mesh["double_sided"] is False
     assert mesh["max_triangles"] == 1000
     assert mesh["source_coordinate_space"] == "enu"
+    assert mesh["use_indexed_binary"] is False
+    assert mesh["static_mesh"] is False
+    assert mesh["max_chunk_renderers"] == 1024
+    assert mesh["max_chunk_uploads_per_frame"] == 1
+    assert mesh["max_triangle_uploads_per_frame"] == 2000
+    assert mesh["max_upload_milliseconds_per_frame"] == 8.0
+    assert mesh["static_finalize_delay_seconds"] == 10.0
+    assert mesh["enable_perf_diagnostics"] is True
 
 
 def test_octomap_serialized_as_global_visualization():

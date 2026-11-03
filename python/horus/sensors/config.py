@@ -138,6 +138,12 @@ class CameraWebRtcTransportConfig:
     server_signal_topic: str = "/horus/webrtc/server_signal"
     bitrate_kbps: Optional[int] = None
     framerate: Optional[int] = None
+    minimap_bitrate_kbps: Optional[int] = None
+    minimap_framerate: Optional[int] = None
+    teleop_bitrate_kbps: Optional[int] = None
+    teleop_framerate: Optional[int] = None
+    minimap_priority: Optional[int] = None
+    teleop_priority: Optional[int] = None
     stun_server_url: Optional[str] = None
     turn_server_url: Optional[str] = None
     turn_username: Optional[str] = None
@@ -154,6 +160,18 @@ class CameraWebRtcTransportConfig:
         }
         _put_if_set(payload, "webrtc_bitrate_kbps", None if self.bitrate_kbps is None else int(self.bitrate_kbps))
         _put_if_set(payload, "webrtc_framerate", None if self.framerate is None else int(self.framerate))
+        for key, value, low, high in (
+            ("minimap_bitrate_kbps", self.minimap_bitrate_kbps, 100, 100000),
+            ("minimap_framerate", self.minimap_framerate, 1, 60),
+            ("teleop_bitrate_kbps", self.teleop_bitrate_kbps, 100, 100000),
+            ("teleop_framerate", self.teleop_framerate, 1, 60),
+            ("minimap_priority", self.minimap_priority, 1, 16),
+            ("teleop_priority", self.teleop_priority, 1, 16),
+        ):
+            if value is not None:
+                if type(value) is not int or not low <= value <= high:
+                    raise ValueError(f"{key} must be an integer in {low}..{high}")
+                payload["webrtc_" + key] = value
         _put_if_set(payload, "webrtc_stun_server_url", self.stun_server_url)
         _put_if_set(payload, "webrtc_turn_server_url", self.turn_server_url)
         _put_if_set(payload, "webrtc_turn_username", self.turn_username)

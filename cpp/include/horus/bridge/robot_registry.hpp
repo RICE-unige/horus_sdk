@@ -5,6 +5,8 @@
 #include "horus/robot/robot.hpp"
 #include <any>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -47,6 +49,12 @@ struct CameraConfigPayload {
     std::string webrtc_server_signal_topic{"/horus/webrtc/server_signal"};
     int webrtc_bitrate_kbps{2000};
     int webrtc_framerate{30};
+    int webrtc_minimap_bitrate_kbps{0};
+    int webrtc_minimap_framerate{0};
+    int webrtc_minimap_priority{0};
+    int webrtc_teleop_priority{0};
+    int webrtc_teleop_bitrate_kbps{0};
+    int webrtc_teleop_framerate{0};
     std::string webrtc_stun_server_url{"stun:stun.l.google.com:19302"};
     std::string webrtc_turn_server_url;
     std::string webrtc_turn_username;
@@ -110,6 +118,9 @@ struct VisualizationPayload {
     std::map<std::string, std::any> mesh;
     std::map<std::string, std::any> octomap;
     std::map<std::string, std::any> semantic_box;
+    std::optional<std::string> transport_lane;
+    std::map<std::string, std::any> costmap;
+    std::map<std::string, std::any> remote_render;
 };
 
 struct RobotManagerSectionsPayload {
@@ -146,6 +157,7 @@ struct WorkspaceConfigPayload {
     std::optional<float> position_scale;
     std::map<std::string, std::any> compass;
     std::map<std::string, std::any> tutorial;
+    std::map<std::string, std::any> experiment;
 };
 
 struct TeleopControlPayload {
@@ -202,11 +214,19 @@ struct RobotRegistrationPayload {
     std::map<std::string, std::any> robot_description_manifest;
     std::optional<std::string> robot_description_payload_json;
     std::optional<std::map<std::string, std::any>> field_teammate_config;
+    std::optional<std::string> teaching_json;
+    std::optional<std::string> controller_hints_json;
+};
+
+struct RegistryOptions {
+    bool auto_launch{true};
+    std::string bridge_executable;
+    std::vector<std::string> bridge_arguments;
 };
 
 class RobotRegistryClient {
 public:
-    RobotRegistryClient();
+    explicit RobotRegistryClient(RegistryOptions options = {});
 
     std::pair<bool, std::map<std::string, std::any>> register_robot(
         robot::Robot& robot,
@@ -229,6 +249,9 @@ public:
         double timeout_sec = 5.0);
 
     bool check_backend_availability() const;
+    // Interrupt a blocking register/keep-alive call. Construct a new client to restart.
+    void stop();
+    std::string status_json() const;
 
     RobotRegistrationPayload build_robot_config_dict(
         const robot::Robot& robot,
@@ -243,8 +266,18 @@ public:
     extract_camera_topic_profiles(const RobotRegistrationPayload& payload) const;
 
 private:
-    bool registration_in_progress_{false};
+    std::pair<bool, std::map<std::string, std::any>> register_payloads(
+        const std::vector<RobotRegistrationPayload>& payloads, double timeout_sec,
+        bool keep_alive, bool show_status);
+    std::shared_ptr<void> runtime();
+    mutable std::mutex runtime_mutex_;
+    std::shared_ptr<void> runtime_;
+    RegistryOptions options_;
+    bool stopped_{false};
 };
+
+// Canonical wire serializer; unsupported std::any values fail instead of disappearing.
+std::string registration_json(const RobotRegistrationPayload& payload);
 
 RobotRegistryClient& get_robot_registry_client();
 

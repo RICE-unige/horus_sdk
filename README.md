@@ -57,28 +57,28 @@ HORUS investigates scalable mixed-reality **multi-robot management by an operato
 | `python/examples/legacy/` | Full legacy fake-runtime and SDK demo catalog preserved for validation and advanced variants |
 | `python/examples/tools/` | Support utilities (asset fetchers, mesh-marker relays, splat fixtures, benchmarks) |
 | `python/tests/` | SDK tests (serialization/state/dashboard behavior) |
-| `cpp/` | C++ native SDK: payload-contract parity across robot/sensors/dataviz/task/teleop/status, experiments, color, description (incl. STL baking), bridge, plugins, plus mirrored examples, benchmarks, and tests |
-| `rust/` | Rust native SDK: payload-contract parity across the same surface, plus mirrored examples, benches, and tests |
+| `cpp/` | C++20 SDK: native registration, models, Teach, mapping, remote rendering, metrics and tested examples |
+| `rust/` | Rust SDK: equivalent native functionality with owned/borrowed buffers and bundled ROS middleware |
 
 > [!NOTE]
 > Python remains the most complete and actively used track for current experiments.
 
 ## Native SDKs (C++/Rust)
 
-The C++ and Rust SDKs are at **payload-contract parity** with Python, not thin registration shims. Both build the same MR-facing typed payloads across:
+The C++ and Rust SDKs provide **native live registration** when built with ROS support. Both build typed MR-facing configuration for:
 - `robot/` (`sensors`, `dataviz`, `task`, `teleop`, `status`) and Robot Manager / workspace / ROS-binding config,
 - `experiments/` (NDJSON/CSV metric writers, monotonic-anchored clock),
 - `color/` colour manager (per-scheme palettes with an MD5-deterministic fallback that matches Python byte-for-byte),
-- `description/` robot-description manifest at structural parity plus native STL visual-mesh baking (binary + ASCII → deduplicated base64 mesh assets, `supports_visual_meshes`),
+- `mapping/` bounded costmap reconstruction and byte-compatible HMSH v2 encoding,
 - `bridge/*` payloads and the `plugins/rosbot` model.
 
 Each native track mirrors the curated Python scenarios by basename under `cpp/examples/` and `rust/examples/`, with benchmarks in `cpp/benchmarks/` and `rust/benches/`, plus full test suites.
 
 Canonical parity contract and fixtures remain in `contracts/sdk_payload_contract.md` and `contracts/fixtures/*.json`.
 
-**Intentional parity boundary (documented scope decisions, not stubs):**
-- Live-bridge registration, ACK, keep-alive, and dashboard monitoring stay **Python-only** by design; native `register_*` returns an explicit unsupported-transport result.
-- DAE/OBJ baking, triangle-budget decimation, texture-colour hints, and `package://` resolution stay Python-only (NumPy + external converters); DAE/OBJ-only or `package://`-only mesh references are skipped rather than baked natively.
+**Full API parity is not complete:**
+- Live registration, ACKs, replay, keep-alive, unregister and owned bridge startup are implemented in the native ROS runtime. No-ROS builds explicitly refuse live registration.
+- Native Teach/MCAP recording, topic monitoring, map adapters, robot models, CUDA point/mesh/Gaussian renderers, ROS media agents, optional GPU-resident NVENC, dataset/atlas helpers, collision-risk analysis and experiment metadata are implemented. See the [implementation matrix](docs/reference/implementation-status.md) for tested scope, language-specific tooling and platform/hardware limits. PC tests do not establish end-to-end Quest or physical-robot acceptance.
 
 Details: [docs/reference/implementation-status.md](docs/reference/implementation-status.md) and [docs/reference/known-limitations.md](docs/reference/known-limitations.md). Native SDK guides: [docs/native-sdk/cpp.md](docs/native-sdk/cpp.md), [docs/native-sdk/rust.md](docs/native-sdk/rust.md), [docs/native-sdk/performance.md](docs/native-sdk/performance.md).
 
@@ -99,6 +99,12 @@ cargo run --example ops_registration
 
 Both `ops_registration` binaries print `HORUS native payload validation OK.`
 
+For live registration, source `/opt/ros/jazzy/setup.bash` and the installed HORUS
+ROS overlay, then build C++ with `-DHORUS_ENABLE_ROS2=ON` or run Rust examples
+with `--features ros2`. Native registration uses real app acknowledgements and
+does not execute the Python SDK. See the language guides for cancellation and
+runtime library distribution.
+
 ## Requirements
 
 - Python **3.10+**
@@ -110,8 +116,7 @@ For WSL, VPN, Docker, or multi-NIC machines, set `HORUS_SDK_ADVERTISE_IP=<reacha
 
 > [!WARNING]
 > `horus_ros2/main` currently includes `GenericClient`-based bridge code that is not available in ROS 2 Humble headers.
-> For this reason, `horus_sdk` CI on Humble validates `horus_interfaces` and `horus_backend` from `horus_ros2` and skips `horus_unity_bridge` packages.
-> Full bridge build validation should be run on Jazzy or a Humble-compatible `horus_ros2` revision.
+> The full installer requires Ubuntu 24.04 / ROS 2 Jazzy and rejects Humble instead of installing an incomplete backend-only runtime. Python-only use with an older bridge requires separate compatibility validation.
 
 ## One-Command Install
 
@@ -138,15 +143,15 @@ Post-install helpers:
 
 See `docs/getting-started/installer.md` for flags and non-interactive usage.
 
-The installer keeps your shell clean (no global venv auto-activation). Use:
-- `python3 <~/horus/sdk/...>` directly (shim auto-routes HORUS scripts to HORUS env)
+The installer keeps your shell clean (no global venv auto-activation or `python3` replacement). Use:
 - `horus-python <script.py>` for SDK scripts
 - `source ~/horus/bin/horus-env` for a session-scoped HORUS environment
 
 Install (development):
 
 ```bash
-python3 -m venv .venv
+source /opt/ros/jazzy/setup.bash
+/usr/bin/python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
@@ -326,12 +331,20 @@ python3 python/examples/pointcloud_map_registration.py
 Use this to showcase the highest-detail synthetic mesh map currently exposed by the examples. This workflow is paired with the real-model robot-description fake runtime, but the focus is the dense mesh map layer. It is intentionally dense and should be used for visual quality/performance validation, not as the first Quest stress test.
 
 ```bash
-# Terminal A: real-model robots plus ultra-dense mesh map
-python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models --map-3d-mode mesh --map-3d-profile realistic --map-3d-mesh-voxel-size 0.07 --map-3d-mesh-max-voxels 220000 --map-3d-mesh-max-triangles 220000 --map-3d-mesh-update-policy snapshot
+# Terminal A: real-model robot TF and demo data
+python3 python/examples/legacy/fake_tf_robot_description_suite.py --robot-profile real_models
 
-# Terminal B: SDK registration
+# Terminal B: spatially chunked Cow & Lady mesh snapshot
+python3 python/examples/tools/ply_to_horus_mesh_marker.py --mode voxel_surface --voxel-size 0.02 --transport indexed_binary --chunk-max-triangles 20000 --republish-interval 0
+
+# Terminal C: SDK registration
 python3 python/examples/mesh_map_registration.py
 ```
+
+For an isolated Quest-side measurement without robot models, cameras, or other
+sensor visualizations, use `python/examples/native_mesh_map_performance_registration.py`.
+The complete three-terminal procedure and OVR Metrics checklist are in
+[`docs/tutorials/global-maps.md`](docs/tutorials/global-maps.md).
 
 ### Remote Dense 3D Maps
 
@@ -343,15 +356,26 @@ uses a connected, depth-discontinuity-aware GPU surface for local stereo
 reprojection; it never receives or stores the multi-million-point source
 geometry.
 
-The paired ROS-compressed RGB-D carrier is the validated default for this
-release. The WebRTC carrier remains available as an experimental opt-in for
-future low-latency work. The curated examples include Sponza and San Miguel
+The current SDK defaults to the `horus.remote_render.v3` WebRTC carrier.
+The paired ROS-compressed RGB-D carrier remains an explicit alternative;
+the legacy v2 protocol defaults to it. Transport defaults are not a guarantee
+of headset latency or visual quality: validate the selected host, codec and
+Quest build together. The curated examples include Sponza and San Miguel
 textured triangle meshes; experimental trained Dr Johnson, Playroom, Train,
 and Truck Gaussian models; a procedural industrial site; Voxblox Cow and
 Lady; and six ETH3D scans. See
 [the remote 3D map guide](python/examples/REMOTE_MAP_RENDERING_DEMO.md) for
 dataset preparation, commands for every scene, profiles, diagnostics,
 licenses, and the SDK API.
+
+For one-command, isolated native and remote mapping checks, see
+[Mapping Visualization Testing](python/examples/MAPPING_VISUALIZATION_TESTING.md).
+Start with `./mapping-demo indexed` from the SDK root; bridge startup is automatic.
+
+To repeat a captured full-detail map without its robot or mapper, use
+`./replay-map /path/to/fixture --check`, then `./replay-map /path/to/fixture`.
+The fixture's original indexed pages and colours are verified before registration;
+no geometry is simplified. Stop another global-map demo before starting the replay.
 
 ### Octomap Map
 

@@ -1,4 +1,6 @@
 #pragma once
+#include <csignal>
+#include <future>
 
 #include "horus/bridge/robot_registry.hpp"
 #include "horus/robot/robot.hpp"
@@ -191,13 +193,13 @@ inline RegistrationSet robot_description_fleet() {
     return set;
 }
 
-inline int register_or_fail(RegistrationSet& set, double workspace_scale = 0.1, bool keep_alive = true) {
-    (void)keep_alive;
+inline int register_or_fail(RegistrationSet& set, double workspace_scale = 0.1, bool keep_alive = true,
+                            horus::bridge::RegistryOptions options = {}) {
     if (set.robots.empty() || set.robots.size() != set.datavizs.size()) {
         std::cerr << "HORUS native payload validation needs matching robots and DataViz entries\n";
         return 1;
     }
-    horus::bridge::RobotRegistryClient client;
+    horus::bridge::RobotRegistryClient client(std::move(options));
     auto global_visualizations = client.build_global_visualizations_payload(set.datavizs);
     for (std::size_t i = 0; i < set.robots.size(); ++i) {
         auto payload = client.build_robot_config_dict(
@@ -210,7 +212,30 @@ inline int register_or_fail(RegistrationSet& set, double workspace_scale = 0.1, 
             return 1;
         }
     }
-    std::cout << "HORUS native payload validation OK. Live registration transport is Python-only for now.\n";
+#if defined(HORUS_ROS2_ENABLED)
+    static volatile std::sig_atomic_t interrupted = 0;
+    interrupted = 0;
+    const auto previous = std::signal(SIGINT, +[](int) { interrupted = 1; });
+    std::vector<Robot*> robots;
+    for (auto& robot : set.robots) robots.push_back(&robot);
+    auto pending = std::async(std::launch::async, [&] {
+        return client.register_robots(robots, set.datavizs, 30, keep_alive, true, workspace_scale);
+    });
+    while (pending.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
+        if (interrupted) { client.stop(); break; }
+    }
+    auto result = pending.get();
+    std::signal(SIGINT, previous);
+    if (!result.first) {
+        const auto error = result.second.find("error");
+        std::cerr << "[HORUS] " << (error != result.second.end() && error->second.type() == typeid(std::string)
+            ? std::any_cast<std::string>(error->second) : "Registration failed") << '\n';
+        return 1;
+    }
+#else
+    (void)keep_alive;
+    std::cout << "HORUS payload validation OK. Build with HORUS_ENABLE_ROS2=ON for live registration.\n";
+#endif
     return 0;
 }
 

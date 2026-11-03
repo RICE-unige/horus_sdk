@@ -17,6 +17,7 @@ set(HORUS_REGISTRATION_EXAMPLES
   carter_registration
   unitree_go1_registration
   uav_sim_horus_registration
+  remote_map_registration
 )
 
 foreach(example_target IN LISTS HORUS_REGISTRATION_EXAMPLES)
@@ -30,9 +31,56 @@ target_link_libraries(fake_tf_publisher PRIVATE horus_cpp_sdk)
 add_executable(e2e_registration_check e2e_registration_check.cpp)
 target_link_libraries(e2e_registration_check PRIVATE horus_cpp_sdk)
 
+add_executable(native_mesh_transport_check native_mesh_transport_check.cpp)
+target_link_libraries(native_mesh_transport_check PRIVATE horus_cpp_sdk)
+
+add_executable(native_teach_transport_check native_teach_transport_check.cpp)
+target_link_libraries(native_teach_transport_check PRIVATE horus_cpp_sdk)
+add_executable(native_costmap_transport_check native_costmap_transport_check.cpp)
+target_link_libraries(native_costmap_transport_check PRIVATE horus_cpp_sdk)
+add_executable(native_model_transport_check native_model_transport_check.cpp)
+target_link_libraries(native_model_transport_check PRIVATE horus_cpp_sdk)
+add_executable(native_mesh_source_check native_mesh_source_check.cpp)
+target_link_libraries(native_mesh_source_check PRIVATE horus_cpp_sdk)
+add_executable(native_remote_gpu_check native_remote_gpu_check.cpp)
+target_link_libraries(native_remote_gpu_check PRIVATE horus_cpp_sdk)
+
+add_executable(native_remote_encode_check native_remote_encode_check.cpp)
+target_link_libraries(native_remote_encode_check PRIVATE horus_cpp_sdk)
+
+add_executable(native_remote_transport_check native_remote_transport_check.cpp)
+target_link_libraries(native_remote_transport_check PRIVATE horus_cpp_sdk)
+add_executable(native_remote_render_agent native_remote_render_agent.cpp)
+target_link_libraries(native_remote_render_agent PRIVATE horus_cpp_sdk)
+target_compile_options(native_remote_transport_check PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
+target_compile_options(native_remote_encode_check PRIVATE $<$<CXX_COMPILER_ID:GNU,Clang>:-UNDEBUG>)
+
+set_target_properties(${HORUS_REGISTRATION_EXAMPLES} fake_tf_publisher e2e_registration_check native_mesh_transport_check native_teach_transport_check native_costmap_transport_check native_model_transport_check native_mesh_source_check native_remote_gpu_check native_remote_encode_check native_remote_transport_check native_remote_render_agent
+  PROPERTIES INSTALL_RPATH "$ORIGIN/../../lib")
+
 install(TARGETS
   ${HORUS_REGISTRATION_EXAMPLES}
   fake_tf_publisher
   e2e_registration_check
+  native_mesh_transport_check
+  native_teach_transport_check
+  native_costmap_transport_check
+  native_model_transport_check
+  native_mesh_source_check
+  native_remote_gpu_check
+  native_remote_encode_check
+  native_remote_transport_check
+  native_remote_render_agent
   RUNTIME DESTINATION bin/examples
 )
+install(FILES remote_render_config.json DESTINATION share/horus_cpp_sdk/examples)
+add_executable(native_gaussian_check native_gaussian_check.cpp)
+target_link_libraries(native_gaussian_check PRIVATE horus_cpp_sdk)
+add_executable(native_device_video_check native_device_video_check.cpp)
+target_link_libraries(native_device_video_check PRIVATE horus_cpp_sdk)
+add_executable(native_dataset_check native_dataset_check.cpp)
+target_link_libraries(native_dataset_check PRIVATE horus_cpp_sdk)
+add_executable(native_collision_check native_collision_check.cpp)
+target_link_libraries(native_collision_check PRIVATE horus_cpp_sdk)
+add_executable(native_atlas_check native_atlas_check.cpp)
+target_link_libraries(native_atlas_check PRIVATE horus_cpp_sdk)

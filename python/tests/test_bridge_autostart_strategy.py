@@ -1,5 +1,6 @@
 """Tests for bridge auto-start strategy selection and diagnostics."""
 
+import pytest
 import horus.bridge.robot_registry as robot_registry
 from horus.bridge.robot_registry import RobotRegistryClient
 from horus.utils import cli
@@ -113,7 +114,8 @@ def test_ensure_bridge_running_logs_prefix_mismatch_warning(monkeypatch):
     assert any("Helper workspace prefix:" in msg for msg in info_messages)
 
 
-def test_ros2_launch_accepts_priority_scheduling_env(monkeypatch):
+@pytest.mark.parametrize("override_config", [False, True])
+def test_ros2_launch_accepts_priority_scheduling_env(monkeypatch, tmp_path, override_config):
     client = _build_client()
     _capture_cli(monkeypatch)
     popen_args = []
@@ -126,6 +128,14 @@ def test_ros2_launch_accepts_priority_scheduling_env(monkeypatch):
             return None
 
     monkeypatch.setenv("HORUS_BRIDGE_ENABLE_PRIORITY_SCHEDULING", "1")
+    extra = []
+    if override_config:
+        config = tmp_path / "relay config.yaml"
+        config.write_text("/**:\n  ros__parameters: {}\n")
+        monkeypatch.setenv("HORUS_BRIDGE_CONFIG", str(config))
+        extra = [f"config_file:={config}"]
+    else:
+        monkeypatch.delenv("HORUS_BRIDGE_CONFIG", raising=False)
     monkeypatch.setattr(robot_registry.shutil, "which", lambda name: "/usr/bin/ros2")
     monkeypatch.setattr(client, "_get_ros2_pkg_prefix_current_shell", lambda pkg: "/home/omotoye/horus_ws/install/horus_unity_bridge")
     monkeypatch.setattr(client, "_is_horus_bridge_port_open", lambda port=10000: True)
@@ -139,5 +149,6 @@ def test_ros2_launch_accepts_priority_scheduling_env(monkeypatch):
         "launch",
         "horus_unity_bridge",
         "unity_bridge.launch.py",
+        *extra,
         "enable_priority_scheduling:=true",
     ]]

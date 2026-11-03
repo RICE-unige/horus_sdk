@@ -20,7 +20,8 @@ enum class RobotType {
     // A person carried into the workspace as a field teammate (e.g. wearing a
     // HoloLens). Never controllable: safety is enforced by the capability
     // contract, not by this tag.
-    HUMAN
+    HUMAN,
+    HUMANOID
 };
 
 /**
@@ -116,7 +117,8 @@ enum class DataSourceType {
     TF_TREE,
     GLOBAL_MARKERS,
     COORDINATE_FRAME,
-    SEMANTIC_BOX
+    SEMANTIC_BOX,
+    REMOTE_RENDER
 };
 
 /**
@@ -139,7 +141,9 @@ enum class VisualizationType {
     VELOCITY_DATA,
     ODOMETRY_TRAIL,
     COLLISION_RISK,
-    HEATMAP
+    HEATMAP,
+    COSTMAP,
+    REMOTE_RENDER
 };
 
 /**

@@ -1,6 +1,11 @@
 #include "horus/bridge/robot_registry.hpp"
+#include "registration_json.hpp"
+#if defined(HORUS_ROS2_ENABLED)
+#include "registry.h"
+#endif
 
 #include "horus/description/mesh_baker.hpp"
+#include "horus/description/resolver.hpp"
 #include "horus/topics.hpp"
 #include <algorithm>
 #include <array>
@@ -110,27 +115,39 @@ float coerce_float(const std::optional<std::any>& value, float default_value) {
     return default_value;
 }
 
-int coerce_int(const std::optional<std::any>& value, int default_value) {
+double coerce_double(const std::optional<std::any>& value, double default_value) {
     if (!value) {
         return default_value;
     }
-    if (value->type() == typeid(int)) {
-        return std::any_cast<int>(*value);
-    }
-    if (value->type() == typeid(double)) {
-        return static_cast<int>(std::any_cast<double>(*value));
-    }
-    if (value->type() == typeid(float)) {
-        return static_cast<int>(std::any_cast<float>(*value));
-    }
-    if (value->type() == typeid(std::string)) {
+    double result = default_value;
+    if (value->type() == typeid(int)) result = std::any_cast<int>(*value);
+    else if (value->type() == typeid(long)) result = static_cast<double>(std::any_cast<long>(*value));
+    else if (value->type() == typeid(long long)) result = static_cast<double>(std::any_cast<long long>(*value));
+    else if (value->type() == typeid(unsigned int)) result = std::any_cast<unsigned int>(*value);
+    else if (value->type() == typeid(unsigned long)) result = static_cast<double>(std::any_cast<unsigned long>(*value));
+    else if (value->type() == typeid(unsigned long long)) result = static_cast<double>(std::any_cast<unsigned long long>(*value));
+    else if (value->type() == typeid(double)) result = std::any_cast<double>(*value);
+    else if (value->type() == typeid(float)) result = std::any_cast<float>(*value);
+    else if (value->type() == typeid(bool)) result = std::any_cast<bool>(*value) ? 1.0 : 0.0;
+    else if (value->type() == typeid(std::string)) {
         try {
-            return std::stoi(std::any_cast<std::string>(*value));
-        } catch (...) {
+            const auto& text = std::any_cast<const std::string&>(*value);
+            std::size_t end = 0;
+            result = std::stod(text, &end);
+            if (text.find_first_not_of(" \t\r\n", end) != std::string::npos) return default_value;
+        } catch (const std::exception&) {
             return default_value;
         }
     }
-    return default_value;
+    return std::isfinite(result) ? result : default_value;
+}
+
+int coerce_int(const std::optional<std::any>& value, int default_value) {
+    // Clamp before conversion: an out-of-range floating-to-integer cast is UB.
+    const auto number = coerce_double(value, default_value);
+    return static_cast<int>(std::clamp(number,
+        static_cast<double>(std::numeric_limits<int>::min()),
+        static_cast<double>(std::numeric_limits<int>::max())));
 }
 
 Vector3Payload coerce_vec3(const std::optional<std::any>& value, const Vector3Payload& default_value) {
@@ -216,6 +233,27 @@ std::string coerce_text(const std::optional<std::any>& value, const std::string&
     return result.empty() ? default_value : result;
 }
 
+void apply_map_transport(VisualizationPayload& payload, const dataviz::RenderOptions& options) {
+    if (payload.type == "costmap") {
+        auto number = [&](const std::string& key, double fallback) {
+            const auto found = options.find(key);
+            if (found == options.end()) return fallback;
+            if (found->second.type() == typeid(double)) return std::any_cast<double>(found->second);
+            return static_cast<double>(coerce_float(found->second, static_cast<float>(fallback)));
+        };
+        payload.costmap = {{"alpha", number("alpha", 0.65)},
+            {"show_unknown_space", coerce_bool(map_get(options,"show_unknown_space"),false)},
+            {"height_offset", number("height_offset", 0.01)}, {"stale_timeout", number("stale_timeout", 5.0)},
+            {"tf_topic", coerce_text(map_get(options,"tf_topic"),"/tf")}};
+    }
+    static const std::set<std::string> map_types{"point_cloud","gaussian_splat","mesh","octomap","occupancy_grid","costmap"};
+    if (!map_types.count(payload.type)) return;
+    auto lane = coerce_text(map_get(options,"transport_lane"),"");
+    std::transform(lane.begin(), lane.end(), lane.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (lane == "strict" || lane == "replaceable" || lane == "bulk_strict" || lane == "bulk_replaceable")
+        payload.transport_lane = lane;
+}
+
 float clamp_float(float value, float min_value, float max_value) {
     return std::max(min_value, std::min(max_value, value));
 }
@@ -224,25 +262,6 @@ int clamp_int(int value, int min_value, int max_value) {
     return std::max(min_value, std::min(max_value, value));
 }
 
-std::string read_text_file(const std::string& path) {
-    std::ifstream stream(path);
-    if (!stream) {
-        return "";
-    }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    return buffer.str();
-}
-
-int count_token(const std::string& text, const std::string& token) {
-    int count = 0;
-    std::size_t pos = 0;
-    while ((pos = text.find(token, pos)) != std::string::npos) {
-        ++count;
-        pos += token.size();
-    }
-    return count;
-}
 
 std::string to_lower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -251,245 +270,6 @@ std::string to_lower(std::string value) {
     return value;
 }
 
-std::uint32_t right_rotate(std::uint32_t value, std::uint32_t bits) {
-    return (value >> bits) | (value << (32U - bits));
-}
-
-std::string sha256_hex(const std::string& input) {
-    static constexpr std::array<std::uint32_t, 64> k{
-        0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
-        0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
-        0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU, 0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
-        0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
-        0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
-        0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
-        0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
-        0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
-
-    std::array<std::uint32_t, 8> h{
-        0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
-        0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U};
-
-    std::vector<std::uint8_t> data(input.begin(), input.end());
-    const auto bit_len = static_cast<std::uint64_t>(data.size()) * 8ULL;
-    data.push_back(0x80U);
-    while ((data.size() % 64U) != 56U) {
-        data.push_back(0U);
-    }
-    for (int shift = 56; shift >= 0; shift -= 8) {
-        data.push_back(static_cast<std::uint8_t>((bit_len >> shift) & 0xffU));
-    }
-
-    for (std::size_t chunk = 0; chunk < data.size(); chunk += 64U) {
-        std::array<std::uint32_t, 64> w{};
-        for (std::size_t i = 0; i < 16U; ++i) {
-            const auto offset = chunk + i * 4U;
-            w[i] = (static_cast<std::uint32_t>(data[offset]) << 24U) |
-                   (static_cast<std::uint32_t>(data[offset + 1U]) << 16U) |
-                   (static_cast<std::uint32_t>(data[offset + 2U]) << 8U) |
-                   static_cast<std::uint32_t>(data[offset + 3U]);
-        }
-        for (std::size_t i = 16U; i < 64U; ++i) {
-            const auto s0 = right_rotate(w[i - 15U], 7U) ^ right_rotate(w[i - 15U], 18U) ^ (w[i - 15U] >> 3U);
-            const auto s1 = right_rotate(w[i - 2U], 17U) ^ right_rotate(w[i - 2U], 19U) ^ (w[i - 2U] >> 10U);
-            w[i] = w[i - 16U] + s0 + w[i - 7U] + s1;
-        }
-
-        auto a = h[0];
-        auto b = h[1];
-        auto c = h[2];
-        auto d = h[3];
-        auto e = h[4];
-        auto f = h[5];
-        auto g = h[6];
-        auto hh = h[7];
-        for (std::size_t i = 0; i < 64U; ++i) {
-            const auto s1 = right_rotate(e, 6U) ^ right_rotate(e, 11U) ^ right_rotate(e, 25U);
-            const auto ch = (e & f) ^ ((~e) & g);
-            const auto temp1 = hh + s1 + ch + k[i] + w[i];
-            const auto s0 = right_rotate(a, 2U) ^ right_rotate(a, 13U) ^ right_rotate(a, 22U);
-            const auto maj = (a & b) ^ (a & c) ^ (b & c);
-            const auto temp2 = s0 + maj;
-            hh = g;
-            g = f;
-            f = e;
-            e = d + temp1;
-            d = c;
-            c = b;
-            b = a;
-            a = temp1 + temp2;
-        }
-        h[0] += a;
-        h[1] += b;
-        h[2] += c;
-        h[3] += d;
-        h[4] += e;
-        h[5] += f;
-        h[6] += g;
-        h[7] += hh;
-    }
-
-    std::ostringstream out;
-    for (const auto word : h) {
-        out << std::hex << std::setw(8) << std::setfill('0') << word;
-    }
-    return out.str();
-}
-
-std::string json_escape(const std::string& value) {
-    std::ostringstream out;
-    for (const auto ch : value) {
-        switch (ch) {
-        case '"':
-            out << "\\\"";
-            break;
-        case '\\':
-            out << "\\\\";
-            break;
-        case '\b':
-            out << "\\b";
-            break;
-        case '\f':
-            out << "\\f";
-            break;
-        case '\n':
-            out << "\\n";
-            break;
-        case '\r':
-            out << "\\r";
-            break;
-        case '\t':
-            out << "\\t";
-            break;
-        default:
-            if (static_cast<unsigned char>(ch) < 0x20U) {
-                out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                    << static_cast<int>(static_cast<unsigned char>(ch));
-            } else {
-                out << ch;
-            }
-        }
-    }
-    return out.str();
-}
-
-std::optional<std::string> extract_xml_attribute(const std::string& tag, const std::string& attribute) {
-    const std::regex pattern("\\b" + attribute + "\\s*=\\s*[\"']([^\"']+)[\"']");
-    std::smatch match;
-    if (std::regex_search(tag, match, pattern) && match.size() > 1U) {
-        return match[1].str();
-    }
-    return std::nullopt;
-}
-
-std::vector<std::string> extract_urdf_link_names(const std::string& urdf) {
-    std::vector<std::string> names;
-    const std::regex pattern("<link\\b[^>]*>");
-    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), pattern);
-         it != std::sregex_iterator();
-         ++it) {
-        if (const auto name = extract_xml_attribute(it->str(), "name")) {
-            names.push_back(*name);
-        }
-    }
-    return names;
-}
-
-struct NativeJoint {
-    std::string name;
-    std::string type;
-    std::string parent_link;
-    std::string child_link;
-};
-
-std::vector<NativeJoint> extract_urdf_joints(const std::string& urdf) {
-    std::vector<NativeJoint> joints;
-    const std::regex joint_pattern("<joint\\b[\\s\\S]*?</joint>");
-    const std::regex parent_pattern("<parent\\b[^>]*>");
-    const std::regex child_pattern("<child\\b[^>]*>");
-    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), joint_pattern);
-         it != std::sregex_iterator();
-         ++it) {
-        const auto block = it->str();
-        const auto name = extract_xml_attribute(block, "name").value_or("");
-        if (name.empty()) {
-            continue;
-        }
-        NativeJoint joint;
-        joint.name = name;
-        joint.type = extract_xml_attribute(block, "type").value_or("fixed");
-        std::smatch parent_match;
-        if (std::regex_search(block, parent_match, parent_pattern)) {
-            joint.parent_link = extract_xml_attribute(parent_match.str(), "link").value_or("");
-        }
-        std::smatch child_match;
-        if (std::regex_search(block, child_match, child_pattern)) {
-            joint.child_link = extract_xml_attribute(child_match.str(), "link").value_or("");
-        }
-        joints.push_back(joint);
-    }
-    return joints;
-}
-
-int count_urdf_collisions(const std::string& urdf) {
-    int count = 0;
-    const std::regex pattern("<collision\\b");
-    for (auto it = std::sregex_iterator(urdf.begin(), urdf.end(), pattern);
-         it != std::sregex_iterator();
-         ++it) {
-        ++count;
-    }
-    return count;
-}
-
-std::string build_native_robot_description_payload_json(
-    const robot::Robot& robot,
-    const std::string& urdf,
-    const std::string& base_frame,
-    const std::vector<description::MeshAsset>& mesh_assets) {
-    const auto links = extract_urdf_link_names(urdf);
-    const auto joints = extract_urdf_joints(urdf);
-
-    std::ostringstream out;
-    out << "{\"base_frame\":\"" << json_escape(base_frame) << "\",\"joints\":[";
-    for (std::size_t i = 0; i < joints.size(); ++i) {
-        if (i > 0U) {
-            out << ",";
-        }
-        const auto& joint = joints[i];
-        out << "{\"axis_xyz\":[0.0,0.0,1.0],\"child_link\":\"" << json_escape(joint.child_link)
-            << "\",\"name\":\"" << json_escape(joint.name)
-            << "\",\"origin_rpy\":[0.0,0.0,0.0],\"origin_xyz\":[0.0,0.0,0.0],\"parent_link\":\""
-            << json_escape(joint.parent_link) << "\",\"type\":\"" << json_escape(joint.type) << "\"}";
-    }
-    out << "],\"links\":[";
-    for (std::size_t i = 0; i < links.size(); ++i) {
-        if (i > 0U) {
-            out << ",";
-        }
-        out << "{\"collisions\":[],\"name\":\"" << json_escape(links[i]) << "\"}";
-    }
-    out << "],\"robot_name\":\"" << json_escape(robot.get_name()) << "\",\"version\":\"v2\"";
-    if (!mesh_assets.empty()) {
-        out << ",\"mesh_assets\":[";
-        for (std::size_t i = 0; i < mesh_assets.size(); ++i) {
-            if (i > 0U) {
-                out << ",";
-            }
-            const auto& asset = mesh_assets[i];
-            out << "{\"bounds_max\":[" << asset.bounds_max[0] << "," << asset.bounds_max[1] << ","
-                << asset.bounds_max[2] << "],\"bounds_min\":[" << asset.bounds_min[0] << ","
-                << asset.bounds_min[1] << "," << asset.bounds_min[2] << "],\"indices_b64\":\""
-                << asset.indices_b64 << "\",\"mesh_id\":\"" << json_escape(asset.mesh_id)
-                << "\",\"normals_b64\":\"" << asset.normals_b64 << "\",\"positions_b64\":\""
-                << asset.positions_b64 << "\",\"triangle_count\":" << asset.triangle_count
-                << ",\"vertex_count\":" << asset.vertex_count << "}";
-        }
-        out << "]";
-    }
-    out << "}";
-    return out.str();
-}
 
 std::string normalize_point_shape(const std::map<std::string, std::any>& render_options) {
     auto point_shape = to_lower(coerce_text(map_get(render_options, "point_shape"), "square"));
@@ -509,6 +289,99 @@ std::string normalize_map_coordinate_space(
     const std::string& default_space) {
     auto coordinate_space = to_lower(coerce_text(map_get(render_options, "source_coordinate_space"), default_space));
     return coordinate_space == "optical" ? std::string("optical") : std::string("enu");
+}
+
+std::map<std::string, std::any> build_mesh_options(const dataviz::RenderOptions& options) {
+    std::map<std::string, std::any> result = {
+        {"use_vertex_colors", coerce_bool(map_get(options, "use_vertex_colors"), true)},
+        {"alpha", std::clamp(coerce_double(map_get(options, "alpha"), 1.0), 0.0, 1.0)},
+        {"double_sided", coerce_bool(map_get(options, "double_sided"), true)},
+        {"max_triangles", std::max(1000, coerce_int(map_get(options, "max_triangles"), 200000))},
+        {"source_coordinate_space", normalize_map_coordinate_space(options, "enu")},
+        {"use_indexed_binary", coerce_bool(map_get(options, "use_indexed_binary"), true)},
+        {"static_mesh", coerce_bool(map_get(options, "static_mesh"), false)},
+        {"indexed_live", coerce_bool(map_get(options, "indexed_live"), false)},
+        {"max_chunk_renderers", clamp_int(coerce_int(map_get(options, "max_chunk_renderers"), 1024), 8, 1024)},
+        {"max_chunk_uploads_per_frame", clamp_int(coerce_int(map_get(options, "max_chunk_uploads_per_frame"), 2), 1, 32)},
+        {"max_triangle_uploads_per_frame", std::max(2000, coerce_int(map_get(options, "max_triangle_uploads_per_frame"), 20000))},
+        {"max_upload_milliseconds_per_frame", std::clamp(coerce_double(map_get(options, "max_upload_milliseconds_per_frame"), 2.5), 0.25, 8.0)},
+        {"static_finalize_delay_seconds", std::clamp(coerce_double(map_get(options, "static_finalize_delay_seconds"), 0.75), 0.1, 10.0)},
+        {"enable_perf_diagnostics", coerce_bool(map_get(options, "enable_perf_diagnostics"), false)},
+    };
+    if (const auto adaptive = options.find("adaptive"); adaptive != options.end()) {
+        result["adaptive"] = adaptive->second;
+    }
+    if (const auto display = options.find("display"); display != options.end()) {
+        result["display"] = display->second;
+    }
+    return result;
+}
+
+void apply_map_render_options(VisualizationPayload& payload, const dataviz::RenderOptions& options) {
+    if (payload.type == "remote_render") {
+        auto text = [&](const char* key, const char* fallback) { return coerce_text(map_get(options, key), fallback); };
+        auto optional_topic = [&](const char* key, const char* fallback) {
+            return options.contains(key) ? text(key, "") : std::string(fallback);
+        };
+        auto number = [&](const char* key, double fallback) { return coerce_double(map_get(options, key), fallback); };
+        auto integer = [&](const char* key, int fallback) { return coerce_int(map_get(options, key), fallback); };
+        auto protocol = text("protocol_version", "remote_stereo_rgbd_v2");
+        if (protocol != "horus.remote_render.v3") protocol = "remote_stereo_rgbd_v2";
+        const bool v3 = protocol == "horus.remote_render.v3";
+        auto transport = to_lower(text("transport", "ros_compressed"));
+        if (transport != "webrtc") transport = "ros_compressed";
+        const bool webrtc = transport == "webrtc";
+        auto encoder = to_lower(text("encoder", "auto"));
+        if (encoder != "nvenc" && encoder != "x264") encoder = "auto";
+        auto viewer = text("viewer_pose_topic", "/horus/remote_render/viewer_pose");
+        if (viewer.empty() || viewer.front() != '/') viewer = "/horus/remote_render/viewer_pose";
+        payload.remote_render = {
+            {"protocol_version", protocol}, {"transport", transport},
+            {"format_version", std::string(v3 ? (webrtc ? "horus.remote_render.v3.webrtc" : "horus.remote_render.v3.ros")
+                : (webrtc ? "remote_stereo_rgbd_webrtc_v2" : "remote_stereo_rgbd_ros_v2"))},
+            {"viewer_pose_topic", viewer}, {"viewer_pose_rate_hz", std::clamp(number("viewer_pose_rate_hz", 60), 1.0, 120.0)},
+            {"stream_topic", payload.topic},
+            {"frame_data_topic", optional_topic("frame_data_topic", v3 && webrtc ? "" : "/horus/remote_render/frame_data")},
+            {"ros_compressed_topic", text("ros_compressed_topic", "/horus/remote_render/rgbd")},
+            {"client_signal_topic", optional_topic("client_signal_topic", "/horus/webrtc/client_signal")},
+            {"server_signal_topic", optional_topic("server_signal_topic", "/horus/webrtc/server_signal")},
+            {"status_topic", optional_topic("status_topic", "/horus/remote_render/agent_status")},
+            {"encoder", encoder}, {"image_type", std::string(to_lower(text("image_type", "raw")) == "h264" ? "h264" : "raw")},
+            {"bitrate_kbps", std::max(1000, integer("bitrate_kbps", 12000))},
+            {"framerate", std::clamp(integer("framerate", 60), 1, 60)},
+            {"flip_y", coerce_bool(map_get(options, "flip_y"), false)},
+        };
+        if (v3) {
+            auto& out = payload.remote_render;
+            out["session_id"] = text("session_id", "");
+            out["reference_space_id"] = text("reference_space_id", "workspace-local");
+            out["workspace_revision"] = std::max(0, integer("workspace_revision", 0));
+            out["viewport_width"] = std::max(1, integer("viewport_width", 1024));
+            out["viewport_height"] = std::max(1, integer("viewport_height", 1024));
+            out["display_refresh_rate_hz"] = std::max(1.0, number("display_refresh_rate_hz", 72));
+            out["maximum_frame_age_ms"] = std::max(1, integer("maximum_frame_age_ms", 250));
+        }
+    } else if (payload.type == "point_cloud") {
+        auto mode = to_lower(coerce_text(map_get(options, "color_mode"), "rgb"));
+        if (mode != "flat" && mode != "height" && mode != "rgb_height") mode = "rgb";
+        const auto low = coerce_double(map_get(options, "height_min_m"), -1.0);
+        auto high = coerce_double(map_get(options, "height_max_m"), 2.0);
+        if (high <= low) high = low + 3.0;
+        payload.point_cloud["color_mode"] = mode;
+        payload.point_cloud["height_min_m"] = low;
+        payload.point_cloud["height_max_m"] = high;
+    } else if (payload.type == "gaussian_splat") {
+        payload.gaussian_splat["binary_chunks"] = coerce_bool(map_get(options, "binary_chunks"), false);
+        payload.gaussian_splat["preserve_source_detail"] = coerce_bool(map_get(options, "preserve_source_detail"), false);
+    } else if (payload.type == "octomap") {
+        payload.octomap["static_mesh"] = coerce_bool(map_get(options, "static_mesh"), false);
+        const auto frame = coerce_text(map_get(options, "native_frame"), options.contains("native_frame") ? "" : payload.frame.value_or("map"));
+        if (frame.empty()) payload.octomap.erase("native_frame");
+        else payload.octomap["native_frame"] = frame;
+        const auto topic = coerce_text(map_get(options, "native_topic"), options.contains("native_topic") ? "" : "/map_3d_octomap");
+        if (topic.empty()) payload.octomap.erase("native_topic");
+        else payload.octomap["native_topic"] = topic;
+    }
 }
 
 double now_sec() {
@@ -547,6 +420,7 @@ TeleopControlPayload build_teleop_control(const robot::Robot& robot) {
 
     std::set<std::string> allowed_profiles{"wheeled", "legged", "aerial", "drone", "custom"};
     std::string default_profile = robot.get_type_str();
+    if (default_profile == "humanoid") default_profile = "custom";
     if (!allowed_profiles.contains(default_profile)) {
         default_profile = "wheeled";
     }
@@ -572,7 +446,7 @@ TeleopControlPayload build_teleop_control(const robot::Robot& robot) {
     }
 
     TeleopControlPayload payload;
-    payload.enabled = coerce_bool(map_get(metadata, "enabled"), true);
+    payload.enabled = coerce_bool(map_get(metadata, "enabled"), robot.get_type_str() != "humanoid");
     payload.command_topic = coerce_text(map_get(metadata, "command_topic"), robot.resolve_topic("cmd_vel"));
     payload.raw_input_topic = coerce_text(
         map_get(metadata, "raw_input_topic"),
@@ -626,7 +500,7 @@ TaskControlPayload build_task_control(const robot::Robot& robot) {
 
     TaskControlPayload payload;
     payload.go_to_point = {
-        {"enabled", coerce_bool(map_get(go, "enabled"), true)},
+        {"enabled", coerce_bool(map_get(go, "enabled"), robot.get_type_str() != "humanoid")},
         {"goal_topic", coerce_text(map_get(go, "goal_topic"), robot.resolve_topic("goal_pose"))},
         {"cancel_topic", coerce_text(map_get(go, "cancel_topic"), robot.resolve_topic("goal_cancel"))},
         {"status_topic", coerce_text(map_get(go, "status_topic"), robot.resolve_topic("goal_status"))},
@@ -635,9 +509,10 @@ TaskControlPayload build_task_control(const robot::Robot& robot) {
         {"yaw_tolerance_deg", clamp_float(coerce_float(map_get(go, "yaw_tolerance_deg"), 12.0f), 0.1f, 180.0f)},
         {"min_altitude_m", min_altitude},
         {"max_altitude_m", max_altitude},
+        {"allow_unbounded_placement", coerce_bool(map_get(go, "allow_unbounded_placement"), false)},
     };
     payload.waypoint = {
-        {"enabled", coerce_bool(map_get(waypoint, "enabled"), true)},
+        {"enabled", coerce_bool(map_get(waypoint, "enabled"), robot.get_type_str() != "humanoid")},
         {"path_topic", coerce_text(map_get(waypoint, "path_topic"), robot.resolve_topic("waypoint_path"))},
         {"status_topic", coerce_text(map_get(waypoint, "status_topic"), robot.resolve_topic("waypoint_status"))},
         {"frame_id", coerce_text(map_get(waypoint, "frame_id"), "map")},
@@ -651,185 +526,163 @@ std::map<std::string, std::any> build_robot_description_manifest(
     const robot::Robot& robot,
     const std::map<std::string, std::any>& config,
     std::optional<std::string>* payload_json = nullptr) {
-    if (!coerce_bool(map_get(config, "enabled"), true)) {
-        return {};
+    if (!coerce_bool(map_get(config, "enabled"), true)) return {};
+    auto options = metadata_json(config);
+    options["robot_name"] = robot.get_name();
+    if (const auto& dimensions = robot.get_dimensions()) {
+        options["mesh_proxy_size"] = {
+            std::clamp(dimensions->length * 0.35, 0.05, 0.35),
+            std::clamp(dimensions->width * 0.35, 0.05, 0.30),
+            std::clamp((dimensions->height > 0 ? dimensions->height : 0.2) * 0.25, 0.05, 0.30)};
     }
-    const auto urdf_path = coerce_text(map_get(config, "urdf_path"), "");
-    if (urdf_path.empty()) {
-        return {};
-    }
-
-    const auto urdf = read_text_file(urdf_path);
-    if (urdf.empty()) {
-        return {};
-    }
-    const auto base_frame = coerce_text(map_get(config, "base_frame"), "base_link");
-    const auto source = coerce_text(map_get(config, "source"), "ros");
-    const auto chunk_size = clamp_int(coerce_int(map_get(config, "chunk_size_bytes"), 12000), 1024, 64000);
-    const auto links = extract_urdf_link_names(urdf);
-    const auto joints = extract_urdf_joints(urdf);
-    const auto collision_count = count_urdf_collisions(urdf);
-    auto body_mesh_mode = to_lower(coerce_text(map_get(config, "body_mesh_mode"), "preview_mesh"));
-    if (body_mesh_mode != "collision_only" && body_mesh_mode != "preview_mesh" &&
-        body_mesh_mode != "runtime_high_mesh") {
-        body_mesh_mode = "preview_mesh";
-    }
-
-    const bool include_visual_meshes =
-        coerce_bool(map_get(config, "include_visual_meshes"), true) && body_mesh_mode != "collision_only";
-    std::vector<description::MeshAsset> mesh_assets;
-    if (include_visual_meshes) {
-        mesh_assets = description::bake_visual_meshes(urdf, urdf_path);
-    }
-    std::size_t mesh_asset_encoded_bytes = 0;
-    for (const auto& asset : mesh_assets) {
-        mesh_asset_encoded_bytes += asset.encoded_bytes();
-    }
-
-    const auto description_payload =
-        build_native_robot_description_payload_json(robot, urdf, base_frame, mesh_assets);
-
-    if (payload_json != nullptr && description_payload.size() <= 250000U) {
-        *payload_json = description_payload;
-    }
-
-    return {
-        {"version", std::string("v2")},
-        {"description_id", std::string("sha256:") + sha256_hex(description_payload)},
-        {"source", source},
-        {"base_frame", base_frame},
-        {"link_count", static_cast<int>(links.size())},
-        {"joint_count", static_cast<int>(joints.size())},
-        {"collision_count", collision_count},
-        {"supports_collision", collision_count > 0},
-        {"supports_joints", !joints.empty()},
-        {"supports_visual_meshes", !mesh_assets.empty()},
-        {"mesh_asset_count", static_cast<int>(mesh_assets.size())},
-        {"mesh_asset_encoded_bytes", static_cast<int>(mesh_asset_encoded_bytes)},
-        {"is_transparent", coerce_bool(map_get(config, "is_transparent"), false)},
-        {"encoding", std::string("json+gzip+base64")},
-        {"chunk_size_bytes", chunk_size},
-        {"body_mesh_mode", body_mesh_mode},
-    };
+    const auto artifact = description::resolve(options);
+    if (payload_json) *payload_json = artifact.payload_json;
+    auto manifest = std::any_cast<std::map<std::string, std::any>>(json_any(artifact.manifest));
+    for (const auto* key : {"link_count", "joint_count", "collision_count", "mesh_asset_count", "mesh_asset_encoded_bytes", "chunk_size_bytes"})
+        manifest[key] = artifact.manifest.at(key).get<int>();
+    return manifest;
 }
 
 } // namespace
 
-RobotRegistryClient::RobotRegistryClient() = default;
+RobotRegistryClient::RobotRegistryClient(RegistryOptions options) : options_(std::move(options)) {}
+
+std::shared_ptr<void> RobotRegistryClient::runtime() {
+    std::lock_guard<std::mutex> guard(runtime_mutex_);
+    if (stopped_) throw std::runtime_error("Registry stopped; create a new client to restart");
+#if defined(HORUS_ROS2_ENABLED)
+    if (!runtime_) {
+        char* error = nullptr;
+        const nlohmann::json options = {{"auto_launch", options_.auto_launch},
+            {"bridge_executable", options_.bridge_executable}, {"bridge_arguments", options_.bridge_arguments}};
+        void* handle = horus_native_create_with_options(options.dump().c_str(), &error);
+        std::unique_ptr<char, decltype(&horus_native_free)> message(error, horus_native_free);
+        if (!handle) throw std::runtime_error(error ? error : "Failed to initialize native ROS context");
+        runtime_ = std::shared_ptr<void>(handle, horus_native_destroy);
+    }
+    return runtime_;
+#else
+    throw std::runtime_error("Build with HORUS_ENABLE_ROS2=ON and source ROS 2 for live registration");
+#endif
+}
+
+namespace {
+#if defined(HORUS_ROS2_ENABLED)
+nlohmann::json native_result(char* value) {
+    std::unique_ptr<char, decltype(&horus_native_free)> owned(value, horus_native_free);
+    if (!value) throw std::runtime_error("Native runtime could not allocate a result");
+    return nlohmann::json::parse(value);
+}
+#endif
+void apply_ack(robot::Robot& robot, const nlohmann::json& ack) {
+    if (!ack.value("success", false)) return;
+    robot.add_metadata("horus_registered", true);
+    robot.add_metadata("horus_robot_id", ack.value("robot_id", robot.get_name()));
+    robot.add_metadata("horus_color", ack.value("assigned_color", ack.value("color", std::string{})));
+}
+}
+
+std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_payloads(
+    const std::vector<RobotRegistrationPayload>& payloads, double timeout_sec, bool keep_alive, bool show_status) {
+    try {
+        nlohmann::json encoded = nlohmann::json::array();
+        for (const auto& payload : payloads) {
+            if (const auto error = validate_field_teammate_safety(payload)) throw std::invalid_argument(*error);
+            encoded.push_back(payload_json(payload));
+        }
+#if defined(HORUS_ROS2_ENABLED)
+        const auto handle = runtime();
+        const auto result = native_result(horus_native_register(handle.get(), encoded.dump().c_str(), timeout_sec, keep_alive, show_status));
+        return {result.value("success", false), std::any_cast<std::map<std::string, std::any>>(json_any(result))};
+#else
+        return {false, {{"success", false}, {"unsupported_feature", std::string("bridge_registration")},
+            {"error", std::string("Build with HORUS_ENABLE_ROS2=ON and source ROS 2 for live registration")}}};
+#endif
+    } catch (const std::exception& error) {
+        return {false, {{"success", false}, {"error", std::string(error.what())}}};
+    }
+}
 
 std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_robot(
-    robot::Robot& robot,
-    const robot::DataViz& dataviz,
-    double timeout_sec,
-    bool keep_alive,
-    bool show_dashboard,
-    std::optional<double> workspace_scale) {
-    if (registration_in_progress_) {
-        return {false, {{"error", std::string("Registration already in progress")}}};
-    }
-    registration_in_progress_ = true;
-
-    const auto global_visualizations = build_global_visualizations_payload({dataviz});
-    auto payload =
-        build_robot_config_dict(robot, dataviz, global_visualizations, workspace_scale);
-
-    registration_in_progress_ = false;
-    return {
-        false,
-        {
-            {"success", false},
-            {"error",
-             std::string(
-                 "C++ live registration transport is not implemented; use build_robot_config_dict "
-                 "to generate a payload, or use the Python SDK for live HORUS registration.")},
-            {"unsupported_feature", std::string("bridge_registration")},
-            {"robot_name", robot.get_name()},
-            {"payload", payload},
-            {"timeout_sec", timeout_sec},
-            {"keep_alive", keep_alive},
-            {"show_dashboard", show_dashboard},
+    robot::Robot& robot, const robot::DataViz& dataviz, double timeout_sec, bool keep_alive,
+    bool show_dashboard, std::optional<double> workspace_scale) {
+    try {
+        const auto payload = build_robot_config_dict(robot, dataviz, build_global_visualizations_payload({dataviz}), workspace_scale);
+        auto result = register_payloads({payload}, timeout_sec, keep_alive, show_dashboard);
+        if (result.first) {
+            const auto value = metadata_json(result.second);
+            apply_ack(robot, value.contains("registrations") ? value["registrations"].at(robot.get_name()) : value);
         }
-    };
+        return result;
+    } catch (const std::exception& error) {
+        return {false, {{"success", false}, {"error", std::string(error.what())}}};
+    }
 }
 
 std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::register_robots(
-    std::vector<robot::Robot*>& robots,
-    std::vector<robot::DataViz> datavizs,
-    double timeout_sec,
-    bool keep_alive,
-    bool show_dashboard,
-    std::optional<double> workspace_scale) {
-    if (registration_in_progress_) {
-        return {false, {{"error", std::string("Registration already in progress")}}};
-    }
-    registration_in_progress_ = true;
-
-    if (datavizs.empty()) {
-        datavizs.reserve(robots.size());
+    std::vector<robot::Robot*>& robots, std::vector<robot::DataViz> datavizs, double timeout_sec,
+    bool keep_alive, bool show_dashboard, std::optional<double> workspace_scale) {
+    try {
         for (const auto* robot : robots) {
-            if (!robot) {
-                registration_in_progress_ = false;
-                return {false, {{"error", std::string("Null robot pointer")}}};
-            }
-            datavizs.push_back(*robot->create_dataviz());
+            if (!robot) throw std::invalid_argument("Null robot pointer");
         }
-    }
-
-    if (datavizs.size() != robots.size()) {
-        registration_in_progress_ = false;
-        return {false, {{"error", std::string("Robot/dataviz length mismatch")}}};
-    }
-
-    const auto global_visualizations = build_global_visualizations_payload(datavizs);
-    std::vector<RobotRegistrationPayload> payloads;
-    payloads.reserve(robots.size());
-
-    for (std::size_t i = 0; i < robots.size(); ++i) {
-        auto* robot = robots[i];
-        if (!robot) {
-            registration_in_progress_ = false;
-            return {false, {{"error", std::string("Null robot pointer")}}};
+        if (datavizs.empty()) {
+            for (const auto* robot : robots) datavizs.push_back(*robot->create_dataviz());
         }
-        auto payload =
-            build_robot_config_dict(*robot, datavizs[i], global_visualizations, workspace_scale);
-        payloads.push_back(std::move(payload));
-    }
-
-    registration_in_progress_ = false;
-    return {
-        false,
-        {
-            {"success", false},
-            {"error",
-             std::string(
-                 "C++ live registration transport is not implemented; use build_robot_config_dict "
-                 "to generate payloads, or use the Python SDK for live HORUS registration.")},
-            {"unsupported_feature", std::string("bridge_registration")},
-            {"payloads", payloads},
-            {"timeout_sec", timeout_sec},
-            {"keep_alive", keep_alive},
-            {"show_dashboard", show_dashboard},
+        if (datavizs.size() != robots.size()) throw std::invalid_argument("Robot/dataviz length mismatch");
+        const auto globals = build_global_visualizations_payload(datavizs);
+        std::vector<RobotRegistrationPayload> payloads;
+        payloads.reserve(robots.size());
+        for (std::size_t i = 0; i < robots.size(); ++i)
+            payloads.push_back(build_robot_config_dict(*robots[i], datavizs[i], globals, workspace_scale));
+        auto result = register_payloads(payloads, timeout_sec, keep_alive, show_dashboard);
+        const auto value = metadata_json(result.second);
+        for (auto* robot : robots) {
+            if (value.contains("registrations") && value["registrations"].contains(robot->get_name()))
+                apply_ack(*robot, value["registrations"].at(robot->get_name()));
+            else if (result.first && value.value("robot_name", std::string{}) == robot->get_name()) apply_ack(*robot, value);
         }
-    };
+        return result;
+    } catch (const std::exception& error) {
+        return {false, {{"success", false}, {"error", std::string(error.what())}}};
+    }
 }
 
 std::pair<bool, std::map<std::string, std::any>> RobotRegistryClient::unregister_robot(
-    const std::string& robot_id,
-    double timeout_sec) {
-    return {
-        false,
-        {
-            {"success", false},
-            {"error", std::string("C++ live registration transport is not implemented; no HORUS backend unregister was sent.")},
-            {"unsupported_feature", std::string("bridge_registration")},
-            {"robot_id", robot_id},
-            {"timeout_sec", timeout_sec},
-        }
-    };
+    const std::string& robot_id, double timeout_sec) {
+#if defined(HORUS_ROS2_ENABLED)
+    try {
+        const auto handle = runtime();
+        const auto value = native_result(horus_native_unregister(handle.get(), robot_id.c_str(), timeout_sec));
+        return {value.value("success", false), std::any_cast<std::map<std::string, std::any>>(json_any(value))};
+    } catch (const std::exception& error) {
+        return {false, {{"success", false}, {"error", std::string(error.what())}}};
+    }
+#else
+    return {false, {{"success", false}, {"unsupported_feature", std::string("bridge_registration")},
+        {"error", std::string("Live unregister requires a ROS 2 enabled build")}}};
+#endif
+}
+
+void RobotRegistryClient::stop() {
+    std::lock_guard<std::mutex> guard(runtime_mutex_);
+    stopped_ = true;
+#if defined(HORUS_ROS2_ENABLED)
+    if (runtime_) horus_native_stop(runtime_.get());
+#endif
+}
+
+std::string RobotRegistryClient::status_json() const {
+    std::lock_guard<std::mutex> guard(runtime_mutex_);
+#if defined(HORUS_ROS2_ENABLED)
+    if (runtime_) return native_result(horus_native_status(runtime_.get())).dump();
+#endif
+    return nlohmann::json{{"app_connected",false},{"registration_subscribers",0},
+        {"initialized",false},{"stopped",stopped_}}.dump();
 }
 
 bool RobotRegistryClient::check_backend_availability() const {
-    return false;
+    return nlohmann::json::parse(status_json()).value("registration_subscribers", 0U) > 0;
 }
 
 RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
@@ -1030,6 +883,16 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
                     ? std::optional<std::any>(metadata.at("webrtc_framerate"))
                     : std::nullopt,
                 camera->get_fps());
+            const auto media_profile_value = [&metadata](const char* name) {
+                return coerce_int(metadata.contains(name)
+                    ? std::optional<std::any>(metadata.at(name)) : std::nullopt, 0);
+            };
+            camera_payload.webrtc_minimap_bitrate_kbps = media_profile_value("webrtc_minimap_bitrate_kbps");
+            camera_payload.webrtc_minimap_framerate = media_profile_value("webrtc_minimap_framerate");
+            camera_payload.webrtc_minimap_priority = media_profile_value("webrtc_minimap_priority");
+            camera_payload.webrtc_teleop_priority = media_profile_value("webrtc_teleop_priority");
+            camera_payload.webrtc_teleop_bitrate_kbps = media_profile_value("webrtc_teleop_bitrate_kbps");
+            camera_payload.webrtc_teleop_framerate = media_profile_value("webrtc_teleop_framerate");
             camera_payload.webrtc_stun_server_url =
                 metadata.contains("webrtc_stun_server_url")
                     ? any_to_string(metadata.at("webrtc_stun_server_url"))
@@ -1146,6 +1009,7 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
             }
         }
 
+        apply_map_transport(visualization_payload, visualization.render_options);
         if (visualization_payload.type == "path") {
             const auto source_type = core::data_source_type_to_string(visualization.data_source.source_type);
             if (source_type == "robot_global_path") {
@@ -1309,14 +1173,7 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
 
         if (visualization_payload.type == "mesh") {
-            auto coordinate_space = normalize_map_coordinate_space(visualization.render_options, "enu");
-            visualization_payload.mesh = {
-                {"use_vertex_colors", coerce_bool(map_get(visualization.render_options, "use_vertex_colors"), true)},
-                {"alpha", clamp_float(coerce_float(map_get(visualization.render_options, "alpha"), 1.0f), 0.0f, 1.0f)},
-                {"double_sided", coerce_bool(map_get(visualization.render_options, "double_sided"), true)},
-                {"max_triangles", std::max(1000, coerce_int(map_get(visualization.render_options, "max_triangles"), 200000))},
-                {"source_coordinate_space", coordinate_space},
-            };
+            visualization_payload.mesh = build_mesh_options(visualization.render_options);
         }
 
         if (visualization_payload.type == "octomap") {
@@ -1349,6 +1206,7 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
             }
         }
 
+        apply_map_render_options(visualization_payload, visualization.render_options);
         if (visualization_payload.scope == "global") {
             fallback_global.push_back(visualization_payload);
         } else {
@@ -1450,6 +1308,15 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         }
     }
 
+    if (const auto value = robot.get_metadata("workspace_experiment_config")) {
+        const auto cfg = any_to_map(*value).value_or(std::map<std::string,std::any>{});
+        if (map_get(cfg,"enabled")) {
+            auto workspace=payload.workspace_config.value_or(WorkspaceConfigPayload{});
+            workspace.experiment={{"enabled",coerce_bool(map_get(cfg,"enabled"),false)},
+                {"contract_version",coerce_text(map_get(cfg,"contract_version"),"experiment.v1")}};
+            payload.workspace_config=workspace;
+        }
+    }
     if (const auto body_value = robot.get_metadata("local_body_model_config")) {
         const auto body_cfg = any_to_map(*body_value).value_or(std::map<std::string, std::any>{});
         const auto body_enabled = coerce_bool(map_get(body_cfg, "enabled"), false);
@@ -1476,13 +1343,7 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
     // Entity capability contract (capability-driven, default-deny safety). The
     // MR runtime gates command paths on these flags rather than inferring
     // permission from robot_type.
-    payload.entity_kind = "robot";
-    if (const auto kind_value = robot.get_metadata("entity_kind")) {
-        if (kind_value->type() == typeid(std::string) &&
-            std::any_cast<std::string>(*kind_value) == "field_teammate") {
-            payload.entity_kind = "field_teammate";
-        }
-    }
+    payload.entity_kind = robot.get_entity_kind();
 
     payload.capabilities = payload.entity_kind == "field_teammate"
                                ? EntityCapabilitiesPayload{false, false, false, true, true, true}
@@ -1501,6 +1362,31 @@ RobotRegistrationPayload RobotRegistryClient::build_robot_config_dict(
         if (auto ft_map = any_to_map(*ft_value)) {
             payload.field_teammate_config = std::move(*ft_map);
         }
+    }
+
+    if (const auto config = robot.get_metadata("controller_hints"))
+        payload.controller_hints_json = horus::ControllerHints::from_dict(any_json(*config)).to_dict().dump();
+
+    if (const auto config = robot.get_metadata("teaching_config")) {
+        if (robot.get_type_str() != "humanoid" || payload.entity_kind != "robot")
+            throw std::invalid_argument("Teach requires a humanoid robot");
+        horus::teaching::TeachConfig validated(any_json(*config));
+        for (const auto& camera : validated.to_dict().at("cameras")) {
+            const auto name = camera.at("sensor_id").get<std::string>();
+            if (std::none_of(payload.sensors.begin(), payload.sensors.end(), [&](const auto& s) { return s.type == "camera" && s.name == name; }))
+                throw std::invalid_argument("Every Teach camera must reference a registered camera sensor");
+        }
+        payload.teaching_json = validated.registration(robot.get_name()).dump();
+    }
+
+    if (payload.entity_kind == "workspace_visualization") {
+        payload.capabilities = {false, false, false, false, false, false};
+        payload.robot_manager_config = {false, "", "", {false, false, false, false}};
+        payload.control.drive_topic.clear();
+        payload.control.teleop = TeleopControlPayload{.enabled = false};
+        payload.control.tasks = {{{"enabled", false}}, {{"enabled", false}}};
+        payload.sensors.clear();
+        payload.visualizations.clear();
     }
 
     return payload;
@@ -1530,6 +1416,7 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                     payload.color = *color;
                 }
             }
+            apply_map_transport(payload, visualization.render_options);
             if (payload.type == "occupancy_grid") {
                 OccupancyPayload occupancy;
                 bool has_occupancy = false;
@@ -1630,14 +1517,7 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                 }
             }
             if (payload.type == "mesh") {
-                auto coordinate_space = normalize_map_coordinate_space(visualization.render_options, "enu");
-                payload.mesh = {
-                    {"use_vertex_colors", coerce_bool(map_get(visualization.render_options, "use_vertex_colors"), true)},
-                    {"alpha", clamp_float(coerce_float(map_get(visualization.render_options, "alpha"), 1.0f), 0.0f, 1.0f)},
-                    {"double_sided", coerce_bool(map_get(visualization.render_options, "double_sided"), true)},
-                    {"max_triangles", std::max(1000, coerce_int(map_get(visualization.render_options, "max_triangles"), 200000))},
-                    {"source_coordinate_space", coordinate_space},
-                };
+                payload.mesh = build_mesh_options(visualization.render_options);
             }
             if (payload.type == "octomap") {
                 auto render_mode = normalize_octomap_render_mode(visualization.render_options);
@@ -1674,6 +1554,7 @@ std::vector<VisualizationPayload> RobotRegistryClient::build_global_visualizatio
                           coerce_text(map_get(payload.semantic_box, "id"), payload.topic),
                           payload.frame.value_or(""))
                     : std::make_tuple(payload.type, payload.topic, payload.frame.value_or(""));
+            apply_map_render_options(payload, visualization.render_options);
             if (seen.insert(key).second) {
                 global.push_back(payload);
             }

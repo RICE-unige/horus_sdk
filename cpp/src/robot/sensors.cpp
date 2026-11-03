@@ -173,6 +173,12 @@ void Camera::configure_webrtc_transport(const WebRtcTransportOptions& options) {
     metadata_["webrtc_server_signal_topic"] = options.server_signal_topic;
     put_optional(metadata_, "webrtc_bitrate_kbps", options.bitrate_kbps);
     put_optional(metadata_, "webrtc_framerate", options.framerate);
+    put_optional(metadata_, "webrtc_minimap_bitrate_kbps", options.minimap_bitrate_kbps);
+    put_optional(metadata_, "webrtc_minimap_framerate", options.minimap_framerate);
+    put_optional(metadata_, "webrtc_teleop_bitrate_kbps", options.teleop_bitrate_kbps);
+    put_optional(metadata_, "webrtc_teleop_framerate", options.teleop_framerate);
+    put_optional(metadata_, "webrtc_minimap_priority", options.minimap_priority);
+    put_optional(metadata_, "webrtc_teleop_priority", options.teleop_priority);
     put_optional(metadata_, "webrtc_stun_server_url", options.stun_server_url);
     put_optional(metadata_, "webrtc_turn_server_url", options.turn_server_url);
     put_optional(metadata_, "webrtc_turn_username", options.turn_username);

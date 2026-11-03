@@ -421,7 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--video-profile",
-        choices=("app", "balanced", "fast60", "hd720"),
+        choices=("app", "balanced", "fast60", "hd720", "mapping"),
         default=DEFAULT_LIVE_VIDEO_PROFILE,
         help=f"Live HoloLens video profile. Default: {DEFAULT_LIVE_VIDEO_PROFILE}.",
     )

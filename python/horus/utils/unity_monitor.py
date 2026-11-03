@@ -1,189 +1,150 @@
-"""Unity MR Connection Monitor (Unity client -> horus_unity_bridge server)"""
+"""Observe TCP peers. This does not establish HORUS app or workspace readiness."""
 
+import ipaddress
 import logging
 import subprocess
 import threading
 import time
-from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 
+def _endpoint(value):
+    host, separator, port = value.rpartition(":")
+    if not separator or not port.isdigit():
+        return None
+    host = host.strip("[]")
+    try:
+        host = str(ipaddress.ip_address(host))
+    except ValueError:
+        return None
+    return host, int(port)
+
+
+def _peers(output, port, *, netstat=False):
+    peers = set()
+    for line in output.splitlines():
+        fields = line.split()
+        if netstat:
+            if len(fields) < 6 or fields[5] != "ESTABLISHED":
+                continue
+        elif len(fields) < 5 or fields[0] != "ESTAB":
+            continue
+        local, remote = _endpoint(fields[3]), _endpoint(fields[4])
+        if local and remote and local[1] == port:
+            peers.add(remote[0])
+    return peers
+
+
 class UnityConnectionMonitor:
-    """Monitor Unity MR connections to the horus_unity_bridge TCP server"""
+    """Legacy API name retained; connected means an observed server-side TCP peer."""
 
-    def __init__(self, unity_port: int = 10000, disconnect_grace_s: float = 3.0):
+    def __init__(self, unity_port=10000, disconnect_grace_s=3.0):
         self.unity_port = unity_port
-        self.disconnect_grace_s = disconnect_grace_s
+        self.disconnect_grace_s = max(0.0, disconnect_grace_s)
         self.is_monitoring = False
-        self.monitor_thread: Optional[threading.Thread] = None
-        self.connection_callback: Optional[Callable[[str, bool], None]] = None
-        self.connected_clients: set[str] = set()
-        self._last_seen: dict[str, float] = {}
-        self.log_process: Optional[subprocess.Popen] = None
+        self.monitor_thread = None
+        self.connection_callback = None
+        self.connected_clients = set()
+        self._last_seen = {}
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self.observation_available = False
+        self._last_probe = None
+        self.log_process = None
 
-    def set_connection_callback(self, callback: Callable[[str, bool], None]):
-        """Set callback function for connection events
-
-        Args:
-            callback: Function called with (ip_address, is_connected)
-        """
+    def set_connection_callback(self, callback):
         self.connection_callback = callback
 
     def start_monitoring(self):
-        """Start monitoring Unity connections"""
-        if self.is_monitoring:
+        if self.monitor_thread and self.monitor_thread.is_alive():
             return
-
+        self._stop.clear()
         self.is_monitoring = True
         self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
 
     def stop_monitoring(self):
-        """Stop monitoring Unity connections"""
+        self._stop.set()
         self.is_monitoring = False
-        # Note: log_process is currently always None, placeholder for future use
-        if self.log_process is not None:
-            self.log_process.terminate()
-        if self.monitor_thread:
-            self.monitor_thread.join(timeout=2)
+        if self.monitor_thread and self.monitor_thread is not threading.current_thread():
+            self.monitor_thread.join(timeout=3.0)
+        with self._lock:
+            self.observation_available = False
+            self.connected_clients.clear()
+            self._last_seen.clear()
 
     def _monitor_loop(self):
-        """Main monitoring loop that monitors network connections"""
-        while self.is_monitoring:
-            try:
-                # Monitor network connections directly
+        try:
+            while not self._stop.is_set():
                 self._monitor_network_connections()
-            except Exception:
-                if (
-                    self.is_monitoring
-                ):  # Only log if we're still supposed to be monitoring
-                    logger.debug("Unity connection monitor loop failed", exc_info=True)
+                self._stop.wait(1.0)
+        finally:
+            self.is_monitoring = False
 
-            if self.is_monitoring:
-                time.sleep(1)  # Check every 1 second
+    def _probe(self, command, netstat=False):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=1)
+            if result.returncode == 0:
+                return _peers(result.stdout, self.unity_port, netstat=netstat)
+        except (OSError, subprocess.TimeoutExpired):
+            logger.debug("TCP observation unavailable for %s", command[0], exc_info=True)
+        return None
 
     def _monitor_network_connections(self):
-        """Monitor network connections for Unity TCP Endpoint"""
-        try:
-            # Use ss command to get current connections on Unity port
-            result = subprocess.run(
-                ["ss", "-tn"], capture_output=True, text=True, timeout=5
-            )
-
-            if result.returncode == 0:
-                now = time.time()
-                current_connections = set()
-                for line in result.stdout.split("\n"):
-                    if "ESTAB" in line and f":{self.unity_port}" in line:
-                        # Parse ss output: State Recv-Q Send-Q Local_Address:Port
-                        # Peer_Address:Port
-                        parts = line.split()
-                        if len(parts) >= 5:
-                            local_addr = parts[3]  # Local address:port
-                            peer_addr = parts[4]  # Peer address:port
-
-                            # Check if this is our Unity port (local side)
-                            if f":{self.unity_port}" in local_addr and ":" in peer_addr:
-                                ip = peer_addr.split(":")[0]
-                                # Filter out localhost connections (likely from backend)
-                                if ip not in ["127.0.0.1", "::1", "[::1]"]:
-                                    current_connections.add(ip)
-                                    self._last_seen[ip] = now
-
-                # Check for new connections
-                new_connections = current_connections - self.connected_clients
-                for ip in new_connections:
-                    self.connected_clients.add(ip)
-                    if self.connection_callback:
-                        self.connection_callback(ip, True)
-
-                # Check for disconnections with debounce
-                for ip in list(self.connected_clients):
-                    last_seen = self._last_seen.get(ip, 0)
-                    if now - last_seen > self.disconnect_grace_s:
-                        self.connected_clients.discard(ip)
-                        self._last_seen.pop(ip, None)
-                        if self.connection_callback:
-                            self.connection_callback(ip, False)
-
-        except Exception:
-            # Fallback to netstat if ss fails
-            logger.debug("Unity connection ss probe failed; falling back to netstat", exc_info=True)
-            self._monitor_with_netstat()
+        peers = self._probe(["ss", "-tn"])
+        if peers is None:
+            peers = self._probe(["netstat", "-tn"], netstat=True)
+        self._update_observation(peers)
 
     def _monitor_with_netstat(self):
-        """Alternative monitoring using netstat command"""
-        try:
-            # Use netstat command as fallback
-            result = subprocess.run(
-                ["netstat", "-tn"], capture_output=True, text=True, timeout=5
-            )
+        self._update_observation(self._probe(["netstat", "-tn"], netstat=True))
 
-            if result.returncode == 0:
-                now = time.time()
-                current_connections = set()
-                for line in result.stdout.split("\n"):
-                    if f":{self.unity_port}" in line and "ESTABLISHED" in line:
-                        parts = line.split()
-                        if len(parts) >= 5:
-                            foreign_addr = parts[4]
-                            if ":" in foreign_addr:
-                                ip = foreign_addr.split(":")[0]
-                                # Filter out localhost connections
-                                if ip not in ["127.0.0.1", "::1"]:
-                                    current_connections.add(ip)
-                                    self._last_seen[ip] = now
+    def _update_observation(self, peers):
+        if self._stop.is_set():
+            return
+        now = time.monotonic()
+        with self._lock:
+            previous = self.connected_clients.copy()
+            self.observation_available = peers is not None
+            self._last_probe = now
+            if peers is None:
+                self._last_seen.clear()
+                self.connected_clients.clear()
+            else:
+                self._last_seen.update((peer, now) for peer in peers)
+                self._last_seen = {
+                    peer: ts for peer, ts in self._last_seen.items()
+                    if now - ts <= self.disconnect_grace_s
+                }
+                self.connected_clients = set(self._last_seen)
+            changes = [(peer, True) for peer in self.connected_clients - previous]
+            changes += [(peer, False) for peer in previous - self.connected_clients]
+        for peer, connected in changes:
+            if self.connection_callback:
+                try:
+                    self.connection_callback(peer, connected)
+                except Exception:
+                    logger.debug("TCP observation callback failed", exc_info=True)
 
-                # Update connections
-                new_connections = current_connections - self.connected_clients
-                for ip in new_connections:
-                    self.connected_clients.add(ip)
-                    if self.connection_callback:
-                        self.connection_callback(ip, True)
+    def get_connected_clients(self):
+        with self._lock:
+            if not self.observation_available or self._last_probe is None:
+                return set()
+            if time.monotonic() - self._last_probe > max(5.0, self.disconnect_grace_s):
+                return set()
+            return self.connected_clients.copy()
 
-                for ip in list(self.connected_clients):
-                    last_seen = self._last_seen.get(ip, 0)
-                    if now - last_seen > self.disconnect_grace_s:
-                        self.connected_clients.discard(ip)
-                        self._last_seen.pop(ip, None)
-                        if self.connection_callback:
-                            self.connection_callback(ip, False)
-
-        except Exception:
-            logger.debug("Unity connection netstat probe failed", exc_info=True)
+    def is_unity_connected(self):
+        return bool(self.get_connected_clients())
 
     def get_current_connections_debug(self):
-        """Get current connections using ss - for debugging"""
         try:
-            result = subprocess.run(
-                ["ss", "-tn"], capture_output=True, text=True, timeout=5
-            )
-
-            connections = []
-            if result.returncode == 0:
-                for line in result.stdout.split("\n"):
-                    if line.strip() and ("ESTAB" in line or "State" in line):
-                        connections.append(line.strip())
-            return connections
-        except Exception:
-            logger.debug("Failed to collect current Unity connection debug data", exc_info=True)
+            result = subprocess.run(["ss", "-tn"], capture_output=True, text=True, timeout=1)
+            return [line for line in result.stdout.splitlines() if _peers(line, self.unity_port)]
+        except (OSError, subprocess.TimeoutExpired):
             return []
 
     def debug_connections(self):
-        """Debug method to show current connections"""
-        connections = self.get_current_connections_debug()
-        print(
-            f"\n\033[93mDEBUG: Current ss connections on port {self.unity_port}:\033[0m"
-        )
-        for conn in connections:
-            print(f"  {conn}")
-        print(f"\033[93mDEBUG: Tracked clients: {self.connected_clients}\033[0m\n")
-
-    def get_connected_clients(self) -> set:
-        """Get currently connected client IPs"""
-        return self.connected_clients.copy()
-
-    def is_unity_connected(self) -> bool:
-        """Check if any Unity clients are connected"""
-        return len(self.connected_clients) > 0
+        from .cli import print_info
+        print_info(f"TCP peers on local port {self.unity_port}: {sorted(self.get_connected_clients())}")

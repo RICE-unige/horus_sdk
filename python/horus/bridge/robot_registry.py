@@ -24,6 +24,7 @@ import tempfile
 from typing import Any, Dict, Tuple, Optional, List
 
 from horus.utils.network import resolve_advertise_ip
+from horus.utils.dashboard_status import is_bridge_node, topic_graph
 
 logger = logging.getLogger(__name__)
 MODEL_TRACE_TAG = "HORUS_MODEL_TRACE"
@@ -60,6 +61,7 @@ class RobotRegistryClient:
         self._ack_received = threading.Event()
         self._last_ack_data = {}
         self._ack_by_robot = {}
+        self._dashboard_receipts = {}
         self.bridge_process = None
         self._bridge_log_file = None
         self._bridge_log_path = None
@@ -98,10 +100,12 @@ class RobotRegistryClient:
         line = f"{MODEL_TRACE_TAG} {message}"
         try:
             from horus.utils import cli
-
-            cli.print_info(line)
+            if cli.env_enabled("HORUS_SDK_DEBUG"):
+                cli.print_info(line)
+            else:
+                logger.debug(line)
         except Exception:
-            logger.info(line)
+            logger.debug(line)
 
     def _get_robot_description_chunk_publisher(self, topic: str):
         """Return a std_msgs/String publisher for a robot-description chunk reply topic."""
@@ -666,6 +670,13 @@ class RobotRegistryClient:
 
             bridge_log = self._open_bridge_log_file()
             launch_command = ["ros2", "launch", "horus_unity_bridge", "unity_bridge.launch.py"]
+            override = os.environ.get("HORUS_BRIDGE_CONFIG", "").strip()
+            if override:
+                config_path = os.path.abspath(os.path.expanduser(override))
+                if not os.path.isfile(config_path):
+                    cli.print_error(f"HORUS_BRIDGE_CONFIG does not exist: {config_path}")
+                    return False
+                launch_command.append(f"config_file:={config_path}")
             priority_scheduling_arg = self._bridge_priority_scheduling_launch_arg()
             if priority_scheduling_arg:
                 launch_command.append(priority_scheduling_arg)
@@ -742,6 +753,11 @@ class RobotRegistryClient:
         """Handle registration acknowledgement"""
         try:
             data = json.loads(msg.data)
+            if not isinstance(data, dict) or not isinstance(data.get("success"), bool):
+                return
+            if not isinstance(data.get("robot_name"), str) or not data["robot_name"]:
+                return
+            self._record_dashboard_receipt("/horus/registration_ack")
             self._last_ack_data = data
             robot_name = data.get("robot_name") if isinstance(data, dict) else None
             if robot_name:
@@ -752,8 +768,7 @@ class RobotRegistryClient:
 
     def _heartbeat_callback(self, msg):
         """Handle heartbeat from Unity"""
-        now = time.time()
-        self._last_heartbeat_time = now
+        now = time.monotonic()
         app_id = "unknown"
         heartbeat_uptime = None
 
@@ -766,20 +781,25 @@ class RobotRegistryClient:
                 logger.debug("Failed to parse heartbeat uptime from %r", msg.data, exc_info=True)
                 heartbeat_uptime = None
 
+        if heartbeat_uptime is None or not math.isfinite(heartbeat_uptime) or heartbeat_uptime < 0:
+            return
+        # Keep the legacy wall-time attribute for external diagnostic scripts only.
+        self._last_heartbeat_time = time.time()
+        self._record_dashboard_receipt("/horus/heartbeat")
+
         # Parse IP if present "Heartbeat: <time> | IP: <ip>"
         if "IP:" in msg.data:
             try:
                 parts = msg.data.split("IP:")
                 if len(parts) > 1:
-                    ip = parts[1].strip()
+                    ip = parts[1].split("|", 1)[0].strip()
                     self._remote_ip = ip
                     if ip:
                         app_id = ip
                         self._app_heartbeats[ip] = now
             except Exception:
                 logger.debug("Failed to parse app heartbeat IP", exc_info=True)
-        else:
-            self._app_heartbeats["unknown"] = now
+        self._app_heartbeats[app_id] = now
 
         if heartbeat_uptime is not None:
             previous_uptime = self._app_uptime_by_id.get(app_id)
@@ -802,7 +822,7 @@ class RobotRegistryClient:
         if not isinstance(payload, dict):
             return
 
-        now = time.time()
+        now = time.monotonic()
         app_id = str(payload.get("app_id") or payload.get("ip") or "unknown").strip() or "unknown"
         role = str(payload.get("role") or "").strip().lower()
         state = str(payload.get("state") or "").strip().lower()
@@ -815,8 +835,9 @@ class RobotRegistryClient:
             "state": state,
             "ip": ip,
             "session_id": session_id,
-            "workspace_active": bool(payload.get("workspace_active", False)),
+            "workspace_active": payload.get("workspace_active") is True,
         }
+        self._record_dashboard_receipt("/horus/multi_operator_presence")
 
     def _multi_operator_registration_replay_request_callback(self, msg):
         payload_raw = str(getattr(msg, "data", "") or "").strip()
@@ -833,6 +854,7 @@ class RobotRegistryClient:
                 logger.debug("Ignored malformed registration replay request: %r", payload_raw, exc_info=True)
                 payload = {}
 
+        self._record_dashboard_receipt("/horus/multi_operator/sdk_registration_replay_request")
         self._last_registration_replay_request = payload
         self._registration_replay_request_seq += 1
         self._trace_robot_description(
@@ -879,6 +901,7 @@ class RobotRegistryClient:
             return
 
         request_id = str(payload.get("request_id") or uuid.uuid4().hex).strip() or uuid.uuid4().hex
+        self._record_dashboard_receipt("/horus/robot_description/request")
         robot_name = str(payload.get("robot_name") or "").strip()
         description_id = str(payload.get("description_id") or "").strip()
         session_id = str(payload.get("session_id") or "").strip()
@@ -1019,7 +1042,7 @@ class RobotRegistryClient:
         return publish_sdk_registry_replay(self, entries, replay_request)
 
     def _prune_stale_app_presence(self, timeout_s: float):
-        now = time.time()
+        now = time.monotonic()
         timeout = max(1.0, float(timeout_s))
         stale = [
             app_id
@@ -1066,7 +1089,6 @@ class RobotRegistryClient:
             elif role == "joiner":
                 summary["joiner_count"] += 1
                 if state in {
-                    "joiner_discovered_host",
                     "joiner_joined",
                     "alignment_pending",
                     "alignment_ready",
@@ -1080,12 +1102,11 @@ class RobotRegistryClient:
             elif role == "private":
                 summary["private_count"] += 1
                 if state in {
-                    "private_selected",
                     "private_workspace_ready",
                     "workspace_ready",
                     "workspace_synced",
                     "registry_synced",
-                }:
+                } and data.get("workspace_active") is True:
                     summary["private_ready_count"] += 1
             elif role == "single":
                 summary["single_count"] += 1
@@ -1096,7 +1117,9 @@ class RobotRegistryClient:
             if state in {"alignment_ready", "colocation_ready", "workspace_ready_host", "workspace_ready_joiner", "workspace_synced", "registry_synced"}:
                 summary["alignment_ready_count"] += 1
 
-            if state.startswith("workspace_ready") or state == "workspace_synced":
+            if data.get("workspace_active") is True and (
+                state.startswith("workspace_ready") or state in {"private_workspace_ready", "workspace_synced", "registry_synced"}
+            ):
                 summary["workspace_ready_count"] += 1
 
             if state == "registry_synced":
@@ -1106,82 +1129,23 @@ class RobotRegistryClient:
 
     def _format_multi_operator_summary(self) -> str:
         summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
-
         if summary["total"] <= 0:
-            return "No operator presence"
-
-        host_count = int(summary.get("host_count", 0) or 0)
-        joiner_count = int(summary.get("joiner_count", 0) or 0)
-        private_count = int(summary.get("private_count", 0) or 0)
-        alignment_pending = int(summary.get("alignment_pending_count", 0) or 0)
-        alignment_ready = int(summary.get("alignment_ready_count", 0) or 0)
-        workspace_ready = int(summary.get("workspace_ready_count", 0) or 0)
-        registry_synced = int(summary.get("registry_synced_count", 0) or 0)
-
-        if host_count <= 0 and joiner_count > 0:
-            base = f"Joiners only ({joiner_count})"
-            if private_count > 0:
-                base += f" + {private_count} Private" + ("" if private_count == 1 else "s")
-        elif host_count > 0:
-            base = "Host Created" if int(summary.get("host_created_count", 0) or 0) > 0 else "Host Detected"
-            if joiner_count > 0:
-                base += f" + {joiner_count} Joiner" + ("" if joiner_count == 1 else "s")
-            if private_count > 0:
-                base += f" + {private_count} Private" + ("" if private_count == 1 else "s")
-        elif private_count > 0:
-            base = f"Private Workspace: {private_count}"
-        else:
-            base = f"Operators: {summary['total']}"
-
-        if joiner_count > 0 and alignment_pending > 0 and alignment_ready <= 0:
-            base += " (Aligning)"
-        elif alignment_ready > 0:
-            base += f" | Alignment Ready: {alignment_ready}"
-
-        if workspace_ready > 0:
-            base += f" | Workspace Ready: {workspace_ready}"
-
-        if registry_synced > 0:
-            base += f" | Registry Synced: {registry_synced}"
-
-        return base
+            return "No fresh presence report"
+        parts = [f"{summary['total']} reporting"]
+        for key, label in (("host_count", "host"), ("joiner_count", "joiner"), ("private_count", "private")):
+            if summary[key]:
+                parts.append(f"{label}: {summary[key]}")
+        if summary["alignment_pending_count"]:
+            parts.append(f"aligning: {summary['alignment_pending_count']}")
+        parts.append(f"workspace-ready: {summary['workspace_ready_count']}")
+        if summary["registry_synced_count"]:
+            parts.append(f"registry-synced: {summary['registry_synced_count']}")
+        return " | ".join(parts)
 
     def _format_app_link_status(self, is_connected: bool, seen_heartbeat: bool) -> str:
-        summary = self._get_app_presence_summary(self._multi_operator_presence_ttl_s)
-
         if is_connected:
-            details = []
-            if summary["host_count"] > 0:
-                if summary["host_created_count"] > 0:
-                    details.append("Host Created")
-                else:
-                    details.append("Host Detected")
-            if summary["joiner_count"] > 0:
-                if summary["joiner_joined_count"] > 0:
-                    details.append(f"Joiners Joined: {summary['joiner_joined_count']}")
-                else:
-                    details.append(f"Joiners: {summary['joiner_count']}")
-            if summary["private_count"] > 0:
-                if summary.get("private_ready_count", 0) > 0:
-                    details.append(f"Private Ready: {summary['private_ready_count']}")
-                else:
-                    details.append(f"Private: {summary['private_count']}")
-            if summary.get("alignment_ready_count", 0) > 0:
-                details.append(f"Alignment Ready: {summary['alignment_ready_count']}")
-            elif summary.get("alignment_pending_count", 0) > 0:
-                details.append(f"Aligning: {summary['alignment_pending_count']}")
-            if summary["workspace_ready_count"] > 0:
-                details.append(f"Workspace Ready: {summary['workspace_ready_count']}")
-
-            if details:
-                return "Connected (" + " | ".join(details) + ")"
             return "Connected"
-
-        if seen_heartbeat:
-            if summary["joiner_count"] > 0:
-                return "Disconnected (Waiting for Host App...)"
-            return "Disconnected (Waiting for Horus App...)"
-        return "Waiting for Horus App..."
+        return "Disconnected (heartbeat expired)" if seen_heartbeat else "Waiting for Horus App"
 
     @staticmethod
     def _normalize_transport(value: Any) -> Optional[str]:
@@ -1201,15 +1165,17 @@ class RobotRegistryClient:
             logger.debug("Ignoring malformed teleop runtime state payload: %s", payload_raw, exc_info=True)
             return
 
+        if not isinstance(payload, dict):
+            return
         camera_topic = str(payload.get("camera_topic", "") or "").strip()
         if not camera_topic:
             return
 
         self._teleop_runtime_by_topic[camera_topic] = {
-            "active": bool(payload.get("active", False)),
+            "active": payload.get("active") is True,
             "mode": str(payload.get("mode", "") or "").strip().lower(),
             "transport": self._normalize_transport(payload.get("transport")),
-            "ts": time.time(),
+            "ts": time.monotonic(),
         }
 
     def _get_runtime_transport_override(self, camera_topic: str) -> Optional[str]:
@@ -1221,7 +1187,7 @@ class RobotRegistryClient:
         if not state:
             return None
 
-        now = time.time()
+        now = time.monotonic()
         ts = float(state.get("ts", 0.0) or 0.0)
         if (now - ts) > max(0.5, float(self._teleop_runtime_state_ttl_s)):
             self._teleop_runtime_by_topic.pop(topic, None)
@@ -1233,7 +1199,7 @@ class RobotRegistryClient:
         return self._normalize_transport(state.get("transport"))
 
     def _get_active_app_count(self, timeout_s: float) -> int:
-        now = time.time()
+        now = time.monotonic()
         stale = [ip for ip, ts in self._app_heartbeats.items() if (now - ts) > timeout_s]
         for ip in stale:
             self._app_heartbeats.pop(ip, None)
@@ -1259,8 +1225,8 @@ class RobotRegistryClient:
         return False
 
     def _await_ack(self, robot_name: str, timeout_sec: float):
-        start_time = time.time()
-        while (time.time() - start_time) < timeout_sec:
+        start_time = time.monotonic()
+        while (time.monotonic() - start_time) < timeout_sec:
             if robot_name in self._ack_by_robot:
                 return self._ack_by_robot.pop(robot_name)
             self._ack_received.wait(0.1)
@@ -1289,13 +1255,6 @@ class RobotRegistryClient:
             status = reasons[0]
         else:
             status = "Waiting for Workspace"
-
-        if status == "Waiting for Workspace":
-            try:
-                if self.node.count_publishers("/tf") <= 0:
-                    return "Waiting for TF"
-            except Exception:
-                logger.debug("Failed to inspect /tf publisher count while resolving queued status", exc_info=True)
 
         return status
 
@@ -1394,7 +1353,7 @@ class RobotRegistryClient:
                     merged.append(normalized)
         return merged
 
-    def _apply_registration_metadata(self, robot, dataviz, ack: Dict):
+    def _apply_registration_metadata(self, robot, dataviz, ack: Dict, *, monitor_topics=True):
         try:
             robot.add_metadata("horus_robot_id", ack.get("robot_id"))
             robot.add_metadata("horus_color", ack.get("assigned_color") or ack.get("color"))
@@ -1404,7 +1363,7 @@ class RobotRegistryClient:
             return
         topics = self._collect_topics(dataviz)
         robot.add_metadata("horus_topics", topics)
-        if topics:
+        if topics and monitor_topics:
             try:
                 from horus.utils.topic_monitor import get_topic_monitor
                 monitor = get_topic_monitor()
@@ -1444,25 +1403,7 @@ class RobotRegistryClient:
         return _choose(pubs_info, pubs_count), _choose(subs_info, subs_count)
 
     def _is_backend_node_name(self, node_name: Optional[str]) -> bool:
-        if not node_name:
-            return False
-        normalized_name = str(node_name).strip().lstrip("/")
-        if not normalized_name:
-            return False
-        try:
-            if self.node and normalized_name == str(self.node.get_name()).strip().lstrip("/"):
-                return False
-        except Exception:
-            logger.debug("Failed to compare backend node name against registry node", exc_info=True)
-        if normalized_name in ("horus_backend_node", "horus_backend", "horus_unity_bridge"):
-            return True
-        if normalized_name.startswith("horus_unity_bridge"):
-            return True
-        if "horus_backend" in normalized_name:
-            return True
-        if normalized_name.endswith("_RosSubscriber") or normalized_name.endswith("_RosPublisher"):
-            return True
-        return False
+        return not self._is_local_node_name(node_name) and is_bridge_node(node_name)
 
     def _is_local_node_name(self, node_name: Optional[str]) -> bool:
         if not node_name:
@@ -1512,8 +1453,7 @@ class RobotRegistryClient:
             return False
         if any(self._is_backend_node_name(info.node_name) for info in infos):
             return True
-        # Fallback: any non-local subscriber means the bridge side has a consumer.
-        return any(not self._is_local_node_name(info.node_name) for info in infos)
+        return False
 
     def _has_backend_publisher(self, topic: str) -> bool:
         try:
@@ -1523,8 +1463,7 @@ class RobotRegistryClient:
             return False
         if any(self._is_backend_node_name(info.node_name) for info in infos):
             return True
-        # Fallback: any non-local publisher means topic source is present beyond SDK process.
-        return any(not self._is_local_node_name(info.node_name) for info in infos)
+        return False
 
     def _has_local_publisher(self, topic: str) -> bool:
         try:
@@ -1763,6 +1702,7 @@ class RobotRegistryClient:
             "mesh",
             "octomap",
             "occupancy_grid",
+            "costmap",
         }
         _VALID_TRANSPORT_LANES = {
             "strict",
@@ -1894,6 +1834,15 @@ class RobotRegistryClient:
             if collision_payload:
                 payload["collision"] = collision_payload
 
+        if viz_type_value == "costmap":
+            payload["costmap"] = {
+                "alpha": self._payload_coerce_float(render_options.get("alpha"), 0.65),
+                "show_unknown_space": self._payload_coerce_bool(render_options.get("show_unknown_space"), False),
+                "height_offset": self._payload_coerce_float(render_options.get("height_offset"), 0.01),
+                "stale_timeout": self._payload_coerce_float(render_options.get("stale_timeout"), 5.0),
+                "tf_topic": str(render_options.get("tf_topic") or "/tf"),
+            }
+
         if viz_type_value == "occupancy_grid":
             occupancy_payload: Dict[str, Any] = {}
             if "show_unknown_space" in render_options:
@@ -1920,6 +1869,15 @@ class RobotRegistryClient:
                 payload["occupancy"] = occupancy_payload
 
         if viz_type_value == "remote_render":
+            protocol_version = str(
+                render_options.get("protocol_version", "remote_stereo_rgbd_v2")
+                or "remote_stereo_rgbd_v2"
+            ).strip()
+            if protocol_version not in {
+                "remote_stereo_rgbd_v2",
+                "horus.remote_render.v3",
+            }:
+                protocol_version = "remote_stereo_rgbd_v2"
             encoder = str(render_options.get("encoder", "auto") or "auto").strip().lower()
             if encoder not in {"auto", "nvenc", "x264"}:
                 encoder = "auto"
@@ -1930,11 +1888,20 @@ class RobotRegistryClient:
             if remote_transport not in {"webrtc", "ros_compressed"}:
                 remote_transport = "ros_compressed"
             remote_format = (
-                "remote_stereo_rgbd_ros_v2"
-                if remote_transport == "ros_compressed"
-                else "remote_stereo_rgbd_webrtc_v2"
+                (
+                    "horus.remote_render.v3.webrtc"
+                    if remote_transport == "webrtc"
+                    else "horus.remote_render.v3.ros"
+                )
+                if protocol_version == "horus.remote_render.v3"
+                else (
+                    "remote_stereo_rgbd_ros_v2"
+                    if remote_transport == "ros_compressed"
+                    else "remote_stereo_rgbd_webrtc_v2"
+                )
             )
             remote_render_payload = {
+                "protocol_version": protocol_version,
                 "format_version": remote_format,
                 "viewer_pose_topic": str(
                     render_options.get(
@@ -1955,9 +1922,13 @@ class RobotRegistryClient:
                 "stream_topic": topic,
                 "frame_data_topic": str(
                     render_options.get(
-                        "frame_data_topic", "/horus/remote_render/frame_data"
+                        "frame_data_topic",
+                        "" if (
+                            protocol_version == "horus.remote_render.v3"
+                            and remote_transport == "webrtc"
+                        ) else "/horus/remote_render/frame_data",
                     )
-                    or "/horus/remote_render/frame_data"
+                    or ""
                 ).strip(),
                 "ros_compressed_topic": str(
                     render_options.get(
@@ -1976,6 +1947,13 @@ class RobotRegistryClient:
                     render_options.get("status_topic", "/horus/remote_render/agent_status")
                 ).strip(),
                 "encoder": encoder,
+                "image_type": (
+                    "h264"
+                    if str(render_options.get("image_type", "raw") or "raw")
+                    .strip()
+                    .lower() == "h264"
+                    else "raw"
+                ),
                 "bitrate_kbps": max(
                     1000, int(self._payload_coerce_float(render_options.get("bitrate_kbps"), 12000.0))
                 ),
@@ -1984,12 +1962,76 @@ class RobotRegistryClient:
                 ),
                 "flip_y": self._payload_coerce_bool(render_options.get("flip_y"), False),
             }
+            if protocol_version == "horus.remote_render.v3":
+                remote_render_payload.update(
+                    {
+                        "session_id": str(
+                            render_options.get("session_id", "") or ""
+                        ).strip(),
+                        "reference_space_id": str(
+                            render_options.get(
+                                "reference_space_id", "workspace-local"
+                            )
+                            or "workspace-local"
+                        ).strip(),
+                        "workspace_revision": max(
+                            0,
+                            int(
+                                self._payload_coerce_float(
+                                    render_options.get("workspace_revision"), 0.0
+                                )
+                            ),
+                        ),
+                        "viewport_width": max(
+                            1,
+                            int(
+                                self._payload_coerce_float(
+                                    render_options.get("viewport_width"), 1024.0
+                                )
+                            ),
+                        ),
+                        "viewport_height": max(
+                            1,
+                            int(
+                                self._payload_coerce_float(
+                                    render_options.get("viewport_height"), 1024.0
+                                )
+                            ),
+                        ),
+                        "display_refresh_rate_hz": max(
+                            1.0,
+                            self._payload_coerce_float(
+                                render_options.get("display_refresh_rate_hz"), 72.0
+                            ),
+                        ),
+                        "maximum_frame_age_ms": max(
+                            1,
+                            int(
+                                self._payload_coerce_float(
+                                    render_options.get("maximum_frame_age_ms"), 250.0
+                                )
+                            ),
+                        ),
+                    }
+                )
             if not remote_render_payload["viewer_pose_topic"].startswith("/"):
                 remote_render_payload["viewer_pose_topic"] = "/horus/remote_render/viewer_pose"
             payload["remote_render"] = remote_render_payload
 
         if viz_type_value == "point_cloud":
             point_cloud_payload: Dict[str, Any] = {}
+            color_mode = str(render_options.get("color_mode", "rgb")).strip().lower()
+            point_cloud_payload["color_mode"] = (
+                color_mode if color_mode in ("rgb", "flat", "height", "rgb_height") else "rgb"
+            )
+            height_min = self._payload_coerce_float(render_options.get("height_min_m"), -1.0)
+            height_max = self._payload_coerce_float(render_options.get("height_max_m"), 2.0)
+            if not math.isfinite(height_min):
+                height_min = -1.0
+            if not math.isfinite(height_max) or height_max <= height_min:
+                height_max = height_min + 3.0
+            point_cloud_payload["height_min_m"] = height_min
+            point_cloud_payload["height_max_m"] = height_max
             point_cloud_payload["point_size"] = max(
                 0.001,
                 self._payload_coerce_float(render_options.get("point_size"), 0.05),
@@ -2116,6 +2158,9 @@ class RobotRegistryClient:
                 render_options.get("chunk_end_topic", "/horus/gaussian_splat/chunk_end")
             ).strip()
             gaussian_payload["chunk_end_topic"] = chunk_end_topic or "/horus/gaussian_splat/chunk_end"
+            gaussian_payload["binary_chunks"] = self._payload_coerce_bool(
+                render_options.get("binary_chunks"), False
+            )
 
             asset_format = str(render_options.get("asset_format", "3dgs_ply")).strip().lower()
             if asset_format not in {"3dgs_ply"}:
@@ -2180,6 +2225,9 @@ class RobotRegistryClient:
                 render_options.get("high_precision_rt"),
                 False,
             )
+            gaussian_payload["preserve_source_detail"] = self._payload_coerce_bool(
+                render_options.get("preserve_source_detail"), False
+            )
             gaussian_payload["pointcloud_fallback"] = self._payload_coerce_bool(
                 render_options.get("pointcloud_fallback"),
                 True,
@@ -2225,7 +2273,63 @@ class RobotRegistryClient:
             if source_coordinate_space not in {"enu", "optical"}:
                 source_coordinate_space = "enu"
             mesh_payload["source_coordinate_space"] = source_coordinate_space
+            mesh_payload["use_indexed_binary"] = self._payload_coerce_bool(
+                render_options.get("use_indexed_binary"),
+                True,
+            )
+            mesh_payload["static_mesh"] = self._payload_coerce_bool(
+                render_options.get("static_mesh"),
+                False,
+            )
+            mesh_payload["indexed_live"] = self._payload_coerce_bool(
+                render_options.get("indexed_live"), default=False)
+            mesh_payload["max_chunk_renderers"] = min(
+                1024,
+                max(
+                    8,
+                    int(self._payload_coerce_float(render_options.get("max_chunk_renderers"), 1024.0)),
+                ),
+            )
+            mesh_payload["max_chunk_uploads_per_frame"] = min(
+                32,
+                max(
+                    1,
+                    int(self._payload_coerce_float(render_options.get("max_chunk_uploads_per_frame"), 2.0)),
+                ),
+            )
+            mesh_payload["max_triangle_uploads_per_frame"] = max(
+                2000,
+                int(self._payload_coerce_float(render_options.get("max_triangle_uploads_per_frame"), 20000.0)),
+            )
+            mesh_payload["max_upload_milliseconds_per_frame"] = min(
+                8.0,
+                max(
+                    0.25,
+                    self._payload_coerce_float(
+                        render_options.get("max_upload_milliseconds_per_frame"),
+                        2.5,
+                    ),
+                ),
+            )
+            mesh_payload["static_finalize_delay_seconds"] = min(
+                10.0,
+                max(
+                    0.1,
+                    self._payload_coerce_float(render_options.get("static_finalize_delay_seconds"), 0.75),
+                ),
+            )
+            mesh_payload["enable_perf_diagnostics"] = self._payload_coerce_bool(
+                render_options.get("enable_perf_diagnostics"),
+                False,
+            )
+            adaptive = render_options.get("adaptive")
+            if isinstance(adaptive, dict) and adaptive.get("enabled"):
+                # Keep the nested per-operator policy in the registration contract.
+                mesh_payload["adaptive"] = json.loads(json.dumps(adaptive, allow_nan=False))
 
+            if "display" in render_options:
+                from horus.dataviz.mesh_display import mesh_display_options
+                mesh_payload["display"] = mesh_display_options(render_options["display"])
             payload["mesh"] = mesh_payload
 
         if viz_type_value == "octomap":
@@ -2236,6 +2340,9 @@ class RobotRegistryClient:
             if render_mode not in {"surface_mesh", "voxel_cubes"}:
                 render_mode = "surface_mesh"
             octomap_payload["render_mode"] = render_mode
+            octomap_payload["static_mesh"] = self._payload_coerce_bool(
+                render_options.get("static_mesh"), False
+            )
             octomap_payload["use_vertex_colors"] = self._payload_coerce_bool(
                 render_options.get("use_vertex_colors"),
                 True,
@@ -2353,140 +2460,74 @@ class RobotRegistryClient:
 
         return [deduped[key] for key in ordered_keys]
 
+    def _record_dashboard_receipt(self, topic: str) -> None:
+        if not hasattr(self, "_dashboard_receipts"):
+            self._dashboard_receipts = {}
+        self._dashboard_receipts[topic] = time.monotonic()
+
+    def _get_dashboard_bridge_status(self, is_connected: bool) -> str:
+        if is_connected:
+            return "Responding (app heartbeat received)"
+        try:
+            if any(is_bridge_node(name) for name, _ in self.node.get_node_names_and_namespaces()):
+                return "Discovered (ROS graph)"
+        except Exception:
+            return "Unknown (ROS graph unavailable)"
+        return "Not discovered"
+
+    def _take_registration_ack(self, robot_name: str):
+        """Consume each acknowledgement once; never reuse the previous session's result."""
+        ack = self._ack_by_robot.pop(robot_name, None)
+        if not self._ack_by_robot:
+            self._ack_received.clear()
+        return ack
+
     def _build_dashboard_topic_rows(
-        self,
-        monitored_topics,
-        topic_roles,
-        robot_names,
-        is_connected: bool,
-        registration_done: bool,
-        camera_topic_profiles: Optional[Dict[str, Dict[str, str]]] = None,
-        topic_group_overrides: Optional[Dict[str, str]] = None,
+        self, monitored_topics, topic_roles, robot_names, is_connected: bool,
+        registration_done: bool, camera_topic_profiles=None, topic_group_overrides=None,
     ) -> list:
         camera_topic_profiles = camera_topic_profiles or {}
         topic_group_overrides = topic_group_overrides or {}
-        core_topic_set = {
-            "/horus/registration",
-            "/horus/registration_ack",
-            "/horus/heartbeat",
-            "/horus/multi_operator_presence",
-            "/horus/multi_operator/sdk_registration_replay_request",
-            "/horus/multi_operator/sdk_registry_replay_begin",
-            "/horus/multi_operator/sdk_registry_replay_item",
-            "/horus/multi_operator/sdk_registry_replay_end",
-            "/horus/robot_description/request",
-            "/horus/robot_description/chunk_begin",
-            "/horus/robot_description/chunk_item",
-            "/horus/robot_description/chunk_end",
-        }
+        receipts = getattr(self, "_dashboard_receipts", {})
+        now = time.monotonic()
         rows = []
-
-        for topic in monitored_topics:
+        for topic in dict.fromkeys(monitored_topics):
             role = topic_roles.get(topic, "backend_sub")
-            topic_kind = "core" if topic in core_topic_set else "data"
-            camera_profile = dict(camera_topic_profiles.get(topic, {}) or {})
-            runtime_transport = self._get_runtime_transport_override(topic)
+            core = role in {"sdk_pub", "sdk_sub"}
+            profile = dict(camera_topic_profiles.get(topic, {}) or {})
+            runtime_transport = self._get_runtime_transport_override(topic) if is_connected else None
             if runtime_transport:
-                camera_profile["active_transport"] = runtime_transport
-
-            camera_active_transport = self._normalize_transport(camera_profile.get("active_transport"))
-            if not camera_active_transport and camera_profile:
-                startup_mode = str(camera_profile.get("startup", "minimap")).strip().lower()
-                minimap_transport = self._normalize_transport(camera_profile.get("minimap")) or "ros"
-                teleop_transport = self._normalize_transport(camera_profile.get("teleop")) or "webrtc"
-                camera_active_transport = teleop_transport if startup_mode == "teleop" else minimap_transport
-
-            if role == "sdk_pub":
-                role_label = "sdk->bridge"
-                backend_sub = self._has_backend_subscriber(topic)
-                local_pub = self._has_local_publisher(topic)
-                pubs = 1 if local_pub else 0
-                subs = 1 if backend_sub else 0
-                if not is_connected:
-                    link = "NO"
-                    data = "IDLE"
-                else:
-                    link = "OK" if backend_sub else "NO"
-                    data = "ACTIVE" if local_pub and backend_sub else "IDLE"
-            elif role == "sdk_sub":
-                role_label = "bridge->sdk"
-                backend_pub = self._has_backend_publisher(topic)
-                local_sub = self._has_local_subscriber(topic)
-                pubs = 1 if backend_pub else 0
-                subs = 1 if local_sub else 0
-                if not is_connected:
-                    link = "NO"
-                    data = "IDLE"
-                else:
-                    link = "OK" if backend_pub else "NO"
-                    data = "ACTIVE" if backend_pub else "IDLE"
-            elif role == "backend_pub":
-                backend_pub = self._has_backend_publisher(topic)
-                _, subs = self._get_topic_counts(topic)
-                pubs = 1 if backend_pub else 0
-                role_label = "bridge->robot" if topic.endswith("/cmd_vel") else "bridge->topic"
-                if not is_connected or not registration_done:
-                    link = "NO"
-                    data = "IDLE"
-                else:
-                    link = "OK" if backend_pub else "NO"
-                    if not backend_pub:
-                        data = "IDLE"
-                    elif subs > 0:
-                        data = "ACTIVE"
-                    else:
-                        data = "STALE"
+                profile["active_transport"] = runtime_transport
             else:
-                role_label = "data->bridge"
-                pubs, _ = self._get_topic_counts(topic)
-                if not is_connected or not registration_done:
-                    link = "NO"
-                    subs = 0
-                    data = "IDLE"
+                profile.pop("active_transport", None)
+            graph = topic_graph(self.node, topic, role)
+            mode = profile.get("source_mode")
+            if mode not in {"minimap", "teleop"}:
+                mode = profile.get("startup", "minimap")
+            transport = runtime_transport or profile.get(mode)
+            # Media does not require a ROS bridge image subscriber. Neither the
+            # profile nor a source publisher proves a WebRTC connection/decoder.
+            if transport == "webrtc" and graph["link"] != "UNKNOWN":
+                graph["link"] = "MEDIA"
+            data, stale = "Not measured", False
+            if role == "sdk_sub":
+                ts = receipts.get(topic)
+                if ts is None:
+                    data = "Waiting"
                 else:
-                    if camera_active_transport == "webrtc":
-                        source_available = pubs > 0
-                        link_ok = source_available and is_connected
-                        link = "OK" if link_ok else "NO"
-                        subs = 1 if link_ok else 0
-                        if not source_available:
-                            data = "STALE"
-                        elif link_ok:
-                            data = "ACTIVE"
-                        else:
-                            data = "IDLE"
-                    else:
-                        link_ok = self._resolve_data_topic_link(topic)
-                        link = "OK" if link_ok else "NO"
-                        subs = 1 if link_ok else 0
-                        if not link_ok:
-                            data = "IDLE"
-                        elif pubs > 0:
-                            data = "ACTIVE"
-                        else:
-                            data = "STALE"
-
-            rows.append(
-                {
-                    "robot": self._topic_group(topic, robot_names, topic_group_overrides=topic_group_overrides),
-                    "topic": topic,
-                    "role": role_label,
-                    "topic_kind": topic_kind,
-                    "link": link,
-                    "data": data,
-                    "camera_profile": camera_profile,
-                    "pubs": pubs,
-                    "subs": subs,
-                }
-            )
-
-        rows.sort(
-            key=lambda row: (
-                0 if row.get("topic_kind") == "core" else 1,
-                row.get("robot") or "",
-                row.get("topic") or "",
-            )
-        )
+                    age = max(0.0, now - ts)
+                    stale = topic == "/horus/heartbeat" and age > 3.0
+                    data = f"{'Stale' if stale else 'Last'} {age:.1f}s ago"
+            rows.append({
+                "robot": self._topic_group(topic, robot_names, topic_group_overrides=topic_group_overrides),
+                "topic": topic, "role": {
+                    "sdk_pub": "SDK -> bridge", "sdk_sub": "bridge -> SDK",
+                    "backend_pub": "bridge -> robot", "backend_sub": "robot -> bridge",
+                }.get(role, role),
+                "topic_kind": "core" if core else "data",
+                **graph, "data": data, "stale": stale, "camera_profile": profile,
+            })
+        rows.sort(key=lambda r: (r["topic_kind"] != "core", r["robot"] or "", r["topic"]))
         return rows
 
     def register_robot(
@@ -2524,6 +2565,7 @@ class RobotRegistryClient:
 
         from horus.utils.topic_status import get_topic_status_board
         board = get_topic_status_board()
+        previous_silent = board.is_silent
         board.set_silent(show_dashboard)
 
         try:
@@ -2548,7 +2590,7 @@ class RobotRegistryClient:
 
             # Display Connect Info using Dashboard
             local_ip = self._get_local_ip()
-            bridge_state = "Active" if bridge_running else "Error"
+            bridge_state = "Starting; awaiting runtime evidence"
 
             data_topics = self._collect_topics(dataviz)
             control_topics = self._collect_control_topics(config)
@@ -2575,8 +2617,9 @@ class RobotRegistryClient:
             try:
                 from horus.utils.topic_monitor import get_topic_monitor
                 monitor = get_topic_monitor()
-                monitor.watch_topics(monitored_topics, topic_roles)
-                monitor.start()
+                if not show_dashboard:
+                    monitor.watch_topics(monitored_topics, topic_roles)
+                    monitor.start()
             except Exception:
                 logger.debug("Failed to start topic monitor for registration dashboard", exc_info=True)
 
@@ -2598,17 +2641,19 @@ class RobotRegistryClient:
             seeded_before_app = False
 
             if not show_dashboard:
-                start_time = time.time()
+                start_time = time.monotonic()
+                last_publish = start_time
                 last_queued_reason = ""
-                while time.time() - start_time < timeout_sec:
+                while time.monotonic() - start_time < timeout_sec:
                     self._spin_once_registration(timeout_sec=0.1)
 
                     # Re-publish occasionally
-                    if int(time.time()) % 2 == 0:
+                    if time.monotonic() - last_publish >= 2.0:
                         self.publisher.publish(msg)
+                        last_publish = time.monotonic()
 
                     if self._ack_received.is_set():
-                        ack = self._ack_by_robot.pop(robot_name, None) or self._last_ack_data
+                        ack = self._take_registration_ack(robot_name) or {}
                         recv_name = ack.get("robot_name", "UNKNOWN")
                         if recv_name == robot_name:
                             if ack.get("success"):
@@ -2629,200 +2674,76 @@ class RobotRegistryClient:
                     }
                 return False, {"error": "Registration timeout"}
 
-            # --- Enter Dashboard Mode ---
-            show_counts = bool(os.getenv("HORUS_DASHBOARD_SHOW_COUNTS"))
-            with cli.ConnectionDashboard(local_ip, 10000, bridge_state, show_counts=show_counts) as dashboard:
-                dashboard.update_app_link("Waiting for Horus App...")
-                dashboard.update_multi_operator(self._format_multi_operator_summary())
-                dashboard.update_registration("Idle")
-                dashboard.update_status("")
-                last_stats_update = 0.0
-
-                # Connection Monitoring State (for keep_alive)
-                last_connection_state = True # Assume true initially to avoid "Re-established" log on first connect
-                robot_names = [robot.name]
+            with cli.ConnectionDashboard(local_ip, 10000, bridge_state) as dashboard:
+                last_stats_update = float("-inf")
+                last_connection_state = False
                 seen_heartbeat = False
-                queued_ack = False
                 queued_reason = ""
-                last_register_publish = 0.0
-                had_connection_drop = False
+                last_register_publish = time.monotonic()
                 registration_deadline_started_at = None
-
                 while True:
-                    # spin to process callbacks (Ack, Heartbeat)
                     self._spin_once_registration(timeout_sec=0.1)
-
-                    if self._last_heartbeat_time > 0:
-                        seen_heartbeat = True
-                    heartbeat_timeout_s = 3.0
-                    is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
+                    now = time.monotonic()
+                    seen_heartbeat = seen_heartbeat or self._last_heartbeat_time > 0
+                    is_connected = self._get_active_app_count(3.0) > 0
                     app_restarted = self._consume_app_restart_signal()
-                    if app_restarted:
-                        had_connection_drop = True
+                    if app_restarted or (last_connection_state and not is_connected):
+                        registration_success = False
+                        queued_reason = ""
+                        self._take_registration_ack(robot_name)
+                        registration_deadline_started_at = None
+                        last_register_publish = float("-inf")
 
-                    if (
-                        not registration_success
-                        and registration_deadline_started_at is None
-                        and (is_connected or not wait_for_app_before_register)
-                    ):
-                        registration_deadline_started_at = time.time()
+                    if not registration_success and registration_deadline_started_at is None:
+                        if is_connected or not wait_for_app_before_register:
+                            registration_deadline_started_at = now
+                    ack = self._take_registration_ack(robot_name)
+                    if ack:
+                        if not ack.get("success"):
+                            dashboard.update_registration("Failed")
+                            dashboard.update_status(ack.get("error") or "Registration rejected")
+                            dashboard.tick(force=True)
+                            return False, ack
+                        queued_reason = self._queued_reason_from_ack(ack) or ""
+                        registration_success = not queued_reason
+                        if registration_success:
+                            final_ack = ack
+                            self._apply_registration_metadata(robot, dataviz, ack, monitor_topics=False)
 
                     dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
                     dashboard.update_multi_operator(self._format_multi_operator_summary())
-
-                    # Update Topic Stats (every ~1s)
-                    if (time.time() - last_stats_update) >= 1.0:
-                        rows = self._build_dashboard_topic_rows(
-                            monitored_topics=monitored_topics,
-                            topic_roles=topic_roles,
-                            robot_names=robot_names,
-                            is_connected=is_connected,
-                            registration_done=registration_success,
-                            camera_topic_profiles=camera_topic_profiles,
-                            topic_group_overrides=topic_group_overrides,
-                        )
-                        dashboard.update_topics(rows)
-                        last_stats_update = time.time()
-
-                    # --- Registration Phase ---
-                    if not registration_success:
-                        if (
-                            not keep_alive
-                            and registration_deadline_started_at is not None
-                            and (time.time() - registration_deadline_started_at) >= timeout_sec
-                        ):
-                            dashboard.update_registration("Failed")
-                            dashboard.update_status("Registration timeout")
-                            time.sleep(1.0)
-                            return False, {"error": "Registration timeout"}
-
-                        if not is_connected:
-                            if not wait_for_app_before_register and not seeded_before_app:
-                                self.publisher.publish(msg)
-                                last_register_publish = time.time()
-                                seeded_before_app = True
-                                dashboard.update_registration("Published")
-                                dashboard.update_status("Registration seeded; waiting for Horus App...")
-                                dashboard.tick()
-                                continue
-                            if seen_heartbeat:
-                                dashboard.update_registration("Waiting for App")
-                                dashboard.update_status("")
-                            else:
-                                dashboard.update_registration("Idle")
-                                dashboard.update_status("")
-                        elif is_connected:
-                            if queued_ack:
-                                dashboard.update_registration("Queued")
-                                dashboard.update_status(queued_reason or "Waiting for Workspace")
-                            else:
-                                dashboard.update_registration("Registering")
-                                dashboard.update_status(f"Registering {robot_name}...")
-                                # Re-publish occasionally (only before queued)
-                                now = time.time()
-                                if (now - last_register_publish) >= 2.0:
-                                    self.publisher.publish(msg)
-                                    last_register_publish = now
-
-                        if self._ack_received.is_set():
-                            ack = self._ack_by_robot.pop(robot_name, None) or self._last_ack_data
-                            recv_name = ack.get("robot_name", "UNKNOWN")
-                            if recv_name == robot_name:
-                                if ack.get("success"):
-                                    queued_msg = self._queued_reason_from_ack(ack)
-                                    if queued_msg:
-                                        queued_ack = True
-                                        queued_reason = queued_msg
-                                        dashboard.update_registration("Queued")
-                                        dashboard.update_status(queued_msg)
-                                    else:
-                                        queued_ack = False
-                                        queued_reason = ""
-                                        dashboard.update_registration("Registered")
-                                        status_msg = ack.get("robot_id") or ""
-                                        dashboard.update_status(f"Registered {status_msg}")
-                                        registration_success = True
-                                        final_ack = ack
-                                        # If NOT keep_alive, we are done
-                                        if not keep_alive:
-                                            time.sleep(1.5)
-                                            return True, ack
-
-                                    # If keep_alive, we transition to monitoring
-                                    # Reset connection state to 'Connected' explicitly
-                                    last_connection_state = True
-                                    had_connection_drop = False
-                                    self._last_heartbeat_time = time.time() # Fake a fresh heartbeat to prevent immediate timeout
-                                else:
-                                    dashboard.update_registration("Failed")
-                                    dashboard.update_status(f"Refused: {ack.get('error')}")
-                                    time.sleep(2.0)
-                                    return False, ack
-                            else:
-                                self._ack_received.clear()
-
-                    # --- Monitoring Phase (keep_alive=True) ---
+                    if not is_connected:
+                        dashboard.update_registration("Waiting for App")
+                        dashboard.update_status("Registration acknowledgement retained" if registration_success else "")
+                    elif registration_success:
+                        dashboard.update_registration("Registered")
+                        dashboard.update_status(robot_name)
+                    elif queued_reason:
+                        dashboard.update_registration("Queued")
+                        dashboard.update_status(queued_reason)
                     else:
-                        if app_restarted:
-                            had_connection_drop = True
-                        if self._ack_received.is_set():
-                            ack = self._ack_by_robot.pop(robot_name, None) or self._last_ack_data
-                            recv_name = ack.get("robot_name", "UNKNOWN")
-                            if recv_name == robot_name:
-                                if ack.get("success"):
-                                    queued_msg = self._queued_reason_from_ack(ack)
-                                    if queued_msg:
-                                        queued_ack = True
-                                        queued_reason = queued_msg
-                                        dashboard.update_registration("Queued")
-                                        dashboard.update_status(queued_msg)
-                                    else:
-                                        queued_ack = False
-                                        queued_reason = ""
-                                        dashboard.update_registration("Registered")
-                                        status_msg = ack.get("robot_id") or ""
-                                        dashboard.update_status(f"Registered {status_msg}")
-                                else:
-                                    dashboard.update_registration("Failed")
-                                    dashboard.update_status(f"Refused: {ack.get('error')}")
-                        if is_connected:
-                            ip_str = f" ({self._remote_ip})" if self._remote_ip else ""
-                            if had_connection_drop and (not last_connection_state or app_restarted):
-                                # Start Re-registration
-                                dashboard.update_registration("Re-registering")
-                                dashboard.update_status(f"Re-registering{ip_str}...")
-                                # Re-publish fresh config
-                                config = self._build_robot_config_dict(
-                                    robot,
-                                    dataviz,
-                                    workspace_scale=workspace_scale,
-                                    compass_enabled=compass_enabled,
-                                )
-                                msg = String()
-                                msg.data = json.dumps(config)
-                                self.publisher.publish(msg)
-                                dashboard.update_status("Re-registering...")
-                                time.sleep(0.5) # Give it a moment
-                                had_connection_drop = False
-                            else:
-                                dashboard.update_registration("Registered")
-                                dashboard.update_status("")
-                        else:
-                            if seen_heartbeat:
-                                dashboard.update_registration("Waiting for App")
-                            else:
-                                dashboard.update_registration("Idle")
-                            dashboard.update_status("")
-                            if last_connection_state:
-                                had_connection_drop = True
+                        timed_out = registration_deadline_started_at is not None and now - registration_deadline_started_at >= timeout_sec
+                        dashboard.update_registration("Retrying" if timed_out else "Registering")
+                        dashboard.update_status(f"Awaiting acknowledgement for {robot_name}")
+                        if now - last_register_publish >= 2.0:
+                            self.publisher.publish(msg)
+                            last_register_publish = now
 
-                        last_connection_state = is_connected
-
-                    # Update animated elements
+                    if now - last_stats_update >= 1.0:
+                        dashboard.update_bridge(self._get_dashboard_bridge_status(is_connected))
+                        dashboard.update_topics(self._build_dashboard_topic_rows(
+                            monitored_topics, topic_roles, [robot.name], is_connected,
+                            registration_success, camera_topic_profiles, topic_group_overrides,
+                        ))
+                        last_stats_update = now
                     dashboard.tick()
-
-                    # Simple loop throttle
-                    # Note: rclpy.spin_once acts as the sleep/throttle
+                    last_connection_state = is_connected
+                    if registration_success and not keep_alive:
+                        return True, final_ack
+                    if not keep_alive and registration_deadline_started_at is not None and now - registration_deadline_started_at >= timeout_sec:
+                        dashboard.update_registration("Failed")
+                        dashboard.update_status("Registration timeout")
+                        return False, {"error": "Registration timeout"}
 
         except KeyboardInterrupt:
             cli.print_info("Registration/Monitoring cancelled by user.")
@@ -2833,6 +2754,7 @@ class RobotRegistryClient:
             traceback.print_exc()
             return False, {"error": str(e)}
         finally:
+            board.set_silent(previous_silent)
             self._registration_lock.release()
 
 
@@ -2860,9 +2782,12 @@ class RobotRegistryClient:
             return False, {"error": "Registration already in progress"}
 
         board = get_topic_status_board()
+        previous_silent = board.is_silent
         board.set_silent(show_dashboard)
 
         try:
+            if not robots or len({robot.name for robot in robots}) != len(robots):
+                return False, {"error": "Provide at least one robot with unique names"}
             if datavizs is None:
                 datavizs = [robot.create_dataviz() for robot in robots]
 
@@ -2933,7 +2858,7 @@ class RobotRegistryClient:
             cli.print_info("Bridge ready. Entering registration phase.")
 
             local_ip = self._get_local_ip()
-            bridge_state = "Active" if bridge_running else "Error"
+            bridge_state = "Starting; awaiting runtime evidence"
 
             robot_topics = self._merge_topics(robot_topics, control_topics)
             topic_roles = self._build_topic_roles(robot_topics, control_topics=control_topics)
@@ -2942,8 +2867,9 @@ class RobotRegistryClient:
             try:
                 from horus.utils.topic_monitor import get_topic_monitor
                 monitor = get_topic_monitor()
-                monitor.watch_topics(monitored_topics, topic_roles)
-                monitor.start()
+                if not show_dashboard:
+                    monitor.watch_topics(monitored_topics, topic_roles)
+                    monitor.start()
             except Exception:
                 logger.debug("Failed to start topic monitor for multi-registration dashboard", exc_info=True)
 
@@ -2956,7 +2882,7 @@ class RobotRegistryClient:
                 if not isinstance(ack, dict):
                     return
                 robot_name = ack.get("robot_name")
-                if not robot_name:
+                if robot_name not in entry_by_name:
                     return
                 if ack.get("success"):
                     queued_msg = self._queued_reason_from_ack(ack)
@@ -2968,29 +2894,27 @@ class RobotRegistryClient:
                     queued_reasons.pop(robot_name, None)
                     entry = entry_by_name.get(robot_name)
                     if entry is not None:
-                        self._apply_registration_metadata(entry[0], entry[1], ack)
+                        self._apply_registration_metadata(entry[0], entry[1], ack, monitor_topics=not show_dashboard)
                 else:
                     robot_states[robot_name] = "failed"
                     last_failure = ack.get("error") or "Registration failed"
 
             def publish_and_wait(robot, dataviz, msg):
                 robot_name = robot.name
+                robot_states[robot_name] = "pending"
+                queued_reasons.pop(robot_name, None)
                 self._ack_received.clear()
                 self._last_ack_data = {}
                 self._ack_by_robot.pop(robot_name, None)
-                start_time = time.time()
-                last_publish = 0.0
-                while (time.time() - start_time) < timeout_sec:
-                    now = time.time()
+                start_time = time.monotonic()
+                last_publish = float("-inf")
+                while (time.monotonic() - start_time) < timeout_sec:
+                    now = time.monotonic()
                     if now - last_publish >= 2.0:
                         self.publisher.publish(msg)
                         last_publish = now
                     self._spin_once_registration(timeout_sec=0.1)
-                    ack = self._ack_by_robot.pop(robot_name, None)
-                    if ack is None and self._ack_received.is_set():
-                        self._ack_received.clear()
-                        if self._last_ack_data.get("robot_name") == robot_name:
-                            ack = self._last_ack_data
+                    ack = self._take_registration_ack(robot_name)
                     if ack:
                         if ack.get("success"):
                             return True, ack
@@ -3031,11 +2955,6 @@ class RobotRegistryClient:
                         }
                 return True, {"success": True}
 
-            def seed_all_registrations() -> None:
-                cli.print_info(f"Seeding {len(entries)} registration(s)...")
-                for _, _, msg in entries:
-                    self.publisher.publish(msg)
-
             def update_dashboard_topics(dashboard, is_connected: bool, registration_done: bool):
                 if dashboard is None:
                     return
@@ -3057,7 +2976,6 @@ class RobotRegistryClient:
                 if not keep_alive:
                     return True, result
                 last_connection_state = True
-                self._last_heartbeat_time = time.time()
                 while True:
                     self._spin_once_registration(timeout_sec=0.1)
                     heartbeat_timeout_s = 3.0
@@ -3078,228 +2996,107 @@ class RobotRegistryClient:
                     last_connection_state = is_connected
                     time.sleep(0.2)
 
-            show_counts = bool(os.getenv("HORUS_DASHBOARD_SHOW_COUNTS"))
-            with cli.ConnectionDashboard(local_ip, 10000, bridge_state, show_counts=show_counts) as dashboard:
-                dashboard.update_app_link("Waiting for Horus App...")
-                dashboard.update_multi_operator(self._format_multi_operator_summary())
-                dashboard.update_registration("Idle")
-                dashboard.update_status("")
-
-                registration_done = False
-                last_topics_update = 0.0
-                last_register_attempt = 0.0
-                last_connection_state = True
+            with cli.ConnectionDashboard(local_ip, 10000, bridge_state) as dashboard:
                 robot_names = [r.name for r in robots]
+                # Do not block the dashboard on one robot's ACK. Pace publications
+                # and process all callbacks between them, including app heartbeats.
+                self._ack_by_robot.clear()
+                self._ack_received.clear()
+                last_publish_by_robot = {}
+                last_publish = float("-inf")
+                last_topics_update = float("-inf")
+                last_connection_state = False
                 seen_heartbeat = False
-                had_connection_drop = False
-                registration_deadline_started_at = None
-
-                update_dashboard_topics(dashboard, False, False)
-                seeded_before_app = False
-
+                deadline_started = None
+                replay_note = ""
                 while True:
                     self._spin_once_registration(timeout_sec=0.1)
-
-                    if self._last_heartbeat_time > 0:
-                        seen_heartbeat = True
-                    heartbeat_timeout_s = 3.0
-                    is_connected = self._get_active_app_count(heartbeat_timeout_s) > 0
+                    now = time.monotonic()
+                    seen_heartbeat = seen_heartbeat or self._last_heartbeat_time > 0
+                    is_connected = self._get_active_app_count(3.0) > 0
                     app_restarted = self._consume_app_restart_signal()
-                    replay_request = self._consume_registration_replay_request()
-                    if app_restarted:
-                        had_connection_drop = True
-
-                    if (
-                        not registration_done
-                        and registration_deadline_started_at is None
-                        and (is_connected or not wait_for_app_before_register)
-                    ):
-                        registration_deadline_started_at = time.time()
+                    if app_restarted or (last_connection_state and not is_connected):
+                        robot_states = {name: "pending" for name in robot_names}
+                        queued_reasons.clear()
+                        self._ack_by_robot.clear()
+                        self._ack_received.clear()
+                        last_publish_by_robot.clear()
+                        deadline_started = None
+                        replay_note = ""
+                        last_failure = None
 
                     dashboard.update_app_link(self._format_app_link_status(is_connected, seen_heartbeat))
                     dashboard.update_multi_operator(self._format_multi_operator_summary())
+                    for name in robot_names:
+                        ack = self._take_registration_ack(name)
+                        if ack is not None:
+                            handle_ack(ack)
 
+                    replay_request = self._consume_registration_replay_request()
                     if replay_request and is_connected:
-                        dashboard.update_registration("Re-registering")
-                        dashboard.update_status("Replaying robot registrations for joiner...")
-                        # Re-publish to /horus/registration directly so the joiner
-                        # receives registrations through the same channel as the host.
+                        dashboard.update_status("Publishing registry replay")
+                        dashboard.tick(force=True)
                         for _, _, reg_msg in entries:
                             self.publisher.publish(reg_msg)
                         ok, result = self._publish_sdk_registry_replay(entries, replay_request)
-                        if not ok:
-                            dashboard.update_registration("Failed")
-                            dashboard.update_status((result or {}).get("error") or "Registration replay failed")
-                        else:
-                            dashboard.update_registration("Registered")
-                            published = int((result or {}).get("published_count") or 0)
-                            attempts = int((result or {}).get("attempt_count") or 1)
-                            dashboard.update_status(f"Replay complete ({published} registrations, {attempts} attempts)")
+                        replay_note = (
+                            "Replay published; joiner confirmation pending"
+                            if ok else (result or {}).get("error") or "Replay publication failed"
+                        )
 
+                    registered = sum(state == "registered" for state in robot_states.values())
+                    failed = [name for name, state in robot_states.items() if state == "failed"]
+                    pending = [name for name, state in robot_states.items() if state != "registered"]
+                    registration_done = registered == len(entries)
+                    if not registration_done and deadline_started is None:
+                        if is_connected or not wait_for_app_before_register:
+                            deadline_started = now
                     if not is_connected:
-                        if not wait_for_app_before_register and not seeded_before_app:
-                            seed_all_registrations()
-                            seeded_before_app = True
-                            last_register_attempt = time.time()
-                            dashboard.update_registration("Published")
-                            dashboard.update_status("Registrations seeded; waiting for Horus App...")
-                            if (time.time() - last_topics_update) >= 1.0:
-                                update_dashboard_topics(dashboard, is_connected, registration_done)
-                                last_topics_update = time.time()
-                            last_connection_state = is_connected
-                            dashboard.tick()
-                            continue
-                        if last_connection_state:
-                            had_connection_drop = True
-                        if seen_heartbeat:
-                            dashboard.update_registration("Waiting for App")
-                        else:
-                            dashboard.update_registration("Idle")
+                        dashboard.update_registration("Waiting for App")
                         dashboard.update_status("")
-                        if (time.time() - last_topics_update) >= 1.0:
-                            update_dashboard_topics(dashboard, is_connected, registration_done)
-                            last_topics_update = time.time()
-                        last_connection_state = is_connected
-                        dashboard.tick()
-                        continue
-
-                    if self._ack_received.is_set() or self._ack_by_robot:
-                        self._ack_received.clear()
-                        pending = list(self._ack_by_robot.items())
-                        self._ack_by_robot.clear()
-                        if not pending and isinstance(self._last_ack_data, dict):
-                            last_robot = self._last_ack_data.get("robot_name")
-                            if last_robot:
-                                pending = [(last_robot, self._last_ack_data)]
-                        for _, ack in pending:
-                            handle_ack(ack)
-
-                    states = list(robot_states.values())
-                    any_failed = any(state == "failed" for state in states)
-                    any_queued = any(state == "queued" for state in states)
-                    any_pending = any(state == "pending" for state in states)
-                    all_registered = bool(states) and all(state == "registered" for state in states)
-                    registration_done = all_registered
-
-                    if (
-                        not keep_alive
-                        and not registration_done
-                        and registration_deadline_started_at is not None
-                        and (time.time() - registration_deadline_started_at) >= timeout_sec
-                    ):
-                        dashboard.update_registration("Failed")
-                        dashboard.update_status("Registration timeout")
-                        time.sleep(1.0)
-                        return False, {"error": "Registration timeout"}
-
-                    if (time.time() - last_topics_update) >= 1.0:
-                        update_dashboard_topics(dashboard, is_connected, registration_done)
-                        last_topics_update = time.time()
-
-                    if any_failed:
-                        dashboard.update_registration("Failed")
-                        dashboard.update_status(last_failure or "Registration failed")
-                        dashboard.tick()
-                        continue
-
-                    queued_status = ""
-                    if any_queued:
-                        queued_status = self._resolve_dashboard_queued_status(queued_reasons)
-
-                    if not registration_done:
-                        if not is_connected:
-                            if any_queued:
-                                dashboard.update_registration("Queued")
-                                dashboard.update_status(queued_status)
-                            else:
-                                dashboard.update_registration("Idle")
-                                dashboard.update_status("")
-                            dashboard.tick()
-                            continue
-                        if any_queued:
-                            dashboard.update_registration("Queued")
-                            dashboard.update_status(queued_status or "Waiting for Workspace")
-                            retry_interval = 2.0
-                        else:
-                            retry_interval = 1.0
-
-                        if time.time() - last_register_attempt < retry_interval:
-                            dashboard.tick()
-                            continue
-                        last_register_attempt = time.time()
-
-                        if not any_queued:
-                            dashboard.update_registration("Registering")
-                            dashboard.update_status("Registering robots...")
-                        ok, result = register_all(dashboard)
-                        if not ok:
-                            if keep_alive:
-                                dashboard.update_registration("Idle")
-                                dashboard.update_status("")
-                                dashboard.tick()
-                                continue
-                            return False, result
-
-                        states = list(robot_states.values())
-                        any_queued = any(state == "queued" for state in states)
-                        all_registered = bool(states) and all(state == "registered" for state in states)
-                        registration_done = all_registered
-                        if any_queued:
-                            queued_status = self._resolve_dashboard_queued_status(queued_reasons)
-
-                        if all_registered:
-                            if not keep_alive:
-                                time.sleep(1.0)
-                                return True, result
-                            dashboard.update_registration("Registered")
-                            dashboard.update_status("")
-                            last_connection_state = is_connected
-                            continue
-
-                        if any_queued:
-                            dashboard.update_registration("Queued")
-                            dashboard.update_status(queued_status or "Waiting for Workspace")
-                            dashboard.tick()
-                            continue
-
-                        dashboard.update_registration("Idle")
-                        dashboard.update_status("")
-                        dashboard.tick()
-                        continue
-
-                    if is_connected:
-                        ip_str = f" ({self._remote_ip})" if self._remote_ip else ""
-                        if had_connection_drop and (not last_connection_state or app_restarted):
-                            dashboard.update_registration("Re-registering")
-                            dashboard.update_status(f"Re-registering{ip_str}...")
-                            ok, result = register_all(dashboard, force=True)
-                            had_connection_drop = False
-
-                            states = list(robot_states.values())
-                            any_queued = any(state == "queued" for state in states)
-                            all_registered = bool(states) and all(state == "registered" for state in states)
-                            registration_done = all_registered
-                            if any_queued:
-                                queued_status = self._resolve_dashboard_queued_status(queued_reasons)
-
-                            if not ok:
-                                dashboard.update_registration("Failed")
-                                dashboard.update_status((result or {}).get("error") or "Registration failed")
-                            elif all_registered:
-                                dashboard.update_registration("Registered")
-                                dashboard.update_status("")
-                            elif any_queued:
-                                dashboard.update_registration("Queued")
-                                dashboard.update_status(queued_status or "Waiting for Workspace")
-                        else:
-                            dashboard.update_registration("Registered")
-                            dashboard.update_status("")
+                    elif failed:
+                        dashboard.update_registration(f"Failed ({registered}/{len(entries)} acknowledged)")
+                        dashboard.update_status(f"{', '.join(failed)}: {last_failure}")
+                    elif registration_done:
+                        dashboard.update_registration(f"Registered ({registered}/{len(entries)})")
+                        dashboard.update_status(replay_note)
+                    elif queued_reasons:
+                        dashboard.update_registration(f"Queued ({registered}/{len(entries)} acknowledged)")
+                        dashboard.update_status(self._resolve_dashboard_queued_status(queued_reasons))
                     else:
-                        dashboard.update_registration("Registered")
-                        dashboard.update_status("")
+                        timed_out = deadline_started is not None and now - deadline_started >= timeout_sec
+                        dashboard.update_registration(f"{'Retrying' if timed_out else 'Registering'} ({registered}/{len(entries)} acknowledged)")
+                        dashboard.update_status("Awaiting: " + ", ".join(pending))
 
-                    last_connection_state = is_connected
+                    if (is_connected or not wait_for_app_before_register) and now - last_publish >= 0.25:
+                        eligible = [
+                            entry for entry in entries
+                            if robot_states[entry[0].name] not in {"registered", "failed"}
+                            and now - last_publish_by_robot.get(entry[0].name, float("-inf")) >= 2.0
+                        ]
+                        if eligible:
+                            robot, _, msg = min(
+                                eligible, key=lambda entry: last_publish_by_robot.get(entry[0].name, float("-inf"))
+                            )
+                            self.publisher.publish(msg)
+                            last_publish_by_robot[robot.name] = now
+                            last_publish = now
+
+                    if now - last_topics_update >= 1.0:
+                        dashboard.update_bridge(self._get_dashboard_bridge_status(is_connected))
+                        update_dashboard_topics(dashboard, is_connected, registration_done)
+                        last_topics_update = now
                     dashboard.tick()
+                    last_connection_state = is_connected
+                    if not keep_alive:
+                        if failed:
+                            return False, {"error": last_failure or "Registration failed", "robots": failed}
+                        if registration_done:
+                            return True, {"success": True}
+                        if deadline_started is not None and now - deadline_started >= timeout_sec:
+                            dashboard.update_registration("Failed")
+                            dashboard.update_status("Registration timeout")
+                            return False, {"error": "Registration timeout", "robots": pending}
 
         except KeyboardInterrupt:
             cli.print_info("Registration/Monitoring cancelled by user.")
@@ -3310,6 +3107,7 @@ class RobotRegistryClient:
             traceback.print_exc()
             return False, {"error": str(e)}
         finally:
+            board.set_silent(previous_silent)
             self._registration_lock.release()
 
     def unregister_robot(

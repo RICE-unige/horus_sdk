@@ -120,6 +120,57 @@ def test_nvdiffrast_mesh_depth_matches_quest_camera_contract():
         _assert_plane_is_world_locked(_render(renderer))
 
 
+def test_stereo_texture_and_topology_cache_matches_uncached_reference(monkeypatch):
+    torch = pytest.importorskip("torch")
+    dr = pytest.importorskip("nvdiffrast.torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    # Test rendering, not TorchInductor compilation or its filesystem cache.
+    monkeypatch.setattr(NvdiffrastMeshRenderer, "_compile_helper", staticmethod(lambda _torch, f: f))
+    vertices, faces, colors = _surface_mesh()
+    uvs = np.asarray(((0, 0), (1, 0), (0, 1), (1, 1)), dtype=np.float32)
+    atlas = np.random.default_rng(7).integers(0, 256, (256, 256, 3), dtype=np.uint8)
+    rects = np.tile(np.array((0, 0, 256, 256)), (2, 1))
+    mip_calls = []
+    hash_calls = []
+    make_mip, make_hash = dr.texture_construct_mip, dr.antialias_construct_topology_hash
+
+    def mip(*args, **kwargs):
+        mip_calls.append(args[0].shape)
+        return make_mip(*args, **kwargs)
+
+    def topology(*args, **kwargs):
+        hash_calls.append(args[0].shape)
+        return make_hash(*args, **kwargs)
+
+    monkeypatch.setattr(dr, "texture_construct_mip", mip)
+    monkeypatch.setattr(dr, "antialias_construct_topology_hash", topology)
+    with NvdiffrastMeshRenderer(vertices, faces, colors, uvs=uvs,
+                                texture_atlas=atlas, texture_rects=rects) as renderer:
+        params = dict(vertical_fov_deg=62, projections=(PROJECTION, PROJECTION), near_m=0.1, far_m=20)
+        positions, rotations = zip(*CAMERA_POSES)
+        first, depth, _ = renderer.render_views(positions, rotations, WIDTH, HEIGHT, **params)
+        second, _, _ = renderer.render_views(positions, rotations, WIDTH, HEIGHT, **params)
+        assert renderer._texture.shape[0] == 1
+        assert len(mip_calls) == len(hash_calls) == 1
+        assert np.array_equal(first, second)
+        original_texture, original_antialias = dr.texture, dr.antialias
+
+        def uncached_texture(texture, uv, *args, **kwargs):
+            kwargs.pop("mip", None)
+            return original_texture(texture.expand(uv.shape[0], -1, -1, -1).contiguous(), uv, *args, **kwargs)
+
+        def uncached_antialias(*args, **kwargs):
+            kwargs.pop("topology_hash", None)
+            return original_antialias(*args, **kwargs)
+
+        monkeypatch.setattr(dr, "texture", uncached_texture)
+        monkeypatch.setattr(dr, "antialias", uncached_antialias)
+        reference, reference_depth, _ = renderer.render_views(positions, rotations, WIDTH, HEIGHT, **params)
+        assert np.array_equal(first, reference)
+        assert np.array_equal(depth, reference_depth)
+
+
 def test_cuda_point_depth_matches_quest_camera_contract():
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
@@ -128,6 +179,43 @@ def test_cuda_point_depth_matches_quest_camera_contract():
     with CudaPointRenderer(len(points)) as renderer:
         renderer.upload(points, colors)
         _assert_plane_is_world_locked(_render(renderer))
+
+
+def test_cuda_point_device_outputs_match_host_and_survive_later_frames():
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is unavailable")
+    from horus.remote_rendering.v3_renderer import encode_robust_depth_tensor
+
+    points, colors = _surface_points()
+    positions, rotations = zip(*CAMERA_POSES)
+    params = dict(vertical_fov_deg=62, projections=(PROJECTION, PROJECTION),
+                  near_m=0.1, far_m=20, point_radius=1)
+    stream = torch.cuda.Stream()
+    with CudaPointRenderer(len(points)) as renderer:
+        renderer.upload(points, colors)
+        host_color, host_depth, _ = renderer.render_views(
+            positions, rotations, WIDTH, HEIGHT, **params)
+        with torch.cuda.stream(stream):
+            device_color, device_depth, _ = renderer._render_views(
+                positions, rotations, WIDTH, HEIGHT, device_outputs=True, **params)
+            video_color, video_depth, _ = renderer.render_video_views_cuda(
+                positions, rotations, WIDTH, HEIGHT, visibility_mask_height=60, **params)
+            expected_depth = encode_robust_depth_tensor(
+                torch, torch.as_tensor(host_depth, device="cuda"), 60, 0.1, 20)
+        stream.synchronize()
+        assert device_color.is_cuda and device_depth.is_cuda
+        assert video_color.is_cuda and video_depth.is_cuda
+        assert np.array_equal(device_color.cpu().numpy(), host_color)
+        assert np.array_equal(device_depth.cpu().numpy(), host_depth)
+        assert np.array_equal(video_color.cpu().numpy(), host_color)
+        assert torch.equal(video_depth, expected_depth)
+        saved_color, saved_depth = video_color.clone(), video_depth.clone()
+        # Reallocate native scratch at a different size, then destroy it. Outputs
+        # already submitted to an asynchronous encoder must remain owned and intact.
+        renderer.render_views(positions, rotations, WIDTH * 2, HEIGHT * 2, **params)
+    assert torch.equal(video_color, saved_color)
+    assert torch.equal(video_depth, saved_depth)
 
 
 FLOOR_POSITION = np.asarray((0.0, 2.0, -3.0), dtype=np.float32)

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 import sys
@@ -57,7 +58,7 @@ INTEGRATION_PAGES = [
 ]
 
 STATUS_PAGE = ROOT / "docs" / "reference" / "implementation-status.md"
-EXPECTED_STUB_PATHS = [
+EXPECTED_COMPATIBILITY_PATHS = [
     "python/horus/bridge/ros2.py",
     "python/horus/bridge/unity_tcp.py",
     "python/horus/topics.py",
@@ -66,7 +67,6 @@ EXPECTED_STUB_PATHS = [
     "python/horus/robot/task.py",
     "python/horus/robot/dataviz.py",
     "python/horus/plugins/rosbot.py",
-    "python/horus/core/exceptions.py",
 ]
 
 
@@ -109,13 +109,22 @@ def check_integration_pages() -> None:
             fail(f"{page.relative_to(ROOT)} must include at least one runnable ```bash flow.")
 
 
-def check_stub_status_page() -> None:
+def check_implementation_status_page() -> None:
     content = read_text(STATUS_PAGE)
-    if "Status: Stub (not usable yet)" not in content:
-        fail(f"{STATUS_PAGE.relative_to(ROOT)} must include explicit stub status text.")
-    for path in EXPECTED_STUB_PATHS:
+    for path in EXPECTED_COMPATIBILITY_PATHS:
         if path not in content:
-            fail(f"{STATUS_PAGE.relative_to(ROOT)} is missing stub module path: {path}")
+            fail(f"{STATUS_PAGE.relative_to(ROOT)} is missing compatibility module path: {path}")
+        if not (ROOT / path).is_file():
+            fail(f"Documented compatibility module does not exist: {path}")
+    if "deprecated empty compatibility placeholders" not in content:
+        fail("Implementation status must distinguish empty placeholders from active re-exports.")
+    exception_path = "python/horus/core/exceptions.py"
+    if exception_path not in content:
+        fail(f"Implementation status must document {exception_path}.")
+    tree = ast.parse((ROOT / exception_path).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name not in content:
+            fail(f"Implementation status is missing SDK exception: {node.name}")
 
 
 def check_installer_command() -> None:
@@ -182,7 +191,7 @@ def main() -> None:
     check_required_docs()
     check_implemented_api_pages()
     check_integration_pages()
-    check_stub_status_page()
+    check_implementation_status_page()
     check_installer_command()
     check_internal_links()
     check_sidebar_refs()

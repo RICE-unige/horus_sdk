@@ -1,0 +1,194 @@
+{
+  "action": "register",
+  "capabilities": {
+    "communicative": false,
+    "controllable": true,
+    "guidable": false,
+    "observable": true,
+    "taskable": true,
+    "teleoperable": true
+  },
+  "control": {
+    "drive_topic": "/hint_demo/cmd_vel",
+    "tasks": {
+      "go_to_point": {
+        "allow_unbounded_placement": false,
+        "cancel_topic": "/hint_demo/goal_cancel",
+        "enabled": true,
+        "frame_id": "map",
+        "goal_topic": "/hint_demo/goal_pose",
+        "max_altitude_m": 10.0,
+        "min_altitude_m": 0.0,
+        "position_tolerance_m": 0.2,
+        "status_topic": "/hint_demo/goal_status",
+        "yaw_tolerance_deg": 12.0
+      },
+      "waypoint": {
+        "enabled": true,
+        "frame_id": "map",
+        "path_topic": "/hint_demo/waypoint_path",
+        "position_tolerance_m": 0.2,
+        "status_topic": "/hint_demo/waypoint_status",
+        "yaw_tolerance_deg": 12.0
+      }
+    },
+    "teleop": {
+      "axes": {
+        "angular_z_max_rps": 1.2,
+        "deadzone": 0.15,
+        "expo": 1.7,
+        "invert_angular_z": false,
+        "invert_linear_x": false,
+        "invert_linear_y": false,
+        "invert_linear_z": false,
+        "linear_xy_max_mps": 1.0,
+        "linear_z_max_mps": 0.8
+      },
+      "command_topic": "/hint_demo/cmd_vel",
+      "custom_passthrough_only": false,
+      "deadman": {
+        "policy": "either_grip_trigger",
+        "timeout_ms": 200
+      },
+      "discrete": {
+        "angular_z_step_rps": 0.9,
+        "linear_xy_step_mps": 0.6,
+        "linear_z_step_mps": 0.4,
+        "threshold": 0.6
+      },
+      "enabled": true,
+      "head_pose_topic": "/horus/teleop/hint_demo/head_pose",
+      "publish_rate_hz": 30.0,
+      "raw_input_topic": "/hint_demo/joy",
+      "response_mode": "analog",
+      "robot_profile": "wheeled"
+    }
+  },
+  "controller_hints": {
+    "config_hash": "e255a0bdaeece8e43ec0b19c215bcc93e3113c759bfc6d9bbb3e4484ca0f3fff",
+    "profiles": [
+      {
+        "bindings": [
+          {
+            "action_id": "move_forward",
+            "control": "left_stick_y",
+            "label": "Forward/back"
+          },
+          {
+            "action_id": "lamp",
+            "control": "right_secondary",
+            "label": "Inspection light"
+          },
+          {
+            "action_id": "tool_mode",
+            "control": "left_primary",
+            "label": "Mode: grasp"
+          }
+        ],
+        "mode": "minimap",
+        "profile_id": "inspection"
+      },
+      {
+        "bindings": [
+          {
+            "action_id": "move_forward",
+            "control": "left_stick_y",
+            "label": "Forward/back"
+          },
+          {
+            "action_id": "lamp",
+            "control": "right_secondary",
+            "label": "Inspection light"
+          },
+          {
+            "action_id": "tool_mode",
+            "control": "left_primary",
+            "label": "Mode: grasp"
+          }
+        ],
+        "mode": "immersive",
+        "profile_id": "inspection"
+      },
+      {
+        "bindings": [
+          {
+            "action_id": "move_forward",
+            "control": "left_stick_y",
+            "label": "Forward/back"
+          },
+          {
+            "action_id": "lamp",
+            "control": "right_secondary",
+            "label": "Inspection light"
+          },
+          {
+            "action_id": "tool_mode",
+            "control": "left_primary",
+            "label": "Mode: grasp"
+          }
+        ],
+        "mode": "follow_leader",
+        "profile_id": "inspection"
+      },
+      {
+        "bindings": [
+          {
+            "action_id": "move_forward",
+            "control": "left_stick_y",
+            "label": "Forward/back"
+          },
+          {
+            "action_id": "lamp",
+            "control": "right_secondary",
+            "label": "Inspection light"
+          },
+          {
+            "action_id": "tool_mode",
+            "control": "left_primary",
+            "label": "Mode: grasp"
+          }
+        ],
+        "mode": "teach",
+        "profile_id": "inspection"
+      }
+    ],
+    "schema_version": 1,
+    "state_timeout_seconds": 2.0,
+    "state_topic": "/hint_demo/controller_hints"
+  },
+  "entity_kind": "robot",
+  "global_visualizations": [],
+  "robot_manager_config": {
+    "enabled": true,
+    "prefab_asset_path": "Assets/Prefabs/UI/RobotManager.prefab",
+    "prefab_resource_path": "",
+    "sections": {
+      "data_viz": true,
+      "status": true,
+      "tasks": true,
+      "teleop": true
+    }
+  },
+  "robot_name": "hint_demo",
+  "robot_type": "wheeled",
+  "ros_binding": {
+    "base_frame": "base_link",
+    "logical_name": "hint_demo",
+    "tf_mode": "prefixed",
+    "tf_prefix": "hint_demo",
+    "topic_mode": "prefixed",
+    "topic_prefix": "/hint_demo"
+  },
+  "sensors": [],
+  "timestamp": 0.0,
+  "visualizations": [
+    {
+      "color": "#ff0000",
+      "enabled": true,
+      "frame": "hint_demo/base_link",
+      "scope": "robot",
+      "topic": "/tf",
+      "type": "coordinate_axes"
+    }
+  ]
+}

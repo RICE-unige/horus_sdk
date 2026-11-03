@@ -56,6 +56,7 @@ class RobotType(Enum):
     AERIAL = "aerial"
     DRONE = "drone"
     HUMAN = "human"
+    HUMANOID = "humanoid"
 
 
 @dataclass
@@ -370,6 +371,16 @@ class Robot:
             ).to_payload(),
         )
 
+    def configure_teaching(self, config) -> None:
+        """Opt into HORUS Teach with a validated :class:`TeachConfig`."""
+        from horus.teaching import TeachConfig
+
+        if self.robot_type != RobotType.HUMANOID or self.get_metadata("entity_kind") == "field_teammate":
+            raise ValueError("Teach is available only to explicitly registered humanoid robots")
+        if not isinstance(config, TeachConfig):
+            raise TypeError("configure_teaching expects TeachConfig")
+        self.add_metadata("teaching_config", config.to_dict())
+
     def configure_teleop(
         self,
         *,
@@ -427,6 +438,13 @@ class Robot:
             ).to_payload(),
         )
 
+    def configure_controller_hints(self, hints=None) -> None:
+        """Describe active controller inputs without binding or authorizing commands."""
+        from ..controller_hints import ControllerHints
+        if hints is not None and not isinstance(hints, ControllerHints):
+            raise TypeError("Expected ControllerHints or None")
+        self.add_metadata("controller_hints", hints.to_dict() if hints is not None else None)
+
     def configure_go_to_point_task(
         self,
         *,
@@ -439,6 +457,7 @@ class Robot:
         yaw_tolerance_deg: Optional[float] = None,
         min_altitude_m: Optional[float] = None,
         max_altitude_m: Optional[float] = None,
+        allow_unbounded_placement: Optional[bool] = None,
     ) -> None:
         """Configure the Robot Manager Go-To Point task."""
         task_config = dict(self.metadata.get("task_config") or {})
@@ -452,6 +471,7 @@ class Robot:
             yaw_tolerance_deg=yaw_tolerance_deg,
             min_altitude_m=min_altitude_m,
             max_altitude_m=max_altitude_m,
+            allow_unbounded_placement=allow_unbounded_placement,
         ).to_payload()
         self.add_metadata("task_config", task_config)
 
@@ -492,6 +512,7 @@ class Robot:
         yaw_tolerance_deg: Optional[float] = None,
         min_altitude_m: Optional[float] = None,
         max_altitude_m: Optional[float] = None,
+        allow_unbounded_placement: Optional[bool] = None,
     ) -> None:
         """Configure Go-To Point and Draw Waypoint task topics together."""
         task_config = dict(self.metadata.get("task_config") or {})
@@ -508,6 +529,7 @@ class Robot:
             yaw_tolerance_deg=yaw_tolerance_deg,
             min_altitude_m=min_altitude_m,
             max_altitude_m=max_altitude_m,
+            allow_unbounded_placement=allow_unbounded_placement,
         ).to_payload()
         task_config.update(navigation_tasks)
         self.add_metadata("task_config", task_config)
@@ -974,15 +996,6 @@ class Robot:
             self.add_metadata("horus_topics", topics)
 
             if topics:
-                try:
-                    from ..utils.topic_status import get_topic_status_board
-
-                    board = get_topic_status_board()
-                    for topic in topics:
-                        board.on_subscribe(topic)
-                except Exception:
-                    logger.debug("Failed to update topic status board after robot registration", exc_info=True)
-
                 # Hand topics to the ROS graph monitor so it can reconcile real state
                 try:
                     from ..utils.topic_monitor import get_topic_monitor

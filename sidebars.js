@@ -36,6 +36,12 @@ const sidebars = {
         "python-sdk/dataviz",
         "python-sdk/registration",
         "python-sdk/field-teammate",
+        "python-sdk/teaching-demo",
+        "python-sdk/teaching-camera-portals",
+        "python-sdk/teaching-data",
+        "python-sdk/teaching-actions-tasks",
+        "python-sdk/teaching-input",
+        "python-sdk/controller-hints",
         "python-sdk/topic-monitoring"
       ]
     },
@@ -45,6 +51,9 @@ const sidebars = {
       items: [
         "native-sdk/cpp",
         "native-sdk/rust",
+        "native-sdk/mapping",
+        "native-sdk/models-and-teach",
+        "native-sdk/remote-rendering",
         "native-sdk/performance"
       ]
     },

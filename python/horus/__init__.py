@@ -1,6 +1,10 @@
 """HORUS Mixed Reality Robot Management SDK."""
 
 from .client import Client
+from .controller_hints import (
+    ControllerControl, ControllerHint, ControllerHintProfile, ControllerHints,
+    ControllerHintContext, ControllerHintLabel, ControllerHintUpdate, TeleopHintMode,
+)
 from .color import ColorManager, ColorScheme, RGBColor
 from .core import (
     Event,
@@ -45,6 +49,8 @@ if os.getenv("HORUS_SDK_NO_BANNER", "").strip().lower() not in {"1", "true", "ye
     show_ascii_art()
 
 __all__ = [
+    "ControllerControl", "ControllerHint", "ControllerHintProfile", "ControllerHints",
+    "ControllerHintContext", "ControllerHintLabel", "ControllerHintUpdate", "TeleopHintMode",
     "Client",
     "__version__",
     "show_ascii_art",

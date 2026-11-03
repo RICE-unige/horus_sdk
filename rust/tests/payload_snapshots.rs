@@ -121,6 +121,7 @@ fn camera_webrtc_fields_snapshot() {
 }
 
 #[test]
+#[cfg(not(feature = "ros2"))]
 fn native_registration_transport_is_explicitly_unsupported() {
     let mut robot = Robot::new("transport_bot", RobotType::Wheeled);
     let dataviz = robot.create_dataviz(None);

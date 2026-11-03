@@ -48,13 +48,15 @@ public:
     EventSubscription(EventCallback callback,
                      const std::string& topic_filter,
                      EventPriority priority_filter = EventPriority::LOW);
+    EventSubscription(const EventSubscription&);
+    EventSubscription& operator=(const EventSubscription&);
     
     bool matches(const Event& event) const;
     void invoke(const Event& event) const;
     
     std::string get_id() const { return subscription_id_; }
-    bool is_active() const { return active_; }
-    void deactivate() { active_ = false; }
+    bool is_active() const { return active_.load(); }
+    void deactivate() { active_.store(false); }
     
 private:
     bool matches_topic(const std::string& event_topic, 
@@ -64,7 +66,7 @@ private:
     std::string topic_filter_;
     EventPriority priority_filter_;
     std::string subscription_id_;
-    bool active_;
+    std::atomic<bool> active_;
 };
 
 /**
@@ -144,28 +146,12 @@ public:
     std::map<std::string, size_t> get_subscriptions() const;
     
 private:
-    void process_events();
-    void dispatch_event(const Event& event);
-    
-    struct EventComparator {
-        bool operator()(const Event& a, const Event& b) const {
-            return static_cast<int>(a.priority) < static_cast<int>(b.priority);
-        }
-    };
-    
-    mutable std::recursive_mutex mutex_;
-    std::condition_variable_any queue_condition_;
-    std::priority_queue<Event, std::vector<Event>, EventComparator> event_queue_;
-    std::map<std::string, std::vector<std::shared_ptr<EventSubscription>>> subscriptions_;
-    
-    std::atomic<bool> running_;
-    std::unique_ptr<std::thread> processing_thread_;
-    size_t max_queue_size_;
-    
-    // Statistics
-    mutable std::atomic<size_t> events_published_;
-    mutable std::atomic<size_t> events_processed_;
-    mutable std::atomic<size_t> dropped_events_;
+    struct State;
+    static void process_events(std::shared_ptr<State>, std::uint64_t generation);
+    static void dispatch_event(const std::shared_ptr<State>&, const Event&);
+    std::shared_ptr<State> state_;
+    std::mutex lifecycle_mutex_;
+    std::thread processing_thread_;
 };
 
 /**

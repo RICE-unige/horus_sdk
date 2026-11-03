@@ -305,8 +305,33 @@ class GaussianSplatRenderer:
             scene.transform.source_from_world_translation,
             dtype=np.float32,
         )
+        self._render_stream = torch.cuda.Stream(device=device)
+        self._render_start = torch.cuda.Event(enable_timing=True)
+        self._render_end = torch.cuda.Event(enable_timing=True)
 
     def render_views(
+        self, *args, **kwargs,
+    ) -> tuple[np.ndarray, np.ndarray, float]:
+        started = time.perf_counter()
+        colors, depths, _ = self._render_views_cuda(*args, **kwargs)
+        return (np.ascontiguousarray(colors.cpu().numpy()),
+                np.ascontiguousarray(depths.cpu().numpy(), dtype=np.float32),
+                (time.perf_counter() - started) * 1000.0)
+
+    def render_video_views_cuda(self, *args, visibility_mask_height: int, **kwargs):
+        from .v3_renderer import encode_robust_depth_tensor
+
+        colors, depths, elapsed_ms = self._render_views_cuda(*args, **kwargs)
+        torch = self._torch
+        with torch.inference_mode(), torch.cuda.stream(self._render_stream):
+            self._render_start.record(self._render_stream)
+            packed = encode_robust_depth_tensor(
+                torch, depths, visibility_mask_height, kwargs["near_m"], kwargs["far_m"])
+            self._render_end.record(self._render_stream)
+        self._render_end.synchronize()
+        return colors, packed, elapsed_ms + self._render_start.elapsed_time(self._render_end)
+
+    def _render_views_cuda(
         self,
         camera_positions,
         camera_rotations,
@@ -375,8 +400,8 @@ class GaussianSplatRenderer:
             )
 
         torch = self._torch
-        started = time.perf_counter()
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.cuda.stream(self._render_stream):
+            self._render_start.record(self._render_stream)
             rendered, alpha, _ = self._rasterization(
                 self._means,
                 self._quaternions,
@@ -400,8 +425,6 @@ class GaussianSplatRenderer:
                 .mul(255.0)
                 .round()
                 .to(torch.uint8)
-                .cpu()
-                .numpy()
             )
             depths = rendered[..., 3].float()
             depths = torch.where(
@@ -409,14 +432,9 @@ class GaussianSplatRenderer:
                 depths,
                 torch.full_like(depths, float("inf")),
             )
-            depth_array = depths.cpu().numpy()
-            torch.cuda.synchronize()
-        elapsed_ms = (time.perf_counter() - started) * 1000.0
-        return (
-            np.ascontiguousarray(colors),
-            np.ascontiguousarray(depth_array, dtype=np.float32),
-            elapsed_ms,
-        )
+            self._render_end.record(self._render_stream)
+        self._render_end.synchronize()
+        return colors, depths, self._render_start.elapsed_time(self._render_end)
 
     def close(self) -> None:
         for name in (

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Process-local ROS environment; never changes the caller's shell or network.
+set -eo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/jazzy/setup.bash
+if [[ -f "$HOME/horus_ws/install/local_setup.bash" ]]; then
+    source "$HOME/horus_ws/install/local_setup.bash"
+fi
+export ROS_DOMAIN_ID="${HORUS_MAPPING_DOMAIN:-17}"
+export ROS_LOCALHOST_ONLY=1
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+# Use the selected workspace build, not a fallback helper checkout with other capabilities.
+export HORUS_SDK_BRIDGE_AUTOSTART_MODE=ros2
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
+export PYTHONPATH="$ROOT/python${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+PYTHON=/usr/bin/python3
+if [[ "${1:-}" == remote-* ]]; then
+    # Optional machine-local dependency paths, deliberately outside tracked code.
+    if [[ -f "$ROOT/python/examples/.local_assets/mapping-runtime.sh" ]]; then
+        source "$ROOT/python/examples/.local_assets/mapping-runtime.sh"
+    fi
+    PYTHON="${HORUS_REMOTE_PYTHON:-python3}"
+    if ! command -v "$PYTHON" >/dev/null 2>&1; then
+        printf 'HORUS remote Python is unavailable: %s\nComplete the coordinated runtime provisioning first.\n' "$PYTHON" >&2
+        exit 2
+    fi
+fi
+exec "$PYTHON" "$ROOT/python/examples/mapping_visualization_demo.py" "$@"

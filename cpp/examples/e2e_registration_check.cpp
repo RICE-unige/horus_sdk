@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <iostream>
 
 namespace {
 std::optional<std::string> get_arg(int argc, char** argv, const std::string& name) {
@@ -38,15 +39,20 @@ int main(int argc, char** argv) {
 
     auto dataviz = robot.create_dataviz();
     horus::bridge::RobotRegistryClient client;
-    const auto payload = client.build_robot_config_dict(robot, *dataviz);
-
-    if (payload.robot_name != robot_name || payload.sensors.empty()) {
-        horus::utils::print_error("Native registration payload check failed");
+    for (int i=1; i<argc; ++i) {
+        if (std::string(argv[i]) == "--payload-only") {
+            std::cout << horus::bridge::registration_json(client.build_robot_config_dict(robot,*dataviz)) << '\n';
+            return 0;
+        }
+    }
+    const auto timeout = std::stod(get_arg(argc,argv,"--timeout").value_or("10"));
+    auto [ok, result] = client.register_robot(robot,*dataviz,timeout,false,true);
+    if (!ok) {
+        std::cerr << std::any_cast<std::string>(result.at("error")) << '\n';
         return 2;
     }
-
-    horus::utils::print_success("Native registration payload check OK");
-    horus::utils::print_info("Robot name: " + payload.robot_name);
-    horus::utils::print_info("Live bridge registration is Python-only for now.");
+    for (int i=1; i<argc; ++i) {
+        if (std::string(argv[i]) == "--unregister" && !client.unregister_robot(robot.get_name(),timeout).first) return 3;
+    }
     return 0;
 }

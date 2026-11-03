@@ -20,6 +20,7 @@ exclude = [
 [features]
 default = []
 ros2 = []
+nvenc = []
 
 [dependencies]
 tokio = { version = "1.35", features = ["full"] }

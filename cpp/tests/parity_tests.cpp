@@ -69,6 +69,14 @@ static void test_payload_parity_rules() {
         "front_camera",
         "test_bot/camera_link",
         "/test_bot/camera/image_raw/compressed");
+    horus::robot::Camera::WebRtcTransportOptions profiles;
+    profiles.minimap_bitrate_kbps = 1500;
+    profiles.minimap_framerate = 15;
+    profiles.teleop_bitrate_kbps = 3000;
+    profiles.teleop_framerate = 30;
+    profiles.minimap_priority = 2;
+    profiles.teleop_priority = 8;
+    camera->configure_webrtc_transport(profiles);
     robot.add_sensor(camera);
 
     auto dataviz = robot.create_dataviz();
@@ -94,6 +102,12 @@ static void test_payload_parity_rules() {
     assert(camera_payload.streaming_type == "ros");
     assert(camera_payload.minimap_streaming_type == "ros");
     assert(camera_payload.teleop_streaming_type == "webrtc");
+    assert(camera_payload.webrtc_minimap_bitrate_kbps == 1500);
+    assert(camera_payload.webrtc_minimap_framerate == 15);
+    assert(camera_payload.webrtc_teleop_bitrate_kbps == 3000);
+    assert(camera_payload.webrtc_teleop_framerate == 30);
+    assert(camera_payload.webrtc_minimap_priority == 2);
+    assert(camera_payload.webrtc_teleop_priority == 8);
 }
 
 static void test_legacy_streaming_fallback() {
@@ -389,8 +403,16 @@ static void test_field_teammate_capability_contract() {
     const auto topics = any_value<std::map<std::string, std::any>>(ft, "topics");
     assert(any_value<std::string>(topics, "first_person_video") ==
            "/field_teammate_1/fpv/image_raw/compressed");
+    assert(any_value<std::string>(topics, "first_person_video_camera_pose") ==
+           "/field_teammate_1/fpv/camera_pose");
+    assert(any_value<std::string>(topics, "first_person_video_camera_info") ==
+           "/field_teammate_1/fpv/camera_info");
     assert(any_value<std::string>(topics, "guidance_request") ==
            "/field_teammate_1/guidance/request");
+    const auto profile = any_value<std::map<std::string, std::any>>(ft, "profile");
+    assert(any_value<double>(profile, "human_height_m") == 1.75);
+    assert(any_value<std::string>(profile, "sex") == "unspecified");
+    assert(any_value<std::string>(profile, "body_model") == "meta_avatar");
 
     // A correctly built teammate is safe.
     assert(!horus::bridge::validate_field_teammate_safety(payload).has_value());
@@ -417,7 +439,9 @@ int main() {
     test_camera_topic_profiles();
     test_control_overrides_and_ros_binding();
     test_workspace_scale();
+#if !defined(HORUS_ROS2_ENABLED)
     test_registration_transport_is_explicitly_unsupported();
+#endif
     test_robot_description_manifest_uses_stable_payload_hash();
     test_robot_description_manifest_counts_collisions();
     test_visualization_payloads();

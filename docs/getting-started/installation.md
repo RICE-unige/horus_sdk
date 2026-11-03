@@ -8,8 +8,10 @@ sidebar_position: 1
 ## Supported environments
 
 - Ubuntu 24.04 with ROS 2 Jazzy
-- Ubuntu 22.04 with ROS 2 Humble
-- WSL2 Ubuntu when Quest connectivity is handled correctly
+- WSL2 Ubuntu 24.04 when Quest connectivity is handled correctly
+
+The full installer targets Jazzy. Using the Python SDK with a separate, older
+ROS bridge is a manual compatibility task, not a supported full Humble install.
 
 ## Choose an installation path
 
@@ -35,11 +37,13 @@ Use this when you are developing the SDK itself:
 
 ```bash
 cd ~/horus_sdk
-python3 -m venv .venv
+source /opt/ros/jazzy/setup.bash
+/usr/bin/python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-npm ci
 ```
+
+Run `npm ci` separately only when developing the documentation website.
 
 ## ROS 2 prerequisites
 
@@ -64,4 +68,6 @@ PYTHONPATH=python python3 -m pytest -q
 
 ## Humble note
 
-ROS 2 Humble remains supported for the SDK, but full bridge validation is still safer on Jazzy when you need current WebRTC-capable `horus_unity_bridge` behavior.
+The current full bridge uses `rclcpp::GenericClient`, which is unavailable in
+Humble. The installer rejects that configuration before changing the system;
+it does not silently install a backend without the MR bridge.

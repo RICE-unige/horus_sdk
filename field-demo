@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Keep sensor clients, ROS discovery and launch settings local to this command.
+set -eo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/jazzy/setup.bash
+if [[ -f "$HOME/horus_ws/install/local_setup.bash" ]]; then
+    source "$HOME/horus_ws/install/local_setup.bash"
+fi
+if [[ -f "$ROOT/python/examples/.local_assets/field-runtime.sh" ]]; then
+    source "$ROOT/python/examples/.local_assets/field-runtime.sh"
+fi
+if [[ -n "${HORUS_NVBLOX_MEMORY_PREFIX:-}" && -f "$HORUS_NVBLOX_MEMORY_PREFIX/local_setup.bash" ]]; then
+    source "$HORUS_NVBLOX_MEMORY_PREFIX/local_setup.bash"
+fi
+export ROS_DOMAIN_ID="${HORUS_FIELD_DOMAIN:-20}"
+export ROS_LOCALHOST_ONLY=1
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export HORUS_SDK_BRIDGE_AUTOSTART_MODE=ros2
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
+PYTHON="${HORUS_FIELD_PYTHON:-/usr/bin/python3}"
+SITE="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+export PYTHONPATH="$ROOT/python:$SITE${HORUS_HL2SS_VIEWER_PATH:+:$HORUS_HL2SS_VIEWER_PATH}${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+exec "$PYTHON" "$ROOT/python/examples/tools/field_teammate_demo.py" "$@"

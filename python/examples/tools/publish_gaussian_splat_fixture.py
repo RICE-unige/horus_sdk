@@ -181,9 +181,8 @@ def parse_args() -> argparse.Namespace:
         dest="sh_prune",
         action="store_true",
         help="OPT-IN: actually drop spherical-harmonics bands above --sh-order from the runtime PLY "
-             "before chunking. Default off (no prune). WARNING: the HORUS Unity splat importer "
-             "(GaussianSplatPlyLoader) does NOT derive SH order from the f_rest property count -- it "
-             "assumes a fixed order-3 (45 f_rest) layout and zero-fills any missing bands. Pruning is "
+             "before chunking. Default off (no prune). The HORUS Unity importer supports SH degrees "
+             "0 through 3 and zero-fills missing higher bands. Pruning is "
              "therefore only image-lossless when --sh-order is >= the renderer's configured SH order "
              "(GaussianSplatMapVisualizer sh_order / m_SHOrder). Set --sh-order explicitly and match it "
              "to the renderer before enabling this.",

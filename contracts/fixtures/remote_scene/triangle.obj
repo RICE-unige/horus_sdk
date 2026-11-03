@@ -1,0 +1,9 @@
+mtllib triangle.mtl
+v 0 0 2
+v 1 0 2
+v 0 1 2
+vt 0 0
+vt 1 0
+vt 0 1
+usemtl red
+f 1/1 2/2 3/3

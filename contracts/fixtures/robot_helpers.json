@@ -1,0 +1,56 @@
+{
+  "tasks": {
+    "go_to_point": {
+      "enabled": true,
+      "goal_topic": "/goal",
+      "cancel_topic": "/native_helpers/goal_cancel",
+      "status_topic": "/native_helpers/goal_status",
+      "frame_id": "world",
+      "position_tolerance_m": 0.2,
+      "yaw_tolerance_deg": 12.0,
+      "min_altitude_m": 1.0,
+      "max_altitude_m": 5.0,
+      "allow_unbounded_placement": true
+    },
+    "waypoint": {
+      "enabled": false,
+      "path_topic": "/route",
+      "status_topic": "/native_helpers/waypoint_status",
+      "frame_id": "map",
+      "position_tolerance_m": 0.2,
+      "yaw_tolerance_deg": 12.0
+    }
+  },
+  "workspace": {
+    "experiment": {
+      "enabled": true,
+      "contract_version": "experiment.v1"
+    }
+  },
+  "capabilities": {
+    "controllable": true,
+    "teleoperable": false,
+    "taskable": true,
+    "guidable": true,
+    "observable": true,
+    "communicative": false
+  },
+  "metadata": {
+    "custom": {
+      "enabled": true
+    },
+    "waypoint": {
+      "enabled": false,
+      "path_topic": "/route",
+      "frame_id": "map"
+    },
+    "go_to_point": {
+      "enabled": true,
+      "goal_topic": "/goal",
+      "frame_id": "world",
+      "min_altitude_m": 1,
+      "max_altitude_m": 5,
+      "allow_unbounded_placement": true
+    }
+  }
+}

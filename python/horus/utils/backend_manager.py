@@ -1,9 +1,13 @@
 import os
 import logging
 import re
+import shlex
+import signal
 import socket
 import subprocess
+import threading
 import time
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +16,9 @@ class BackendManager:
     def __init__(self, backend_type):
         self.backend_type = backend_type
         self.backend_process = None
+        self._output_tail = deque(maxlen=128)
+        self._output_lock = threading.Lock()
+        self._output_reader = None
         self._shutdown_called = False  # Prevent duplicate shutdowns
         self.backend_configs = {
             "ros2": {
@@ -25,33 +32,47 @@ class BackendManager:
                 "unity_port": 10000,
             },
         }
+        if backend_type not in self.backend_configs:
+            raise ValueError(f"Unsupported backend type: {backend_type}")
 
     def launch_backend(self):
         """Launch the appropriate backend"""
         from .spinner import Spinner
+        from . import cli
 
         if not self._is_backend_running():
             spinner = Spinner(f"Starting {self.backend_type.upper()} backend")
             spinner.start()
 
-            self._start_backend_process()
-            self._wait_for_backend_ready_silent()
-
-            spinner.stop()
+            try:
+                self._start_backend_process()
+                self._wait_for_backend_ready_silent()
+            except Exception as exc:
+                self.stop_backend()
+                tail = self._backend_output_tail()
+                detail = f"\nBackend output:\n{tail}" if tail else ""
+                raise RuntimeError(f"Backend startup failed: {exc}{detail}") from exc
+            finally:
+                spinner.stop()
             config = self.backend_configs[self.backend_type]
-            print(
-                f"  \033[92m✓\033[0m Backend startup: "
-                f"\033[90mReady on port {config['tcp_port']}\033[0m"
-            )
+            cli.print_success(f"Backend listener ready on port {config['tcp_port']}")
         else:
-            print("  \033[92m✓\033[0m Backend status: \033[90mAlready running\033[0m")
+            cli.print_info("Existing HORUS backend listener detected")
 
     def _is_backend_running(self):
         """Check if the HORUS backend is already running."""
         config = self.backend_configs[self.backend_type]
         port = int(config["tcp_port"])
-        if self.backend_process is not None and self.backend_process.poll() is None:
-            return self._is_port_open(port)
+        if self.backend_process is not None:
+            if self.backend_process.poll() is not None or not self._is_port_open(port):
+                return False
+            for pid in self._list_listening_pids(port):
+                try:
+                    if os.getpgid(pid) == self.backend_process.pid:
+                        return True
+                except (ProcessLookupError, PermissionError):
+                    continue
+            return False
 
         if not self._is_port_open(port):
             return False
@@ -133,14 +154,7 @@ class BackendManager:
         """Check if Unity bridge is running"""
         config = self.backend_configs[self.backend_type]
         unity_port = config.get("unity_port", 10000)
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            result = sock.connect_ex(("localhost", unity_port))
-            sock.close()
-            return result == 0
-        except Exception:
-            logger.debug("Unity endpoint probe failed", exc_info=True)
-            return False
+        return self._is_port_open(unity_port)
 
     def _start_backend_process(self):
         """Start the backend process"""
@@ -149,30 +163,49 @@ class BackendManager:
         # Launch in background
         launch_command = config["launch_command"]
         assert isinstance(launch_command, str), "launch_command must be a string"
+        self._shutdown_called = False
+        with self._output_lock:
+            self._output_tail.clear()
         self.backend_process = subprocess.Popen(
-            launch_command.split(),
+            shlex.split(launch_command),
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            preexec_fn=os.setsid,  # Create new process group
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
+        # Drain continuously; an unread pipe eventually blocks the ROS process.
+        self._output_reader = threading.Thread(
+            target=self._drain_backend_output,
+            args=(self.backend_process.stdout,),
+            name="horus-backend-output",
+            daemon=True,
+        )
+        self._output_reader.start()
+
+    def _drain_backend_output(self, stream):
+        try:
+            while True:
+                chunk = stream.read1(4096)
+                if not chunk:
+                    break
+                with self._output_lock:
+                    self._output_tail.append(chunk)
+        except (OSError, ValueError):
+            logger.debug("Backend output reader stopped", exc_info=True)
+        finally:
+            stream.close()
+
+    def _backend_output_tail(self):
+        with self._output_lock:
+            output = b"".join(self._output_tail)
+        return output[-8192:].decode("utf-8", errors="replace").strip()
 
     def _wait_for_backend_ready(self):
         """Wait for backend to be ready"""
+        from . import cli
         config = self.backend_configs[self.backend_type]
-        print("   Waiting for backend to be ready", end="")
-
-        max_attempts = 30
-        for attempt in range(max_attempts):
-            if self._is_backend_running():
-                print(" ✅")
-                print(f"   Backend ready on port {config['tcp_port']}")
-                return
-
-            print(".", end="", flush=True)
-            time.sleep(1)
-
-        print(" ❌")
-        raise RuntimeError(f"Backend failed to start after {max_attempts} seconds")
+        with cli.status("Waiting for backend listener"):
+            self._wait_for_backend_ready_silent()
+        cli.print_success(f"Backend listener ready on port {config['tcp_port']}")
 
     def _wait_for_backend_ready_silent(self):
         """Wait for backend to be ready without output"""
@@ -180,6 +213,8 @@ class BackendManager:
         for attempt in range(max_attempts):
             if self._is_backend_running():
                 return
+            if self.backend_process is not None and self.backend_process.poll() is not None:
+                raise RuntimeError(f"Backend exited with code {self.backend_process.returncode}")
             time.sleep(1)
 
         raise RuntimeError(f"Backend failed to start after {max_attempts} seconds")
@@ -201,39 +236,44 @@ class BackendManager:
         return self.backend_configs[self.backend_type]["tcp_port"]
 
     def stop_backend(self):
-        """Stop the backend process and all related ROS2 nodes"""
+        """Stop SDK-owned backend processes without touching external services."""
+        from . import cli
         # Prevent duplicate shutdown calls
         if self._shutdown_called:
             return
         self._shutdown_called = True
 
-        print("\033[90mStopping HORUS backend processes...\033[0m")
+        cli.print_info("Stopping SDK-owned backend processes")
 
         # First, try to stop our launched process gracefully
         if self.backend_process:
             try:
                 # Send SIGTERM to the process group (this will stop both
                 # backend and unity endpoint)
-                os.killpg(os.getpgid(self.backend_process.pid), 15)
+                os.killpg(self.backend_process.pid, signal.SIGTERM)
                 self.backend_process.wait(timeout=8)
-                print("\033[90m  ✓ Launch process stopped gracefully\033[0m")
+                cli.print_success("SDK-owned launch process stopped gracefully")
             except (ProcessLookupError, subprocess.TimeoutExpired):
                 # Force kill if graceful shutdown fails
                 try:
-                    os.killpg(os.getpgid(self.backend_process.pid), 9)
-                    print("\033[90m  ✓ Launch process force-killed\033[0m")
+                    os.killpg(self.backend_process.pid, signal.SIGKILL)
+                    cli.print_warning("Sent forced stop to SDK-owned process group")
                 except ProcessLookupError:
                     pass
+                self.backend_process.wait(timeout=3)
             finally:
                 self.backend_process = None
+                if self._output_reader is not None:
+                    self._output_reader.join(timeout=2)
+                    self._output_reader = None
 
         if self._force_external_cleanup_enabled():
-            print(
-                "\033[90m  • Ignored HORUS_SDK_FORCE_EXTERNAL_CLEANUP; "
-                "cleanup is limited to SDK-owned child processes\033[0m"
+            cli.print_warning(
+                "Ignored HORUS_SDK_FORCE_EXTERNAL_CLEANUP; "
+                "cleanup is limited to SDK-owned child processes"
             )
 
-        print("\033[90m  ✓ All HORUS backend processes stopped\033[0m")
+        cli.print_info("Backend cleanup finished; externally managed services were left running")
 
     def _force_external_cleanup_enabled(self):
         value = os.environ.get("HORUS_SDK_FORCE_EXTERNAL_CLEANUP", "")

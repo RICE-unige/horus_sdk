@@ -24,12 +24,15 @@ ROS 2-native Cow & Lady ground-truth PLY path:
         --frame-id map \
         --mode voxel_surface \
         --voxel-size 0.02 \
+        --transport indexed_binary \
+        --chunk-max-triangles 20000 \
         --republish-interval 0
     The publisher waits for the HORUS bridge/headset subscriber before sending the map.
     It does not publish DELETEALL by default, so late clear messages cannot erase dense
     chunks after loading.
-    Use --voxel-size 0.03 for a lighter balanced profile if Quest performance becomes
-    the limiting factor.
+    Indexed binary removes ROS Marker duplication, Morton-orders the triangles into
+    spatial chunks for frustum culling, and keeps the snapshot near 100 renderers at
+    two million triangles. Use --transport marker only as a compatibility fallback.
 
 Maximum-density point-map preview:
     python3 python/examples/tools/ply_to_horus_mesh_marker.py \
@@ -195,7 +198,15 @@ world_layers.add_3d_mesh(
     render_options={
         "max_triangles": int(args.mesh_max_triangles),
         "use_vertex_colors": True,
+        "double_sided": False,
         "source_coordinate_space": "enu",
+        "use_indexed_binary": True,
+        "static_mesh": True,
+        "max_chunk_renderers": 128,
+        "max_chunk_uploads_per_frame": 2,
+        "max_triangle_uploads_per_frame": 20000,
+        "static_finalize_delay_seconds": 0.75,
+        "enable_perf_diagnostics": True,
     },
 )
 

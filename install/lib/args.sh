@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Shared configuration is consumed by install/install.sh.
+# shellcheck disable=SC2034
 # =============================================================================
 # HORUS Installer - Argument Parsing
 # =============================================================================
@@ -15,10 +17,11 @@ ROS_DISTRO="$ROS_DISTRO_DEFAULT"
 WEBRTC="$WEBRTC_DEFAULT"
 SHELL_CONFIG="$SHELL_CONFIG_DEFAULT"
 ASSUME_YES=0
+CHECK_ONLY=0
 LOG_FILE=""
 
 print_usage() {
-  if [ -t 1 ]; then
+  if [ -t 1 ] && [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ]; then
     printf '\n'
     printf '  %bHORUS Installer%b v%s\n' '\033[1;34m' '\033[0m' "${HORUS_INSTALLER_VERSION:-0.1.0}"
     printf '  %bHolistic Operational Reality for Unified Systems%b\n' '\033[2m' '\033[0m'
@@ -31,10 +34,10 @@ Usage:
 
 Options:
   --yes                         Non-interactive mode (accept all defaults)
+  --check                       Check configuration without installing or changing files
   --channel <stable|main>       Source channel [default: stable]
   --install-root <path>         Installation directory [default: ~/horus]
-  --ros-distro <auto|jazzy|humble>
-                                ROS 2 distribution [default: auto-detect]
+  --ros-distro <auto|jazzy>      Full installation requires Ubuntu 24.04 / Jazzy
   --webrtc <on|off>             WebRTC bridge support [default: on]
   --shell-config <auto|manual>  Shell integration mode [default: auto]
   --log-file <path>             Custom log file path
@@ -55,6 +58,11 @@ USAGE
 parse_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --check)
+        CHECK_ONLY=1
+        ASSUME_YES=1
+        shift
+        ;;
       --yes)
         ASSUME_YES=1
         shift

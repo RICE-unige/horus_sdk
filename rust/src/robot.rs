@@ -110,6 +110,7 @@ pub struct NavigationTaskConfig {
     pub yaw_tolerance_deg: Option<f64>,
     pub min_altitude_m: Option<f64>,
     pub max_altitude_m: Option<f64>,
+    pub allow_unbounded_placement: Option<bool>,
 }
 
 impl Default for NavigationTaskConfig {
@@ -127,11 +128,56 @@ impl Default for NavigationTaskConfig {
             yaw_tolerance_deg: None,
             min_altitude_m: None,
             max_altitude_m: None,
+            allow_unbounded_placement: None,
         }
     }
 }
 
-/// Entity kind tokens used by the capability contract.
+/// Configuration for the individual Go-To Point task.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GoToPointTaskConfig {
+    pub enabled: bool,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub goal_topic: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub cancel_topic: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub status_topic: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub frame_id: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub position_tolerance_m: Option<f64>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub yaw_tolerance_deg: Option<f64>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub min_altitude_m: Option<f64>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub max_altitude_m: Option<f64>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub allow_unbounded_placement: Option<bool>,
+}
+impl Default for GoToPointTaskConfig {
+    fn default() -> Self { Self {enabled:true, goal_topic:None,cancel_topic:None,status_topic:None,frame_id:None,
+        position_tolerance_m:None,yaw_tolerance_deg:None,min_altitude_m:None,max_altitude_m:None,allow_unbounded_placement:None} }
+}
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WaypointTaskConfig {
+    pub enabled: bool,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub path_topic: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub status_topic: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub frame_id: Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub position_tolerance_m: Option<f64>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub yaw_tolerance_deg: Option<f64>,
+}
+impl Default for WaypointTaskConfig {
+    fn default() -> Self { Self { enabled:true,path_topic:None,status_topic:None,frame_id:None,position_tolerance_m:None,yaw_tolerance_deg:None} }
+}
+
 pub const ENTITY_KIND_ROBOT: &str = "robot";
 pub const ENTITY_KIND_FIELD_TEAMMATE: &str = "field_teammate";
 
@@ -199,6 +245,8 @@ pub struct FieldTeammateConfig {
     pub base_frame: Option<String>,
     pub camera_frame: Option<String>,
     pub first_person_video_topic: Option<String>,
+    pub first_person_video_camera_pose_topic: Option<String>,
+    pub first_person_video_camera_info_topic: Option<String>,
     pub localization_confidence_topic: Option<String>,
     pub guidance_request_topic: Option<String>,
     pub guidance_response_topic: Option<String>,
@@ -212,6 +260,9 @@ pub struct FieldTeammateConfig {
     pub can_clarify: bool,
     pub can_reject: bool,
     pub can_complete: bool,
+    pub profile_height_m: f64,
+    pub profile_sex: String,
+    pub body_model: String,
 }
 
 impl Default for FieldTeammateConfig {
@@ -221,6 +272,8 @@ impl Default for FieldTeammateConfig {
             base_frame: None,
             camera_frame: None,
             first_person_video_topic: None,
+            first_person_video_camera_pose_topic: None,
+            first_person_video_camera_info_topic: None,
             localization_confidence_topic: None,
             guidance_request_topic: None,
             guidance_response_topic: None,
@@ -234,6 +287,9 @@ impl Default for FieldTeammateConfig {
             can_clarify: true,
             can_reject: true,
             can_complete: true,
+            profile_height_m: 1.75,
+            profile_sex: "unspecified".to_string(),
+            body_model: "meta_avatar".to_string(),
         }
     }
 }
@@ -269,6 +325,17 @@ impl FieldTeammateConfig {
             w @ ("hololens2" | "aria" | "quest_pro" | "generic") => w.to_string(),
             _ => "hololens2".to_string(),
         };
+        let height = if self.profile_height_m.is_finite() {
+            self.profile_height_m.clamp(1.35, 2.10)
+        } else {
+            1.75
+        };
+        let sex = match self.profile_sex.trim().to_ascii_lowercase().as_str() {
+            s @ ("female" | "male" | "unspecified") => s.to_string(),
+            _ => "unspecified".to_string(),
+        };
+        let body_model = self.body_model.trim().to_ascii_lowercase();
+        let body_model = if body_model.is_empty() { "meta_avatar" } else { &body_model };
 
         json!({
             "wearable_type": wearable,
@@ -276,6 +343,8 @@ impl FieldTeammateConfig {
             "camera_frame": frame(&self.camera_frame, format!("{leaf}/camera")),
             "topics": {
                 "first_person_video": topic(&self.first_person_video_topic, format!("{prefix}/fpv/image_raw/compressed")),
+                "first_person_video_camera_pose": topic(&self.first_person_video_camera_pose_topic, format!("{prefix}/fpv/camera_pose")),
+                "first_person_video_camera_info": topic(&self.first_person_video_camera_info_topic, format!("{prefix}/fpv/camera_info")),
                 "localization_confidence": topic(&self.localization_confidence_topic, format!("{prefix}/localization_confidence")),
                 "guidance_request": topic(&self.guidance_request_topic, format!("{prefix}/guidance/request")),
                 "guidance_response": topic(&self.guidance_response_topic, format!("{prefix}/guidance/response")),
@@ -291,6 +360,11 @@ impl FieldTeammateConfig {
                 "can_clarify": self.can_clarify,
                 "can_reject": self.can_reject,
                 "can_complete": self.can_complete,
+            },
+            "profile": {
+                "human_height_m": height,
+                "sex": sex,
+                "body_model": body_model,
             },
             "contract_version": "field_teammate.v1",
         })
@@ -310,6 +384,10 @@ pub struct RobotDescriptionConfig {
     pub visual_mesh_triangle_budget: i64,
     pub body_mesh_mode: String,
     pub enabled: bool,
+    pub mesh_root: String,
+    pub robot_description_topic: String,
+    pub urdf_package: String,
+    pub visual_link_pose_source: String,
 }
 
 impl RobotDescriptionConfig {
@@ -326,6 +404,10 @@ impl RobotDescriptionConfig {
             visual_mesh_triangle_budget: 90000,
             body_mesh_mode: "preview_mesh".to_string(),
             enabled: true,
+            mesh_root: String::new(),
+            robot_description_topic: "/robot_description".into(),
+            urdf_package: String::new(),
+            visual_link_pose_source: "static".into(),
         }
     }
 }
@@ -580,9 +662,7 @@ impl Robot {
     }
 
     pub fn configure_navigation_tasks(&mut self, config: NavigationTaskConfig) {
-        self.metadata.insert(
-            "task_config".to_string(),
-            json!({
+        let configured = json!({
                 "go_to_point": {
                     "enabled": config.go_to_point_enabled,
                     "goal_topic": config.goal_topic,
@@ -593,6 +673,7 @@ impl Robot {
                     "yaw_tolerance_deg": config.yaw_tolerance_deg,
                     "min_altitude_m": config.min_altitude_m,
                     "max_altitude_m": config.max_altitude_m,
+                    "allow_unbounded_placement": config.allow_unbounded_placement,
                 },
                 "waypoint": {
                     "enabled": config.waypoint_enabled,
@@ -602,8 +683,43 @@ impl Robot {
                     "position_tolerance_m": config.position_tolerance_m,
                     "yaw_tolerance_deg": config.yaw_tolerance_deg,
                 }
-            }),
-        );
+            });
+        for (name,value) in configured.as_object().unwrap() { self.set_task(name,value.clone()); }
+    }
+
+    fn set_task(&mut self, name: &str, config: Value) {
+        let tasks = self.metadata.entry("task_config".into()).or_insert_with(||json!({}));
+        if !tasks.is_object() { *tasks=json!({}); }
+        tasks[name]=config;
+    }
+    pub fn configure_go_to_point_task(&mut self, config: GoToPointTaskConfig) {
+        self.set_task("go_to_point",serde_json::to_value(config).expect("Task configuration is serializable"));
+    }
+    pub fn configure_waypoint_task(&mut self, config: WaypointTaskConfig) {
+        self.set_task("waypoint",serde_json::to_value(config).expect("Task configuration is serializable"));
+    }
+    pub fn configure_workspace_experiment(&mut self, enabled: bool, contract_version: &str) {
+        let version=contract_version.trim();
+        self.metadata.insert("workspace_experiment_config".into(),json!({"enabled":enabled,
+            "contract_version":if version.is_empty() {"experiment.v1"} else {version}}));
+    }
+    pub fn configure_capabilities(&mut self, config: EntityCapabilities) {
+        self.metadata.insert("entity_capabilities".into(),config.to_value());
+    }
+    pub fn get_capabilities(&self) -> EntityCapabilities {
+        let mut result = if self.get_entity_kind()==ENTITY_KIND_FIELD_TEAMMATE {
+            EntityCapabilities::for_field_teammate() } else {EntityCapabilities::for_robot()};
+        if let Some(raw)=self.metadata.get("entity_capabilities").and_then(Value::as_object) {
+            for (name,target) in [("controllable",&mut result.controllable),("teleoperable",&mut result.teleoperable),
+                ("taskable",&mut result.taskable),("guidable",&mut result.guidable),
+                ("observable",&mut result.observable),("communicative",&mut result.communicative)] {
+                if let Some(value)=raw.get(name).and_then(Value::as_bool) { *target=value; }
+            }
+        }
+        result
+    }
+    pub fn get_field_teammate_config(&self) -> Option<&Value> {
+        self.metadata.get("field_teammate_config").filter(|v|v.is_object())
     }
 
     /// Construct a human field teammate: a `RobotType::Human` entity with the
@@ -655,8 +771,55 @@ impl Robot {
             .map(str::trim)
         {
             Some(ENTITY_KIND_FIELD_TEAMMATE) => ENTITY_KIND_FIELD_TEAMMATE.to_string(),
+            Some("workspace_visualization") => "workspace_visualization".to_string(),
             _ => ENTITY_KIND_ROBOT.to_string(),
         }
+    }
+
+    pub fn workspace_visualization(name: impl Into<String>) -> Self {
+        let mut robot = Self::new(name, RobotType::Wheeled);
+        robot.configure_workspace_visualization();
+        robot
+    }
+
+    pub fn configure_workspace_visualization(&mut self) {
+        self.metadata.insert("entity_kind".into(), serde_json::json!("workspace_visualization"));
+        self.metadata.insert("entity_capabilities".into(), serde_json::json!({
+            "controllable": false, "teleoperable": false, "taskable": false,
+            "guidable": false, "observable": false, "communicative": false,
+        }));
+        self.configure_robot_manager_with(RobotManagerConfig {
+            enabled: false, status: false, data_viz: false, teleop: false, tasks: false,
+        });
+        self.configure_teleop(TeleopConfig { enabled: false, ..Default::default() });
+        self.configure_navigation_tasks(NavigationTaskConfig {
+            go_to_point_enabled: false, waypoint_enabled: false, ..Default::default()
+        });
+    }
+
+    pub fn configure_teaching(&mut self, config: &crate::teaching::TeachConfig) -> anyhow::Result<()> {
+        if self.get_type_str() != "humanoid" || self.get_entity_kind() != "robot" {
+            anyhow::bail!("Teach requires a humanoid robot");
+        }
+        self.metadata.insert("teaching_config".into(), config.to_value().clone());
+        Ok(())
+    }
+
+    pub fn configure_controller_hints(&mut self, hints: &crate::ControllerHints) -> anyhow::Result<()> {
+        self.metadata.insert("controller_hints".into(), hints.to_value()?); Ok(())
+    }
+    pub fn clear_controller_hints(&mut self) { self.metadata.remove("controller_hints"); }
+
+    pub fn teaching_registration(&self) -> anyhow::Result<Option<Value>> {
+        let Some(value) = self.metadata.get("teaching_config") else { return Ok(None); };
+        if self.get_type_str() != "humanoid" || self.get_entity_kind() != "robot" { anyhow::bail!("Teach requires a humanoid robot"); }
+        let config = crate::teaching::TeachConfig::from_value(value.clone())?;
+        for camera in config.to_value()["cameras"].as_array().unwrap() {
+            if !self.sensors.iter().any(|s| s.sensor_type() == SensorType::Camera && s.name() == camera["sensor_id"].as_str().unwrap()) {
+                anyhow::bail!("Every Teach camera must reference a registered camera sensor");
+            }
+        }
+        Ok(Some(config.registration(&self.name)?))
     }
 
     pub fn configure_robot_description(&mut self, config: RobotDescriptionConfig) {
@@ -685,6 +848,10 @@ impl Robot {
                 "include_visual_meshes": include_visual_meshes,
                 "visual_mesh_triangle_budget": config.visual_mesh_triangle_budget.clamp(2000, 500000),
                 "body_mesh_mode": body_mesh_mode,
+                "mesh_root": config.mesh_root,
+                "robot_description_topic": config.robot_description_topic,
+                "urdf_package": config.urdf_package,
+                "visual_link_pose_source": config.visual_link_pose_source,
             }),
         );
     }
@@ -773,6 +940,7 @@ impl Robot {
                 .map(ToString::to_string)
                 .unwrap_or_else(|| format!("{}_viz", self.name)),
         );
+        if self.get_entity_kind() == "workspace_visualization" { return dataviz; }
         for sensor in &self.sensors {
             dataviz.add_sensor_visualization(sensor.as_ref(), &self.name, None);
         }
@@ -883,7 +1051,9 @@ impl Robot {
             .unwrap_or_default();
 
         let registry = get_robot_registry_client();
-        let (success, result) = registry.unregister_robot(&robot_id, 5.0);
+        // The registration protocol addresses unregister by logical name, not the app UUID.
+        let _ = robot_id;
+        let (success, result) = registry.unregister_robot(&self.name, 5.0);
         if success {
             if !topics.is_empty() {
                 let board = get_topic_status_board();

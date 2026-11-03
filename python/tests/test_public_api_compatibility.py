@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import importlib
 import sys
+import subprocess
 import warnings
 
 
-def test_top_level_horus_import_shows_project_branding(capsys):
-    sys.modules.pop("horus", None)
-    importlib.import_module("horus")
-    captured = capsys.readouterr()
-    assert "Holistic Operational Reality" in captured.out
-    assert "HORUS SDK v" in captured.out
-    assert captured.err == ""
+def test_top_level_horus_import_shows_project_branding():
+    # A fresh interpreter tests first import without orphaning cached submodules.
+    result = subprocess.run([sys.executable, "-c", "import horus"],
+        capture_output=True, text=True, check=True, timeout=15)
+    assert "Holistic Operational Reality" in result.stdout
+    assert "HORUS SDK v" in result.stdout
+    assert result.stderr == ""
 
 
 def test_core_public_imports_remain_available():

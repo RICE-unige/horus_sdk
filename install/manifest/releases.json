@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "installer_api_version": 2,
   "updated_at": "2026-04-20",
   "repos": {
     "horus_sdk": "https://github.com/RICE-unige/horus_sdk.git",
@@ -9,7 +10,7 @@
     "stable": {
       "sdk_ref": "4c45c7e31701b2b5e392c365152f0aa5f2d2e07c",
       "ros2_ref": "f7c8e129a46967c49bf4ee6ffe5651f0231d3804",
-      "notes": "Pinned stable baseline refreshed to the current HORUS SDK and horus_ros2 project heads."
+      "notes": "Historical pinned baseline. Release artifacts replace sdk_ref with their release commit; maintainers must validate the ROS pin before publishing."
     },
     "main": {
       "sdk_ref": "refs/heads/main",

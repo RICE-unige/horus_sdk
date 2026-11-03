@@ -315,11 +315,15 @@ pub fn register_or_fail(set: &mut RegistrationSet) {
 }
 
 pub fn register_with(set: &mut RegistrationSet, workspace_scale: f64, keep_alive: bool) {
-    let _ = keep_alive;
+    register_with_options(set, workspace_scale, keep_alive, Default::default());
+}
+
+pub fn register_with_options(set: &mut RegistrationSet, workspace_scale: f64, keep_alive: bool,
+                             options: horus::bridge::RegistryOptions) {
     if set.robots.is_empty() || set.robots.len() != set.datavizs.len() {
         panic!("HORUS native payload validation needs matching robots and DataViz entries");
     }
-    let client = RobotRegistryClient::new();
+    let client = RobotRegistryClient::with_options(options);
     let global_visualizations = client.build_global_visualizations_payload(&set.datavizs);
     for (robot, dataviz) in set.robots.iter().zip(set.datavizs.iter()) {
         let payload = client.build_robot_config_dict(
@@ -332,9 +336,31 @@ pub fn register_with(set: &mut RegistrationSet, workspace_scale: f64, keep_alive
             panic!("HORUS native payload validation failed");
         }
     }
-    println!(
-        "HORUS native payload validation OK. Live registration transport is Python-only for now."
-    );
+    #[cfg(feature = "ros2")]
+    {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("Signal runtime");
+        let (ok, result) = std::thread::scope(|scope| {
+            let pending = scope.spawn(|| client.register_robots(&mut set.robots, Some(set.datavizs.clone()),
+                30.0, keep_alive, true, Some(workspace_scale)));
+            runtime.block_on(async {
+                let interrupted = tokio::signal::ctrl_c();
+                tokio::pin!(interrupted);
+                while !pending.is_finished() {
+                    tokio::select! {
+                        _ = &mut interrupted => { client.stop(); break; }
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {}
+                    }
+                }
+            });
+            pending.join().expect("Registration worker")
+        });
+        if !ok { panic!("HORUS registration failed: {result}"); }
+    }
+    #[cfg(not(feature = "ros2"))]
+    {
+        let _ = keep_alive;
+        println!("HORUS payload validation OK. Build with --features ros2 for live registration.");
+    }
 }
 
 pub fn robot_manager_without_controls() -> RobotManagerConfig {

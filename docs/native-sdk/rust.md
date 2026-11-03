@@ -7,7 +7,7 @@ sidebar_position: 2
 
 The Rust SDK mirrors the Python registration payload with typed structs and `serde_json` serialization. Use it for native robot services that need predictable payload generation, low startup overhead, and build-time checks around the HORUS payload contract.
 
-Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The Rust `register_robot`, `register_robots`, and `unregister_robot` helpers intentionally return an explicit unsupported-transport result instead of reporting fake local success. Use `RobotRegistryClient::build_robot_config_dict(...)` for native payload parity until a real Rust transport is implemented.
+With `ros2`, the SDK provides live registration, accepted/queued ACK handling, replay, keep-alive and unregister. It links the bundled C++ ROS runtime through a small C ABI; it does not invoke the Python SDK. Consult [Implementation Status](../reference/implementation-status.md) for native functional coverage and deliberate tooling differences.
 
 ## What it sends
 
@@ -52,17 +52,28 @@ contract as Python, verified against `contracts/fixtures/field_teammate_hololens
 Beyond registration payloads, the Rust SDK provides the HORUS experiments tooling
 (`horus::experiments` — NDJSON/CSV metric writers, a monotonic-anchored clock, and
 the field-teammate study reducer with dyad-level confidence intervals) and the
-colour manager (`horus::color`). It also bakes STL visual meshes (binary and
-ASCII) referenced by a URDF's `<visual>` elements into the description manifest
-(`horus::description::bake_visual_meshes`, populating `mesh_assets` and
-`supports_visual_meshes`). See **Implementation Status** for the full native
-parity boundary.
+colour manager (`horus::color`). Native costmap reconstruction and HMSH v2
+encoding use owned buffers with borrowed inputs/output. Native robot-model
+compilation/delivery and Teach sessions/recording use the shared C++ engine;
+Rust callbacks are panic-contained at the ABI boundary. See
+[Robot Models and Teach](models-and-teach.md) for dependencies and examples.
 
 ## Build and test
 
 ```bash
 cd ~/horus_sdk/rust
 cargo test --all-targets
+```
+
+Live registration requires ROS 2 development dependencies, CMake, a C++ compiler
+and the [shared engine dependencies](models-and-teach.md#build-dependencies).
+The locally verified configuration is Ubuntu/ROS 2 Jazzy:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source ~/horus_ws/install/local_setup.bash
+cargo test --features ros2 --all-targets --locked
+cargo run --features ros2 --example ops_registration
 ```
 
 Run the native payload benchmarks when checking performance-sensitive changes:
@@ -130,4 +141,14 @@ cargo run --example gaussian_splat_fixture_registration
 ```
 
 `rust/examples/sdk_registration_demo.rs` remains the short native equivalent of the Python ops scenario at the payload layer; the larger scenario coverage is split into focused examples so payload construction stays concise.
-The focused examples configure camera view profiles, teleop/task payloads, Robot Manager metadata, navigation safety visualizations, global 3D map payloads, semantic boxes, workspace compass/tutorial metadata, and local body model fields. They validate payload generation only; they do not contact a live HORUS bridge.
+Without `ros2`, registration examples validate payloads only. With it, curated registration examples wait for actual accepted ACKs and keep registrations alive until Ctrl+C. Native model delivery is available; provide robot TF from its own publisher.
+
+## Lifecycle and deployment
+
+Share a registry client using `Arc` to call `stop()` while another thread waits
+in keep-alive. The global accessor returns an `Arc`, not a held mutex guard;
+`shutdown_robot_registry()` stops and resets it. Explicit stopped clients must
+be replaced. Only bridge children started by that client are stopped.
+
+For deployment, include `libhorus_native_ros.so.1` and the ROS shared-library
+dependencies. The development build's RPATH is not a standalone deployment.

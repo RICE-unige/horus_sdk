@@ -46,7 +46,9 @@ def build_cuda_renderer_library() -> Path:
     if not compiler:
         raise CudaRendererError("nvcc is required for dynamic remote-map rendering")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:16]
-    cache_root = Path.home() / ".cache" / "horus" / "remote_renderer"
+    runtime_root = os.environ.get("HORUS_REMOTE_CACHE_ROOT")
+    cache_root = (Path(runtime_root).expanduser() / "native" if runtime_root else
+                  Path.home() / ".cache" / "horus" / "remote_renderer")
     library = cache_root / f"libhorus_cuda_points_{digest}.so"
     if library.is_file():
         return library
@@ -130,6 +132,8 @@ class CudaPointRenderer:
             ctypes.POINTER(ctypes.c_float),
         ]
         library.horus_cuda_render_views.restype = ctypes.c_int
+        library.horus_cuda_render_views_device.argtypes = library.horus_cuda_render_views.argtypes
+        library.horus_cuda_render_views_device.restype = ctypes.c_int
         library.horus_pack_views.argtypes = [
             ctypes.POINTER(ctypes.c_ubyte),
             ctypes.POINTER(ctypes.c_float),
@@ -217,6 +221,25 @@ class CudaPointRenderer:
         return color, depth, float(elapsed.value)
 
     def render_views(
+        self, *args, **kwargs,
+    ) -> tuple[np.ndarray, np.ndarray, float]:
+        return self._render_views(*args, **kwargs)
+
+    def render_video_views_cuda(self, *args, visibility_mask_height: int, **kwargs):
+        import torch
+        from .v3_renderer import encode_robust_depth_tensor
+
+        if visibility_mask_height <= 0:
+            raise ValueError("visibility_mask_height must be positive")
+        colors, depths, elapsed = self._render_views(*args, device_outputs=True, **kwargs)
+        with torch.inference_mode():
+            packed = encode_robust_depth_tensor(
+                torch, depths, visibility_mask_height, kwargs["near_m"], kwargs["far_m"])
+        # NVENC consumes tensors on its own stream after this function returns.
+        torch.cuda.current_stream(colors.device).synchronize()
+        return colors, packed, elapsed
+
+    def _render_views(
         self,
         camera_positions,
         camera_rotations,
@@ -228,7 +251,8 @@ class CudaPointRenderer:
         far_m: float,
         point_radius: int = 1,
         projections=None,
-    ) -> tuple[np.ndarray, np.ndarray, float]:
+        device_outputs: bool = False,
+    ):
         if self._uploaded != self.point_count:
             raise CudaRendererError(
                 f"renderer contains {self._uploaded:,}/{self.point_count:,} uploaded points"
@@ -243,6 +267,8 @@ class CudaPointRenderer:
             raise ValueError("camera_rotations must have shape (N, 4)")
         if not 1 <= len(positions) <= 12:
             raise ValueError("between one and twelve camera views are supported")
+        if int(width) <= 0 or int(height) <= 0:
+            raise ValueError("view dimensions must be positive")
         matrices = np.ascontiguousarray(
             np.stack([quaternion_to_matrix(rotation).T for rotation in rotations]),
             dtype=np.float32,
@@ -255,11 +281,25 @@ class CudaPointRenderer:
         projections = np.ascontiguousarray(projections, dtype=np.float32)
         if projections.shape != (len(positions), 4):
             raise ValueError("projections must have shape (N, 4)")
-        color = np.empty((len(positions), int(height), int(width), 3), dtype=np.uint8)
-        depth = np.empty((len(positions), int(height), int(width)), dtype=np.float32)
+        shape = (len(positions), int(height), int(width))
+        if device_outputs:
+            import torch
+            color = torch.empty((*shape, 3), dtype=torch.uint8, device="cuda")
+            depth = torch.empty(shape, dtype=torch.float32, device=color.device)
+            # Allocator reuse may depend on preceding work on PyTorch's stream.
+            torch.cuda.current_stream(color.device).synchronize()
+            color_ptr = ctypes.cast(color.data_ptr(), ctypes.POINTER(ctypes.c_ubyte))
+            depth_ptr = ctypes.cast(depth.data_ptr(), ctypes.POINTER(ctypes.c_float))
+            render = self._library.horus_cuda_render_views_device
+        else:
+            color = np.empty((*shape, 3), dtype=np.uint8)
+            depth = np.empty(shape, dtype=np.float32)
+            color_ptr = color.ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte))
+            depth_ptr = depth.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+            render = self._library.horus_cuda_render_views
         elapsed = ctypes.c_float()
         self._check(
-            self._library.horus_cuda_render_views(
+            render(
                 self._handle,
                 positions.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 matrices.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -271,8 +311,8 @@ class CudaPointRenderer:
                 float(near_m),
                 float(far_m),
                 int(point_radius),
-                color.ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte)),
-                depth.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                color_ptr,
+                depth_ptr,
                 ctypes.byref(elapsed),
             ),
             "multiview render",

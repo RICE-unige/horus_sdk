@@ -1,20 +1,18 @@
-//! Native visual-mesh baking for robot descriptions (STL).
+//! Native robot-description compilation, source resolution and legacy STL helpers.
 //!
-//! Parses binary or ASCII STL meshes referenced by a URDF's `<visual>`
-//! elements into a deduplicated indexed mesh and packs it into a `MeshAsset`
-//! (base64 float/int buffers), matching the shape of the Python
-//! `RobotDescriptionModels.MeshAsset`.
-//!
-//! Scope: STL only. The Python baker additionally handles DAE/OBJ (via external
-//! converters), decimation, and `package://` resolution via a mesh root; those
-//! remain Python-only (see the Implementation Status docs). Mesh references are
-//! resolved relative to the URDF, via `file://`, or as absolute paths.
+//! Use `compile_file`, `compile_urdf` or `resolve` for articulated models,
+//! materials, package URIs and error-bounded geometry optimization. These use
+//! the shared native compiler; `resolve` can also read ROS topics/parameters.
+//! The lower-level STL utilities remain available for existing callers.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+mod compiler;
+pub use compiler::{compile_file, compile_urdf, resolve, Artifact};
 
 const BASE64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

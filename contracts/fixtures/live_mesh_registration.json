@@ -1,0 +1,60 @@
+[
+  {
+    "name": "live defaults",
+    "helper": "live",
+    "options": {},
+    "expected": {
+      "type": "mesh", "topic": "/horus/maps/live", "frame": "map",
+      "scope": "global", "enabled": true, "transport_lane": "bulk_strict",
+      "mesh": {
+        "use_vertex_colors": true, "alpha": 1.0, "double_sided": false,
+        "max_triangles": 2000000, "source_coordinate_space": "enu",
+        "use_indexed_binary": true, "static_mesh": false, "indexed_live": true,
+        "max_chunk_renderers": 1024, "max_chunk_uploads_per_frame": 2,
+        "max_triangle_uploads_per_frame": 20000, "max_upload_milliseconds_per_frame": 2.5,
+        "static_finalize_delay_seconds": 0.75, "enable_perf_diagnostics": true
+      }
+    }
+  },
+  {
+    "name": "nvblox overrides and clamps",
+    "helper": "nvblox",
+    "options": {
+      "alpha": 0.35, "max_triangles": 3456789, "double_sided": true,
+      "max_chunk_renderers": 4096, "max_chunk_uploads_per_frame": 0,
+      "max_triangle_uploads_per_frame": 4567.8, "max_upload_milliseconds_per_frame": 0.1,
+      "static_finalize_delay_seconds": 20.0, "source_coordinate_space": " OPTICAL ",
+      "static_mesh": true, "enable_perf_diagnostics": false,
+      "transport_lane": "replaceable"
+    },
+    "expected": {
+      "type": "mesh", "topic": "/horus/maps/live", "frame": "map",
+      "scope": "global", "enabled": true, "transport_lane": "replaceable",
+      "mesh": {
+        "use_vertex_colors": true, "alpha": 0.35, "double_sided": true,
+        "max_triangles": 3456789, "source_coordinate_space": "optical",
+        "use_indexed_binary": true, "static_mesh": true, "indexed_live": true,
+        "max_chunk_renderers": 1024, "max_chunk_uploads_per_frame": 1,
+        "max_triangle_uploads_per_frame": 4567, "max_upload_milliseconds_per_frame": 0.25,
+        "static_finalize_delay_seconds": 10.0, "enable_perf_diagnostics": false
+      }
+    }
+  },
+  {
+    "name": "ordinary mesh defaults",
+    "helper": "mesh",
+    "options": {},
+    "expected": {
+      "type": "mesh", "topic": "/horus/maps/live", "frame": "map",
+      "scope": "global", "enabled": true,
+      "mesh": {
+        "use_vertex_colors": true, "alpha": 1.0, "double_sided": true,
+        "max_triangles": 200000, "source_coordinate_space": "enu",
+        "use_indexed_binary": true, "static_mesh": false, "indexed_live": false,
+        "max_chunk_renderers": 1024, "max_chunk_uploads_per_frame": 2,
+        "max_triangle_uploads_per_frame": 20000, "max_upload_milliseconds_per_frame": 2.5,
+        "static_finalize_delay_seconds": 0.75, "enable_perf_diagnostics": false
+      }
+    }
+  }
+]

@@ -103,7 +103,11 @@ class CombinedMeshData:
 
 
 class RobotMeshBaker:
-    """Normalize URDF mesh sources into compact baked assets."""
+    """Normalize URDF mesh sources into compact baked assets.
+
+    An explicit cache_root overrides HORUS_ROBOT_MESH_CACHE. With neither set,
+    the cache remains ~/.cache/horus/robot_description_meshes.
+    """
 
     _DEFAULT_TOTAL_TRIANGLE_BUDGET = 90000
     _DEFAULT_MAX_TRIANGLES_PER_ASSET = 60000
@@ -111,13 +115,26 @@ class RobotMeshBaker:
     _RUNTIME_HIGH_MAX_TRIANGLES_PER_ASSET = 150000
 
     def __init__(self, cache_root: Optional[str] = None):
-        self._cache_root = Path(
-            cache_root or os.path.expanduser("~/.cache/horus/robot_description_meshes")
-        )
-        self._cache_root.mkdir(parents=True, exist_ok=True)
+        cache_root = cache_root or os.environ.get("HORUS_ROBOT_MESH_CACHE") or "~/.cache/horus/robot_description_meshes"
+        if not os.fspath(cache_root).strip():
+            raise ValueError("Robot mesh cache path must not be blank")
+        self._cache_root = Path(cache_root).expanduser()
+        try:
+            self._cache_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise OSError(
+                exc.errno,
+                "Cannot create robot mesh cache; choose a writable cache_root or HORUS_ROBOT_MESH_CACHE",
+                str(self._cache_root),
+            ) from exc
         self._source_cache: Dict[str, SourceMeshData] = {}
         self._decimated_cache: Dict[str, SourceMeshData] = {}
         self._texture_color_cache: Dict[str, Optional[np.ndarray]] = {}
+
+    @property
+    def cache_root(self) -> Path:
+        """Resolved cache selection (without changing or replacing symlinks)."""
+        return self._cache_root
 
     def build_combined_asset(
         self,

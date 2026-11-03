@@ -187,6 +187,7 @@ paper_analysis/
 
 # Dependency directories
 node_modules/
+node_modules
 jspm_packages/
 .docusaurus/
 
@@ -210,6 +211,7 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.cmake
+!cpp/ament_exports.cmake
 compile_commands.json
 CTestTestfile.cmake
 _deps/

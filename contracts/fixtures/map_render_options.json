@@ -1,0 +1,14 @@
+[
+  {"type":"point_cloud", "options":{"color_mode":" HEIGHT ","height_min_m":0.5},
+   "fields":{"color_mode":"height","height_min_m":0.5,"height_max_m":2.0}},
+  {"type":"point_cloud", "options":{"color_mode":"bad","height_min_m":5,"height_max_m":2},
+   "fields":{"color_mode":"rgb","height_min_m":5.0,"height_max_m":8.0}},
+  {"type":"gaussian_splat", "options":{"binary_chunks":true,"preserve_source_detail":true},
+   "fields":{"binary_chunks":true,"preserve_source_detail":true}},
+  {"type":"gaussian_splat", "options":{},
+   "fields":{"binary_chunks":false,"preserve_source_detail":false}},
+  {"type":"octomap", "options":{"static_mesh":true},
+   "fields":{"static_mesh":true,"native_frame":"odom","native_topic":"/map_3d_octomap"}},
+  {"type":"octomap", "options":{"native_frame":" ","native_topic":" "},
+   "fields":{"static_mesh":false},"absent":["native_frame","native_topic"]}
+]

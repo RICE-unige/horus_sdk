@@ -1,6 +1,6 @@
 # HORUS C++ SDK
 
-C++ parity track for HORUS SDK, aligned to implemented Python behavior.
+C++20 SDK with native registration, models, Teach, mapping, remote rendering and experiment APIs. See `../docs/reference/implementation-status.md` for functional coverage, optional dependencies and qualification limits.
 
 ## Parity scope
 
@@ -18,13 +18,16 @@ C++ parity track for HORUS SDK, aligned to implemented Python behavior.
   - `teleop_streaming_type`
   - `startup_mode`
 - `horus::robot::DataViz` parity methods (sensor/transform/path/occupancy/tf-tree)
-- Topic map, client, and utility scaffolding
+- In-memory TopicMap, priority EventBus, independent client lifecycle and ROS status dashboard
+- Batched `horus::tf::Publisher` with ROS timestamps and retained static transforms
 
 ## Build
 
 ```bash
 cd cpp
-cmake -S . -B build
+source /opt/ros/jazzy/setup.bash
+source ~/horus_ws/install/local_setup.bash
+cmake -S . -B build -DHORUS_ENABLE_ROS2=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
@@ -65,3 +68,8 @@ See `cpp/examples/README.md`.
 - Build uses C++20.
 - ROS-enabled build activates when `HORUS_ENABLE_ROS2=ON` and ROS dependencies are discoverable.
 - No-ROS mode is supported for payload/model parity development.
+- ROS mode uses a private context/executor, real accepted ACKs, timeouts, replay and explicit cancellation. `stop()` does not shut down the application's ROS context.
+- Bridge auto-start resolves the installed bridge through the sourced ROS overlay. `RegistryOptions` can disable launch or supply an executable and argument vector. Only the owned child is stopped.
+- Native robot models, Teach/MCAP, costmap recovery, mesh source adapters, dashboard, collision-risk analysis and experiment helpers are implemented. Point/mesh/Gaussian renderers support diagnostic PNG, RGB atlases and optional GPU-resident NVENC H.264. Dataset helpers cover catalogues, aligned full-resolution scan streaming, multiview atlases and explicit LOD export. See [Models and Teach](../docs/native-sdk/models-and-teach.md), [Mapping](../docs/native-sdk/mapping.md) and [Remote Rendering](../docs/native-sdk/remote-rendering.md) for build requirements and qualification boundaries.
+- `LiveMeshPublisher` provides paced ROS delivery and late-join repair for already-paged geometry. See [Native Mapping](../docs/native-sdk/mapping.md).
+- Installed CMake users link `horus::horus_cpp_sdk`. The native middleware shared library is installed beside the SDK library. Runtime ROS dependencies still require a sourced ROS environment.

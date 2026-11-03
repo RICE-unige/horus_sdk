@@ -1,5 +1,7 @@
 """Tests for semantic Robot/Camera configuration helpers."""
 
+import pytest
+
 from horus.bridge.robot_registry import RobotRegistryClient
 from horus.robot import (
     DeadmanPolicy,
@@ -156,23 +158,23 @@ def test_workspace_remote_render_is_global_and_has_no_robot_controls():
     assert remote["type"] == "remote_render"
     assert remote["scope"] == "global"
     assert remote["topic"] == "/horus/remote_render/map_portal"
-    assert remote["remote_render"]["format_version"] == (
-        "remote_stereo_rgbd_ros_v2"
+    assert remote["remote_render"]["format_version"] == "horus.remote_render.v3.webrtc"
+    assert remote["remote_render"]["viewer_pose_topic"] == (
+        "/horus/remote_render/v3/view_state"
     )
-    assert remote["remote_render"]["viewer_pose_topic"] == "/horus/remote_render/viewer_pose"
-    assert remote["remote_render"]["viewer_pose_rate_hz"] == 60.0
-    assert remote["remote_render"]["transport"] == "ros_compressed"
+    assert remote["remote_render"]["viewer_pose_rate_hz"] == 72.0
+    assert remote["remote_render"]["transport"] == "webrtc"
     assert remote["remote_render"]["ros_compressed_topic"] == (
-        "/horus/remote_render/rgbd"
+        "/horus/remote_render/v3/stereo"
     )
-    assert remote["remote_render"]["frame_data_topic"] == "/horus/remote_render/frame_data"
+    assert remote["remote_render"]["frame_data_topic"] == ""
     assert remote["remote_render"]["encoder"] == "nvenc"
+    assert remote["remote_render"]["image_type"] == "h264"
     assert remote["remote_render"]["bitrate_kbps"] == 12000
     assert remote["remote_render"]["client_signal_topic"] == "/horus/webrtc/client_signal"
     assert remote["remote_render"]["server_signal_topic"] == "/horus/webrtc/server_signal"
     assert remote["remote_render"]["status_topic"] == "/horus/remote_render/agent_status"
     assert client._collect_topics(dataviz) == [
-        "/horus/remote_render/rgbd",
         "/horus/remote_render/agent_status",
     ]
     assert "/horus/remote_render/map_portal" not in client._collect_topics(dataviz)
@@ -184,6 +186,7 @@ def test_workspace_remote_render_pose_contract_is_serialized():
     dataviz = resource.create_dataviz()
     dataviz.add_remote_rendered_map(
         render_options={
+            "protocol_version": "remote_stereo_rgbd_v2",
             "viewer_pose_topic": "/test/remote_map/viewer_pose",
             "viewer_pose_rate_hz": 72.0,
             "frame_data_topic": "/test/remote_map/frame_data",
@@ -197,6 +200,57 @@ def test_workspace_remote_render_pose_contract_is_serialized():
     assert remote["viewer_pose_topic"] == "/test/remote_map/viewer_pose"
     assert remote["viewer_pose_rate_hz"] == 72.0
     assert remote["frame_data_topic"] == "/test/remote_map/frame_data"
+
+
+def test_workspace_remote_render_v3_serializes_exact_stereo_contract():
+    client = _build_client()
+    resource = WorkspaceVisualization("workspace_remote_map_v3")
+    dataviz = resource.create_dataviz()
+    dataviz.add_remote_rendered_map(
+        render_options={
+            "protocol_version": "horus.remote_render.v3",
+            "session_id": "operator-a",
+            "viewport_width": 1152,
+            "viewport_height": 1152,
+        }
+    )
+
+    remote = client._build_global_visualizations_payload([dataviz])[0]["remote_render"]
+
+    assert remote["protocol_version"] == "horus.remote_render.v3"
+    assert remote["format_version"] == "horus.remote_render.v3.webrtc"
+    assert remote["transport"] == "webrtc"
+    assert remote["session_id"] == "operator-a"
+    assert remote["viewer_pose_topic"] == "/horus/remote_render/v3/view_state"
+    assert remote["viewer_pose_rate_hz"] == 72.0
+    assert remote["ros_compressed_topic"] == "/horus/remote_render/v3/stereo"
+    assert remote["status_topic"] == "/horus/remote_render/v3/status"
+    assert remote["viewport_width"] == 1152
+    assert remote["viewport_height"] == 1152
+    assert remote["maximum_frame_age_ms"] == 250
+
+
+def test_workspace_remote_render_v3_serializes_webrtc_carrier():
+    resource = WorkspaceVisualization("workspace_remote_map_v3")
+    dataviz = resource.create_dataviz()
+    dataviz.add_remote_rendered_map(
+        render_options={
+            "protocol_version": "horus.remote_render.v3",
+            "transport": "webrtc",
+        }
+    )
+
+    client = _build_client()
+    remote = client._build_global_visualizations_payload([dataviz])[0][
+        "remote_render"
+    ]
+
+    assert remote["protocol_version"] == "horus.remote_render.v3"
+    assert remote["format_version"] == "horus.remote_render.v3.webrtc"
+    assert remote["transport"] == "webrtc"
+    assert remote["stream_topic"] == "/horus/remote_render/map_portal"
+    assert remote["frame_data_topic"] == ""
+    assert remote["viewer_pose_topic"] == "/horus/remote_render/v3/view_state"
 
 
 def test_metadata_aliases_remain_available():

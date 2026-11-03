@@ -52,7 +52,47 @@ impl TopicInfo {
     pub fn is_robot_topic(&self) -> bool {
         self.robot_namespace.is_some()
     }
+
+    pub fn get_horus_event_topic(&self) -> String {
+        if let Some(robot) = self.robot_namespace.as_deref().filter(|s| !s.is_empty()) {
+            if let Some(sensor) = self.sensor_name.as_deref().filter(|s| !s.is_empty()) {
+                return format!("{robot}.sensor.{sensor}");
+            }
+            let suffix = match self.topic_type {
+                TopicType::RobotStatus => "status",
+                TopicType::Odometry => "odometry",
+                TopicType::Path => "path",
+                _ => "data",
+            };
+            return format!("{robot}.{suffix}");
+        }
+        match self.topic_type {
+            TopicType::Tf | TopicType::TfStatic => "global.tf",
+            TopicType::OccupancyGrid => "global.map",
+            _ => "global.data",
+        }
+        .to_owned()
+    }
 }
+
+const TOPIC_TYPES: [TopicType; 16] = [
+    TopicType::Image,
+    TopicType::PointCloud,
+    TopicType::LaserScan,
+    TopicType::Imu,
+    TopicType::Gps,
+    TopicType::Odometry,
+    TopicType::Path,
+    TopicType::OccupancyGrid,
+    TopicType::Goal,
+    TopicType::Twist,
+    TopicType::JointState,
+    TopicType::Tf,
+    TopicType::RobotStatus,
+    TopicType::RobotCommand,
+    TopicType::RobotConfig,
+    TopicType::Unknown,
+];
 
 fn now_sec() -> f64 {
     SystemTime::now()
@@ -87,33 +127,12 @@ fn extract_sensor_name(topic: &str) -> Option<String> {
 
 pub struct TopicMap {
     topics: parking_lot::RwLock<HashMap<String, TopicInfo>>,
-    robot_namespaces: parking_lot::RwLock<HashSet<String>>,
-    type_mapping: HashMap<&'static str, TopicType>,
 }
 
 impl TopicMap {
     pub fn new() -> Self {
         Self {
             topics: parking_lot::RwLock::new(HashMap::new()),
-            robot_namespaces: parking_lot::RwLock::new(HashSet::new()),
-            type_mapping: HashMap::from([
-                ("sensor_msgs/msg/Image", TopicType::Image),
-                ("sensor_msgs/Image", TopicType::Image),
-                ("sensor_msgs/msg/PointCloud2", TopicType::PointCloud),
-                ("sensor_msgs/PointCloud2", TopicType::PointCloud),
-                ("sensor_msgs/msg/LaserScan", TopicType::LaserScan),
-                ("sensor_msgs/LaserScan", TopicType::LaserScan),
-                ("sensor_msgs/msg/Imu", TopicType::Imu),
-                ("sensor_msgs/Imu", TopicType::Imu),
-                ("nav_msgs/msg/Odometry", TopicType::Odometry),
-                ("nav_msgs/Odometry", TopicType::Odometry),
-                ("nav_msgs/msg/Path", TopicType::Path),
-                ("nav_msgs/Path", TopicType::Path),
-                ("geometry_msgs/msg/Twist", TopicType::Twist),
-                ("geometry_msgs/Twist", TopicType::Twist),
-                ("tf2_msgs/msg/TFMessage", TopicType::Tf),
-                ("tf2_msgs/TFMessage", TopicType::Tf),
-            ]),
         }
     }
 
@@ -123,10 +142,11 @@ impl TopicMap {
         topic_type: TopicType,
         direction: TopicDirection,
     ) -> TopicInfo {
-        let info = TopicInfo::new(name, topic_type, direction);
-        if let Some(ns) = info.robot_namespace.clone() {
-            self.robot_namespaces.write().insert(ns);
-        }
+        self.add_topic_info(TopicInfo::new(name, topic_type, direction))
+    }
+
+    /// Inserts a topic with explicit namespace, frame, QoS and metadata overrides.
+    pub fn add_topic_info(&self, info: TopicInfo) -> TopicInfo {
         self.topics.write().insert(info.name.clone(), info.clone());
         publish_now(
             "topicmap.topic.discovered",
@@ -148,10 +168,11 @@ impl TopicMap {
         type_str: &str,
         direction: TopicDirection,
     ) -> TopicInfo {
-        let topic_type = self
-            .type_mapping
-            .get(type_str)
+        let normalized = type_str.replace("/msg/", "/");
+        let topic_type = TOPIC_TYPES
+            .iter()
             .copied()
+            .find(|kind| kind.as_str() == normalized)
             .unwrap_or(TopicType::Unknown);
         self.add_topic(name, topic_type, direction)
     }
@@ -210,7 +231,11 @@ impl TopicMap {
     }
 
     pub fn get_robot_namespaces(&self) -> HashSet<String> {
-        self.robot_namespaces.read().clone()
+        self.topics
+            .read()
+            .values()
+            .filter_map(|info| info.robot_namespace.clone())
+            .collect()
     }
 
     pub fn get_all_topics(&self) -> Vec<TopicInfo> {
@@ -249,14 +274,24 @@ impl TopicMap {
         let topics = self.topics.read();
         let total_topics = topics.len();
         let active_topics = topics.values().filter(|t| t.active).count();
-        let robot_count = self.robot_namespaces.read().len();
+        let robot_count = topics
+            .values()
+            .filter_map(|info| info.robot_namespace.as_deref())
+            .collect::<HashSet<_>>()
+            .len();
         let sensor_topics = topics.values().filter(|t| t.is_sensor_topic()).count();
+        let mut topic_types: HashMap<&str, usize> =
+            TOPIC_TYPES.iter().map(|kind| (kind.as_str(), 0)).collect();
+        for info in topics.values() {
+            *topic_types.entry(info.topic_type.as_str()).or_default() += 1;
+        }
 
         serde_json::json!({
             "total_topics": total_topics,
             "active_topics": active_topics,
             "robot_count": robot_count,
             "sensor_topics": sensor_topics,
+            "topic_types": topic_types,
         })
     }
 }

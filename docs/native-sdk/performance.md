@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Native Performance
 
-The C++ and Rust SDKs are the preferred paths when registration payload generation runs in a native process. They avoid Python interpreter startup, dynamic object walking, and GIL contention while keeping the same HORUS MR payload contract. Live bridge registration is still handled by the Python SDK until native transports are implemented.
+C++ and Rust expose native registration and typed, buffer-oriented mapping APIs. A language choice alone does not establish better performance: NumPy kernels already run natively, and DDS, decoding and headset rendering can dominate end-to-end latency.
 
 ## What to benchmark
 
@@ -18,19 +18,41 @@ Measure the SDK work that runs before the payload is published:
 
 Do not mix headset rendering, ROS transport latency, or WebRTC encode time into SDK serializer benchmarks. Those belong to bridge/runtime profiling.
 
-## Measured throughput
+## Measured mapping kernels
 
-`throughput_benchmark` builds the same robot + camera + DataViz registration payload repeatedly and reports payloads/second, single-threaded and across every hardware thread. Because the native SDKs have no global interpreter lock, payload building scales with cores — the decisive advantage over the Python reference, which is pinned to a single core for CPU-bound work.
+Equivalent single-threaded workloads patch a 128 x 128 raw Nav2 region into a
+1024 x 1024 grid 1,000 times, then encode a colored HMSH v2 page of 30,000 vertices
+and 10,000 triangles 100 times. Each program reports five rounds after one warm-up.
+Geometry and colors are unchanged. All three produce 600,052-byte pages with the
+same checksum; a separate unit test checks an exact Python wire fixture.
 
-Representative run on a 32-core host (registration payload build, higher is better):
+Local development measurements on 2026-10-14, median time per operation:
 
-| SDK | Single-thread | Multi-thread (32) | vs Python (1 core) |
-|-----|---------------|-------------------|--------------------|
-| Python (reference) | ~18.3k payloads/s | — (GIL-bound) | 1× |
-| C++ | ~81.7k payloads/s | ~767k payloads/s | 4.5× / **42×** |
-| Rust | ~118k payloads/s | ~1.34M payloads/s | 6.5× / **73×** |
+| Implementation | Costmap patch | Mesh encoding |
+| --- | ---: | ---: |
+| Python / NumPy | 27.12 microseconds | 5,670.69 microseconds |
+| C++ Release | 7.66 microseconds | 64.72 microseconds |
+| Rust Release | 4.27 microseconds | 113.06 microseconds |
 
-Even single-threaded the native SDKs are several times faster (typed structs and no per-object dictionary walking); with parallelism they pull an order of magnitude ahead. Numbers vary with CPU and core count — re-run locally for your hardware. The benchmark uses a per-thread registry client so threads never contend on shared state.
+These are diagnostic measurements on one host, not a controlled publication
+benchmark. CPU affinity, power policy and concurrent work were not controlled.
+Encoding includes allocation and validation; patch timing excludes constructing
+the full initial grid. No ROS, network or headset work is included. Re-run on
+deployment hardware; do not infer robot capacity or latency from these timings.
+
+```bash
+cd ~/horus_sdk
+cmake -S cpp -B build/native-release -DHORUS_ENABLE_ROS2=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native-release --target mapping_kernels --parallel 2
+./build/native-release/benchmarks/mapping_kernels
+PYTHONPATH=python python3 .github/scripts/benchmark_mapping_kernels.py
+cd rust
+cargo run --release --example mapping_benchmark --locked
+```
+
+The existing `throughput_benchmark` is a configuration/serialization benchmark.
+Keep single-thread and multi-thread results separate and report hardware and
+thread counts. It does not measure registration ACK time or ROS forwarding.
 
 ## C++ checks
 
@@ -66,5 +88,7 @@ PYTHONPATH=python python3 python/examples/tools/throughput_benchmark.py 50000
 - Deduplicate global visualizations by stable type/topic/frame keys.
 - Keep semantic boxes keyed by semantic id so repeated robots do not duplicate workspace annotations.
 - Prefer explicit topic/TF binding helpers over repeated string manipulation in application code.
+- Patch only affected costmap rows. Native mesh encoders allocate one output buffer and retain finite-value, dimension, index and payload-budget checks.
+- Keep one owned ROS executor per registry, not one process/node per robot.
 
 Use Python as the behavioral reference and native SDKs as the low-overhead implementation path.

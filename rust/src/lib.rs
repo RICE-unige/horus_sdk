@@ -5,13 +5,20 @@
 
 pub mod bridge;
 pub mod client;
+pub mod controller_hints;
+pub mod collision_risk;
 pub mod color;
 pub mod core;
 pub mod dataviz;
 pub mod description;
 pub mod experiments;
+pub mod mapping;
+mod native_registry;
+pub mod remote_rendering;
 pub mod robot;
 pub mod sensors;
+pub mod teaching;
+pub mod tf;
 pub mod utils;
 
 // Re-export commonly used types
@@ -22,6 +29,8 @@ pub use core::{
 };
 
 pub use client::Client;
+pub use controller_hints::{ControllerControl, ControllerHint, ControllerHintProfile, ControllerHints,
+    ControllerHintContext, ControllerHintLabel, ControllerHintUpdate, TeleopHintMode};
 pub use color::{ColorManager, RGBColor};
 pub use dataviz::DataViz;
 pub use robot::{

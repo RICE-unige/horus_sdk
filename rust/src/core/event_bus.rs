@@ -2,6 +2,7 @@ use crate::core::types::EventPriority;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
@@ -125,6 +126,7 @@ pub struct EventBus {
     subscriptions: Arc<RwLock<HashMap<String, Vec<EventSubscription>>>>,
     stats: Arc<EventBusStats>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    generation: Arc<AtomicUsize>,
 }
 
 impl EventBus {
@@ -132,27 +134,57 @@ impl EventBus {
         let queue = Arc::new((Mutex::new(Vec::<Event>::new()), Condvar::new()));
         let subscriptions = Arc::new(RwLock::new(HashMap::<String, Vec<EventSubscription>>::new()));
         let stats = Arc::new(EventBusStats::default());
-        let running = Arc::new(AtomicBool::new(true));
+        let running = Arc::new(AtomicBool::new(false));
 
-        let queue_for_thread = Arc::clone(&queue);
-        let subscriptions_for_thread = Arc::clone(&subscriptions);
-        let stats_for_thread = Arc::clone(&stats);
-        let running_for_thread = Arc::clone(&running);
-        let worker = thread::spawn(move || loop {
+        let bus = Self {
+            max_queue_size: max_queue_size.max(1),
+            running,
+            queue,
+            subscriptions,
+            stats,
+            worker: Mutex::new(None),
+            generation: Arc::new(AtomicUsize::new(0)),
+        };
+        bus.start();
+        bus
+    }
+
+    /// Idempotently restart processing, retaining queued events and subscriptions.
+    pub fn start(&self) {
+        let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+        if self.running.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let token = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let generation = Arc::clone(&self.generation);
+
+        let queue_for_thread = Arc::clone(&self.queue);
+        let subscriptions_for_thread = Arc::clone(&self.subscriptions);
+        let stats_for_thread = Arc::clone(&self.stats);
+        *worker = Some(thread::spawn(move || loop {
             let maybe_event = {
                 let (lock, cvar) = &*queue_for_thread;
                 let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
                 while guard.is_empty() {
+                    if generation.load(Ordering::SeqCst) != token {
+                        return;
+                    }
                     let res = cvar
                         .wait_timeout(guard, Duration::from_millis(100))
                         .unwrap_or_else(|e| e.into_inner());
                     guard = res.0;
-                    if guard.is_empty() && !running_for_thread.load(Ordering::Relaxed) {
-                        return;
+                }
+                if generation.load(Ordering::SeqCst) != token {
+                    return;
+                }
+                // Scan instead of re-sorting the whole queue. Equal priorities remain FIFO.
+                let mut best = 0;
+                for i in 1..guard.len() {
+                    if guard[i].priority > guard[best].priority {
+                        best = i;
                     }
                 }
-                guard.sort_by(|a, b| b.priority.cmp(&a.priority));
-                guard.pop()
+                Some(guard.remove(best))
             };
 
             let Some(event) = maybe_event else {
@@ -171,20 +203,29 @@ impl EventBus {
             };
 
             for cb in callbacks {
-                cb(event.clone());
+                if catch_unwind(AssertUnwindSafe(|| cb(event.clone()))).is_err() {
+                    tracing::error!(topic = %event.topic, "Event callback panicked");
+                }
             }
             stats_for_thread
                 .events_processed
                 .fetch_add(1, Ordering::Relaxed);
-        });
+        }));
+    }
 
-        Self {
-            max_queue_size,
-            running,
-            queue,
-            subscriptions,
-            stats,
-            worker: Mutex::new(Some(worker)),
+    /// Stops dispatch and waits for the current callback, except when called by it.
+    pub fn stop(&self) {
+        let handle = {
+            let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+            self.running.store(false, Ordering::SeqCst);
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            self.queue.1.notify_all();
+            worker.take()
+        };
+        if let Some(handle) = handle {
+            if handle.thread().id() != thread::current().id() {
+                let _ = handle.join();
+            }
         }
     }
 
@@ -314,13 +355,7 @@ impl EventBus {
 
 impl Drop for EventBus {
     fn drop(&mut self) {
-        self.running.store(false, Ordering::Relaxed);
-        self.queue.1.notify_all();
-        if let Ok(mut handle_guard) = self.worker.lock() {
-            if let Some(handle) = handle_guard.take() {
-                let _ = handle.join();
-            }
-        }
+        self.stop();
     }
 }
 

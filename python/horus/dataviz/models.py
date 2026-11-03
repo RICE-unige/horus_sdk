@@ -44,6 +44,7 @@ class VisualizationType(Enum):
     LASER_SCAN = "laser_scan"
     POINT_CLOUD = "point_cloud"
     OCCUPANCY_GRID = "occupancy_grid"
+    COSTMAP = "costmap"
     TRAJECTORY = "trajectory"
     PATH = "path"
     VELOCITY_DATA = "velocity_data"

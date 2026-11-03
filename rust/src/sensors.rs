@@ -37,6 +37,12 @@ pub struct WebRtcTransportConfig {
     pub server_signal_topic: String,
     pub bitrate_kbps: Option<i64>,
     pub framerate: Option<i64>,
+    pub minimap_bitrate_kbps: Option<i64>,
+    pub minimap_framerate: Option<i64>,
+    pub teleop_bitrate_kbps: Option<i64>,
+    pub teleop_framerate: Option<i64>,
+    pub minimap_priority: Option<i64>,
+    pub teleop_priority: Option<i64>,
     pub stun_server_url: Option<String>,
     pub turn_server_url: Option<String>,
     pub turn_username: Option<String>,
@@ -50,6 +56,12 @@ impl Default for WebRtcTransportConfig {
             server_signal_topic: "/horus/webrtc/server_signal".to_string(),
             bitrate_kbps: None,
             framerate: None,
+            minimap_bitrate_kbps: None,
+            minimap_framerate: None,
+            teleop_bitrate_kbps: None,
+            teleop_framerate: None,
+            minimap_priority: None,
+            teleop_priority: None,
             stun_server_url: None,
             turn_server_url: None,
             turn_username: None,
@@ -252,6 +264,12 @@ impl Camera {
             config.bitrate_kbps,
         );
         put_if_some(&mut self.metadata, "webrtc_framerate", config.framerate);
+        put_if_some(&mut self.metadata, "webrtc_minimap_bitrate_kbps", config.minimap_bitrate_kbps);
+        put_if_some(&mut self.metadata, "webrtc_minimap_framerate", config.minimap_framerate);
+        put_if_some(&mut self.metadata, "webrtc_teleop_bitrate_kbps", config.teleop_bitrate_kbps);
+        put_if_some(&mut self.metadata, "webrtc_teleop_framerate", config.teleop_framerate);
+        put_if_some(&mut self.metadata, "webrtc_minimap_priority", config.minimap_priority);
+        put_if_some(&mut self.metadata, "webrtc_teleop_priority", config.teleop_priority);
         put_if_some(
             &mut self.metadata,
             "webrtc_stun_server_url",

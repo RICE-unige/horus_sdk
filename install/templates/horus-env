@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Source explicitly to activate HORUS; shell startup only adds helper commands.
+HORUS_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export HORUS_HOME
+
+_horus_load_environment() {
+  local had_nounset=0 status=0
+  if [[ $- == *u* ]]; then had_nounset=1; set +u; fi
+  if [ ! -f "$HORUS_HOME/state/install-config.env" ] || [ "$(cat "$HORUS_HOME/state/install.status" 2>/dev/null)" != complete ]; then
+    printf '%s\n' 'HORUS installation is incomplete; rerun its installer.' >&2
+    status=1
+  else
+    # shellcheck disable=SC1091
+    source "$HORUS_HOME/state/install-config.env" || status=$?
+    if [ "$status" -eq 0 ]; then
+      if [ -n "${ROS_DISTRO:-}" ] && [ "$ROS_DISTRO" != "$HORUS_ROS_DISTRO" ]; then
+        printf '%s\n' 'Another ROS distribution is active; use a fresh shell.' >&2
+        status=1
+      else
+        # shellcheck disable=SC1090,SC1091
+        source "/opt/ros/$HORUS_ROS_DISTRO/setup.bash" &&
+          source "$HORUS_HOME/ros2/install/local_setup.bash" &&
+          source "$HORUS_HOME/sdk/.venv/bin/activate" || status=$?
+      fi
+    fi
+  fi
+  if [ "$had_nounset" -eq 1 ]; then set -u; fi
+  return "$status"
+}
+
+_horus_load_environment

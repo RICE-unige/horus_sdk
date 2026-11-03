@@ -9,13 +9,31 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>visualization_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_msgs</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>nav_msgs</depend>
+  <depend>map_msgs</depend>
+  <depend>nav2_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>nlohmann_json</depend>
+  <depend>openssl</depend>
+  <depend>libzstd-dev</depend>
+  <depend>eigen</depend>
+  <depend>assimp</depend>
+  <depend>tinyxml2_vendor</depend>
+  <depend>zlib</depend>
+  <depend>libpng-dev</depend>
+  <depend>libjpeg</depend>
+  <depend>libwebp-dev</depend>
+  <depend>libtiff-dev</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>rosbag2_cpp</depend>
+  <depend>rosidl_typesupport_introspection_cpp</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
   </export>
 </package>
-

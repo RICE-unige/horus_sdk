@@ -558,7 +558,7 @@ int horus_cuda_mesh_create(
   return 0;
 }
 
-int horus_cuda_mesh_render_views(
+static int render_views_impl(
   void * handle,
   const float * camera_positions,
   const float * world_to_camera,
@@ -571,7 +571,8 @@ int horus_cuda_mesh_render_views(
   float far_m,
   unsigned char * host_color,
   float * host_depth,
-  float * elapsed_ms)
+  float * elapsed_ms,
+  bool device_outputs)
 {
   g_last_error.clear();
   Renderer * renderer = static_cast<Renderer *>(handle);
@@ -666,21 +667,33 @@ int horus_cuda_mesh_render_views(
           host_color,
           renderer->output_colors,
           output_count * sizeof(uchar3),
-          cudaMemcpyDeviceToHost),
+          device_outputs ? cudaMemcpyDeviceToDevice : cudaMemcpyDeviceToHost),
         "cudaMemcpy output color") ||
       !check_cuda(
         cudaMemcpy(
           host_depth,
           renderer->output_depth,
           output_count * sizeof(float),
-          cudaMemcpyDeviceToHost),
-        "cudaMemcpy output depth")) {
+          device_outputs ? cudaMemcpyDeviceToDevice : cudaMemcpyDeviceToHost),
+        "cudaMemcpy output depth") ||
+      (device_outputs && !check_cuda(cudaStreamSynchronize(nullptr), "Finish device output copies"))) {
     return 4;
   }
   if (elapsed_ms != nullptr) {
     cudaEventElapsedTime(elapsed_ms, renderer->begin, renderer->end);
   }
   return 0;
+}
+
+int horus_cuda_mesh_render_views(void *h,const float *p,const float *r,const float *proj,
+  int n,int w,int height,float fov,float near_m,float far_m,unsigned char *rgb,float *depth,float *ms)
+{
+  return render_views_impl(h,p,r,proj,n,w,height,fov,near_m,far_m,rgb,depth,ms,false);
+}
+int horus_cuda_mesh_render_views_device(void *h,const float *p,const float *r,const float *proj,
+  int n,int w,int height,float fov,float near_m,float far_m,unsigned char *rgb,float *depth,float *ms)
+{
+  return render_views_impl(h,p,r,proj,n,w,height,fov,near_m,far_m,rgb,depth,ms,true);
 }
 
 void horus_cuda_mesh_destroy(void * handle)

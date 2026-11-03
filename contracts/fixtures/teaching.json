@@ -1,0 +1,807 @@
+{
+  "cases": [
+    {
+      "input": {
+        "recording_root": "/tmp/horus-teach-contract"
+      },
+      "normalized": {
+        "adapter_id": "observe",
+        "calibration_id": "",
+        "cameras": [],
+        "clutch_binding": "both_grips",
+        "command_frame": "",
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "grasp_bindings": {},
+        "hold_binding": "right_secondary",
+        "input_timeout_ms": 200,
+        "joint_groups": {},
+        "joint_names": [],
+        "minimum_free_bytes": 536870912,
+        "provenance": "real",
+        "publish_rate_hz": 30.0,
+        "queue_budget_bytes": 67108864,
+        "recording_root": "/tmp/horus-teach-contract",
+        "schema_version": 1,
+        "streams": [],
+        "task": "",
+        "task_presets": [],
+        "workflow": "observe_record"
+      },
+      "digest": "f89fff8728024b2d3a8f7789e86960cdf529ed8fe43d93443fd746de07f3f1d5",
+      "registration": {
+        "schema_version": 1,
+        "enabled": true,
+        "config_hash": "f89fff8728024b2d3a8f7789e86960cdf529ed8fe43d93443fd746de07f3f1d5",
+        "request_topic": "/horus/teach/teach_robot/request",
+        "input_topic": "/horus/teach/teach_robot/input",
+        "state_topic": "/horus/teach/teach_robot/state",
+        "workflow": "observe_record",
+        "task": "",
+        "publish_rate_hz": 30.0,
+        "input_timeout_ms": 200,
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "clutch_binding": "both_grips",
+        "hold_binding": "right_secondary",
+        "task_presets": [],
+        "cameras": []
+      }
+    },
+    {
+      "input": {
+        "recording_root": "/tmp/horus-teach-contract",
+        "task": "Move the object",
+        "adapter_id": "fixture",
+        "workflow": "collection",
+        "provenance": "fixture",
+        "joint_names": [
+          "left_joint",
+          "right_joint"
+        ],
+        "joint_groups": {
+          "arms": [
+            "left_joint",
+            "right_joint"
+          ]
+        },
+        "command_frame": "base",
+        "calibration_id": "calibration_v1",
+        "publish_rate_hz": 45.0,
+        "grasp_bindings": {
+          "left_hand": "left_trigger",
+          "right_hand": "right_trigger"
+        },
+        "streams": [
+          {
+            "stream_id": "front",
+            "topic": "/front/image",
+            "message_type": "sensor_msgs/msg/Image",
+            "role": "camera",
+            "source_identity": "front_device"
+          }
+        ],
+        "cameras": [
+          {
+            "sensor_id": "front_camera",
+            "stream_id": "front",
+            "required_for_control": true
+          }
+        ],
+        "task_presets": [
+          "Pick",
+          "Place"
+        ]
+      },
+      "normalized": {
+        "adapter_id": "fixture",
+        "calibration_id": "calibration_v1",
+        "cameras": [
+          {
+            "position": [
+              0.0,
+              1.35,
+              1.2
+            ],
+            "required_for_control": true,
+            "role": "front",
+            "rotation_deg": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "sensor_id": "front_camera",
+            "stream_id": "front",
+            "width_m": 0.7
+          }
+        ],
+        "clutch_binding": "both_grips",
+        "command_frame": "base",
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "grasp_bindings": {
+          "left_hand": "left_trigger",
+          "right_hand": "right_trigger"
+        },
+        "hold_binding": "right_secondary",
+        "input_timeout_ms": 200,
+        "joint_groups": {
+          "arms": [
+            "left_joint",
+            "right_joint"
+          ]
+        },
+        "joint_names": [
+          "left_joint",
+          "right_joint"
+        ],
+        "minimum_free_bytes": 536870912,
+        "provenance": "fixture",
+        "publish_rate_hz": 45.0,
+        "queue_budget_bytes": 67108864,
+        "recording_root": "/tmp/horus-teach-contract",
+        "schema_version": 1,
+        "streams": [
+          {
+            "calibration": {},
+            "clock_id": "ros",
+            "durability": "volatile",
+            "frame_id": "",
+            "max_gap_seconds": 1.0,
+            "message_type": "sensor_msgs/msg/Image",
+            "queue_depth": 5,
+            "reliability": "best_effort",
+            "required": true,
+            "role": "camera",
+            "source_identity": "front_device",
+            "stamp_semantics": "unknown",
+            "stream_id": "front",
+            "topic": "/front/image"
+          }
+        ],
+        "task": "Move the object",
+        "task_presets": [
+          "Pick",
+          "Place"
+        ],
+        "workflow": "collection"
+      },
+      "digest": "2618495a0ca105561276cfcc1f4b8cbe43db6f095c937f2519840fe373e291fb",
+      "registration": {
+        "schema_version": 1,
+        "enabled": true,
+        "config_hash": "2618495a0ca105561276cfcc1f4b8cbe43db6f095c937f2519840fe373e291fb",
+        "request_topic": "/horus/teach/teach_robot/request",
+        "input_topic": "/horus/teach/teach_robot/input",
+        "state_topic": "/horus/teach/teach_robot/state",
+        "workflow": "collection",
+        "task": "Move the object",
+        "publish_rate_hz": 45.0,
+        "input_timeout_ms": 200,
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "clutch_binding": "both_grips",
+        "hold_binding": "right_secondary",
+        "task_presets": [
+          "Pick",
+          "Place"
+        ],
+        "cameras": [
+          {
+            "sensor_id": "front_camera",
+            "role": "front",
+            "position": {
+              "x": 0.0,
+              "y": 1.35,
+              "z": 1.2
+            },
+            "width_m": 0.7,
+            "stream_id": "front",
+            "required_for_control": true,
+            "rotation_deg": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            }
+          }
+        ],
+        "grasp_hints": [
+          {
+            "control": "left_trigger",
+            "action_id": "left_hand",
+            "label": "Hand"
+          },
+          {
+            "control": "right_trigger",
+            "action_id": "right_hand",
+            "label": "Hand"
+          }
+        ]
+      }
+    },
+    {
+      "input": {
+        "recording_root": "/tmp/horus-teach-contract",
+        "task": "Unicode \u00e9 \ud83d\ude80",
+        "streams": [
+          {
+            "stream_id": "state",
+            "topic": "/state",
+            "message_type": "std_msgs/msg/String",
+            "calibration": {
+              "small": 1e-07,
+              "large": 1e+16,
+              "negative_zero": -0.0,
+              "decimal": 1.2345678901234567
+            }
+          }
+        ]
+      },
+      "normalized": {
+        "adapter_id": "observe",
+        "calibration_id": "",
+        "cameras": [],
+        "clutch_binding": "both_grips",
+        "command_frame": "",
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "grasp_bindings": {},
+        "hold_binding": "right_secondary",
+        "input_timeout_ms": 200,
+        "joint_groups": {},
+        "joint_names": [],
+        "minimum_free_bytes": 536870912,
+        "provenance": "real",
+        "publish_rate_hz": 30.0,
+        "queue_budget_bytes": 67108864,
+        "recording_root": "/tmp/horus-teach-contract",
+        "schema_version": 1,
+        "streams": [
+          {
+            "calibration": {
+              "decimal": 1.2345678901234567,
+              "large": 1e+16,
+              "negative_zero": -0.0,
+              "small": 1e-07
+            },
+            "clock_id": "ros",
+            "durability": "volatile",
+            "frame_id": "",
+            "max_gap_seconds": 1.0,
+            "message_type": "std_msgs/msg/String",
+            "queue_depth": 5,
+            "reliability": "best_effort",
+            "required": true,
+            "role": "observation",
+            "source_identity": "unknown",
+            "stamp_semantics": "unknown",
+            "stream_id": "state",
+            "topic": "/state"
+          }
+        ],
+        "task": "Unicode \u00e9 \ud83d\ude80",
+        "task_presets": [],
+        "workflow": "observe_record"
+      },
+      "digest": "0eb83b3d5e198312d04b011fcb8b9e47b9049ff57502b920b3dec94d4852c94f",
+      "registration": {
+        "schema_version": 1,
+        "enabled": true,
+        "config_hash": "0eb83b3d5e198312d04b011fcb8b9e47b9049ff57502b920b3dec94d4852c94f",
+        "request_topic": "/horus/teach/teach_robot/request",
+        "input_topic": "/horus/teach/teach_robot/input",
+        "state_topic": "/horus/teach/teach_robot/state",
+        "workflow": "observe_record",
+        "task": "Unicode \u00e9 \ud83d\ude80",
+        "publish_rate_hz": 30.0,
+        "input_timeout_ms": 200,
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "clutch_binding": "both_grips",
+        "hold_binding": "right_secondary",
+        "task_presets": [],
+        "cameras": []
+      }
+    },
+    {
+      "input": {
+        "recording_root": "/tmp/horus-teach-contract",
+        "input_schema_version": 2,
+        "required_input_features": [
+          "head_pose",
+          "left_stick",
+          "right_stick",
+          "left_buttons",
+          "right_buttons"
+        ],
+        "clutch_binding": "both_primary",
+        "grasp_bindings": {
+          "left_grasp": "left_grip",
+          "right_grasp": "right_grip",
+          "left_pinch": "left_trigger",
+          "right_pinch": "right_trigger"
+        }
+      },
+      "normalized": {
+        "adapter_id": "observe",
+        "calibration_id": "",
+        "cameras": [],
+        "clutch_binding": "both_primary",
+        "command_frame": "",
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "grasp_bindings": {
+          "left_grasp": "left_grip",
+          "left_pinch": "left_trigger",
+          "right_grasp": "right_grip",
+          "right_pinch": "right_trigger"
+        },
+        "hold_binding": "right_secondary",
+        "input_schema_version": 2,
+        "input_timeout_ms": 200,
+        "joint_groups": {},
+        "joint_names": [],
+        "minimum_free_bytes": 536870912,
+        "provenance": "real",
+        "publish_rate_hz": 30.0,
+        "queue_budget_bytes": 67108864,
+        "recording_root": "/tmp/horus-teach-contract",
+        "required_input_features": [
+          "head_pose",
+          "left_stick",
+          "right_stick",
+          "left_buttons",
+          "right_buttons"
+        ],
+        "schema_version": 1,
+        "streams": [],
+        "task": "",
+        "task_presets": [],
+        "workflow": "observe_record"
+      },
+      "digest": "d179bef3a9aa0990ae224496051299d36cb98a84f8097cba7dbba8a8937678cf",
+      "registration": {
+        "schema_version": 1,
+        "enabled": true,
+        "config_hash": "d179bef3a9aa0990ae224496051299d36cb98a84f8097cba7dbba8a8937678cf",
+        "request_topic": "/horus/teach/teach_robot/request",
+        "input_topic": "/horus/teach/teach_robot/input",
+        "state_topic": "/horus/teach/teach_robot/state",
+        "workflow": "observe_record",
+        "task": "",
+        "publish_rate_hz": 30.0,
+        "input_timeout_ms": 200,
+        "controlled_hands": [
+          "left",
+          "right"
+        ],
+        "clutch_binding": "both_primary",
+        "hold_binding": "right_secondary",
+        "task_presets": [],
+        "cameras": [],
+        "grasp_hints": [
+          {
+            "control": "left_grip",
+            "action_id": "left_grasp",
+            "label": "Grasp"
+          },
+          {
+            "control": "left_trigger",
+            "action_id": "left_pinch",
+            "label": "Pinch"
+          },
+          {
+            "control": "right_grip",
+            "action_id": "right_grasp",
+            "label": "Grasp"
+          },
+          {
+            "control": "right_trigger",
+            "action_id": "right_pinch",
+            "label": "Pinch"
+          }
+        ],
+        "input_schema_version": 2,
+        "required_input_features": [
+          "head_pose",
+          "left_stick",
+          "right_stick",
+          "left_buttons",
+          "right_buttons"
+        ]
+      }
+    }
+  ],
+  "input_v2": {
+    "features": [
+      "head_pose",
+      "left_stick",
+      "right_stick",
+      "left_buttons",
+      "right_buttons"
+    ],
+    "sample": {
+      "input_schema_version": 2,
+      "source_monotonic_seconds": 12.5,
+      "frame_id": "teach_calibrated_floor_flu",
+      "clock_id": "quest_monotonic",
+      "pose_time_semantics": "unity_xr_latest_available",
+      "tracking_valid": true,
+      "clutch": true,
+      "ui_focus": false,
+      "head": {
+        "position": [
+          0.25,
+          0.1,
+          1.2
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "head_tracking_valid": true,
+      "left": {
+        "position": [
+          0.25,
+          0.1,
+          1.2
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "left_tracking_valid": true,
+      "left_stick": [
+        0.2,
+        -0.3
+      ],
+      "left_stick_valid": true,
+      "left_buttons_valid": true,
+      "left_primary": true,
+      "left_secondary": false,
+      "left_stick_click": false,
+      "left_trigger": 0.4,
+      "left_grip": 0.6,
+      "left_trigger_valid": true,
+      "left_grip_valid": true,
+      "right": {
+        "position": [
+          0.25,
+          0.1,
+          1.2
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "right_tracking_valid": true,
+      "right_stick": [
+        0.2,
+        -0.3
+      ],
+      "right_stick_valid": true,
+      "right_buttons_valid": true,
+      "right_primary": true,
+      "right_secondary": false,
+      "right_stick_click": false,
+      "right_trigger": 0.4,
+      "right_grip": 0.6,
+      "right_trigger_valid": true,
+      "right_grip_valid": true
+    },
+    "invalid": [
+      {
+        "patch": {
+          "input_schema_version": 1
+        }
+      },
+      {
+        "patch": {
+          "input_schema_version": true
+        }
+      },
+      {
+        "patch": {
+          "frame_id": "world"
+        }
+      },
+      {
+        "patch": {
+          "clock_id": "unix"
+        }
+      },
+      {
+        "patch": {
+          "pose_time_semantics": "capture"
+        }
+      },
+      {
+        "patch": {
+          "source_monotonic_seconds": -1
+        }
+      },
+      {
+        "patch": {
+          "source_monotonic_seconds": true
+        }
+      },
+      {
+        "patch": {
+          "head_tracking_valid": false
+        }
+      },
+      {
+        "patch": {
+          "left_tracking_valid": false
+        }
+      },
+      {
+        "patch": {
+          "right_tracking_valid": false
+        }
+      },
+      {
+        "patch": {
+          "head_tracking_valid": "true"
+        }
+      },
+      {
+        "patch": {
+          "head": {
+            "position": [
+              0,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "patch": {
+          "head": {
+            "position": [
+              true,
+              0,
+              0
+            ],
+            "rotation": [
+              0,
+              0,
+              0,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "patch": {
+          "left_stick": [
+            1.01,
+            0
+          ]
+        }
+      },
+      {
+        "patch": {
+          "right_stick": [
+            0
+          ]
+        }
+      },
+      {
+        "patch": {
+          "left_stick": [
+            true,
+            0
+          ]
+        }
+      },
+      {
+        "patch": {
+          "left_stick_valid": false
+        }
+      },
+      {
+        "patch": {
+          "right_stick_valid": false
+        }
+      },
+      {
+        "patch": {
+          "left_buttons_valid": false
+        }
+      },
+      {
+        "patch": {
+          "right_buttons_valid": false
+        }
+      },
+      {
+        "patch": {
+          "right_secondary": true
+        }
+      },
+      {
+        "patch": {
+          "left_primary": false
+        }
+      },
+      {
+        "patch": {
+          "right_primary": false
+        }
+      },
+      {
+        "patch": {
+          "left_stick_click": 1
+        }
+      },
+      {
+        "patch": {
+          "left_grip_valid": false
+        }
+      },
+      {
+        "patch": {
+          "right_trigger_valid": false
+        }
+      },
+      {
+        "patch": {
+          "left_grip": 2
+        }
+      },
+      {
+        "patch": {
+          "right_trigger": -0.1
+        }
+      },
+      {
+        "patch": {
+          "clutch": false
+        }
+      },
+      {
+        "patch": {
+          "tracking_valid": false
+        }
+      },
+      {
+        "patch": {
+          "ui_focus": true
+        }
+      },
+      {
+        "remove": "input_schema_version"
+      },
+      {
+        "remove": "source_monotonic_seconds"
+      },
+      {
+        "remove": "frame_id"
+      },
+      {
+        "remove": "clock_id"
+      },
+      {
+        "remove": "pose_time_semantics"
+      },
+      {
+        "remove": "tracking_valid"
+      },
+      {
+        "remove": "clutch"
+      },
+      {
+        "remove": "ui_focus"
+      },
+      {
+        "remove": "head"
+      },
+      {
+        "remove": "head_tracking_valid"
+      },
+      {
+        "remove": "left"
+      },
+      {
+        "remove": "left_tracking_valid"
+      },
+      {
+        "remove": "left_stick"
+      },
+      {
+        "remove": "left_stick_valid"
+      },
+      {
+        "remove": "left_buttons_valid"
+      },
+      {
+        "remove": "left_primary"
+      },
+      {
+        "remove": "left_secondary"
+      },
+      {
+        "remove": "left_stick_click"
+      },
+      {
+        "remove": "left_trigger"
+      },
+      {
+        "remove": "left_grip"
+      },
+      {
+        "remove": "left_trigger_valid"
+      },
+      {
+        "remove": "left_grip_valid"
+      },
+      {
+        "remove": "right"
+      },
+      {
+        "remove": "right_tracking_valid"
+      },
+      {
+        "remove": "right_stick"
+      },
+      {
+        "remove": "right_stick_valid"
+      },
+      {
+        "remove": "right_buttons_valid"
+      },
+      {
+        "remove": "right_primary"
+      },
+      {
+        "remove": "right_secondary"
+      },
+      {
+        "remove": "right_stick_click"
+      },
+      {
+        "remove": "right_trigger"
+      },
+      {
+        "remove": "right_grip"
+      },
+      {
+        "remove": "right_trigger_valid"
+      },
+      {
+        "remove": "right_grip_valid"
+      }
+    ]
+  }
+}

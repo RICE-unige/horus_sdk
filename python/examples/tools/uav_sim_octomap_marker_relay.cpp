@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <map>
@@ -13,6 +14,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "octomap_surface_coverage.hpp"
 
 #include <octomap/ColorOcTree.h>
 #include <octomap/OcTree.h>
@@ -107,11 +109,22 @@ void add_face(
   add_triangle(marker, a, c, d, color);
 }
 
-template <typename TreeT>
-bool is_occupied_at(const TreeT & tree, double x, double y, double z)
+std::uint32_t source_rgb(const octomap::OcTreeNode &)
 {
-  const auto * node = tree.search(x, y, z);
-  return node != nullptr && tree.isNodeOccupied(node);
+  return 0x1000000; // Sentinel: no source color, use axis shading.
+}
+
+std::uint32_t source_rgb(const octomap::ColorOcTreeNode & node)
+{
+  const auto color = node.getColor();
+  return (std::uint32_t(color.r) << 16) | (std::uint32_t(color.g) << 8) | color.b;
+}
+
+ColorMsg face_color(std::uint32_t rgb, int axis, int side, float alpha)
+{
+  return rgb > 0xFFFFFF ? normal_axis_color(axis, side, alpha) :
+    color_rgba(((rgb >> 16) & 255) / 255.0f, ((rgb >> 8) & 255) / 255.0f,
+      (rgb & 255) / 255.0f, alpha);
 }
 
 std::int64_t quantize_coordinate(double value, double unit)
@@ -151,19 +164,20 @@ struct PlaneKey
   int side = 1;
   std::int64_t plane = 0;
   std::int64_t cell_size = 1;
+  std::uint32_t rgb = 0x1000000;
 
   bool operator==(const PlaneKey & other) const
   {
     return axis == other.axis &&
       side == other.side &&
       plane == other.plane &&
-      cell_size == other.cell_size;
+      cell_size == other.cell_size && rgb == other.rgb;
   }
 
   bool operator<(const PlaneKey & other) const
   {
-    return std::tie(axis, side, plane, cell_size) <
-      std::tie(other.axis, other.side, other.plane, other.cell_size);
+    return std::tie(axis, side, plane, cell_size, rgb) <
+      std::tie(other.axis, other.side, other.plane, other.cell_size, other.rgb);
   }
 };
 
@@ -175,6 +189,7 @@ struct PlaneKeyHash
     h ^= std::hash<int>{}(key.side) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
     h ^= std::hash<std::int64_t>{}(key.plane) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
     h ^= std::hash<std::int64_t>{}(key.cell_size) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    h ^= std::hash<std::uint32_t>{}(key.rgb) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
     return h;
   }
 };
@@ -200,7 +215,7 @@ void add_merged_face(
   double u1,
   double v0,
   double v1,
-  float alpha)
+  const ColorMsg & color)
 {
   PointMsg p00;
   PointMsg p10;
@@ -237,11 +252,11 @@ void add_merged_face(
 
   if (use_positive_winding)
   {
-    add_face(marker, p00, p10, p11, p01, normal_axis_color(axis, side, alpha));
+    add_face(marker, p00, p10, p11, p01, color);
   }
   else
   {
-    add_face(marker, p00, p01, p11, p10, normal_axis_color(axis, side, alpha));
+    add_face(marker, p00, p01, p11, p10, color);
   }
 }
 }  // namespace
@@ -258,7 +273,8 @@ public:
     const std::string & marker_style,
     double min_update_interval_sec,
     int chunk_publish_period_ms,
-    std::size_t chunks_per_tick)
+    std::size_t chunks_per_tick,
+    const std::string & color_mode)
   : Node("uav_sim_octomap_marker_relay"),
     input_topic_(input_topic),
     output_topic_(output_topic),
@@ -266,6 +282,7 @@ public:
     alpha_(std::clamp(alpha, 0.05, 1.0)),
     voxel_scale_(std::clamp(voxel_scale, 0.25, 8.0)),
     marker_style_(parse_marker_style(marker_style)),
+    color_mode_(color_mode),
     min_update_interval_(std::chrono::duration<double>(std::max(0.0, min_update_interval_sec))),
     chunk_publish_period_(std::chrono::milliseconds(std::max(1, chunk_publish_period_ms))),
     chunks_per_tick_(std::max<std::size_t>(1, chunks_per_tick))
@@ -306,22 +323,23 @@ private:
       };
 
     mix(static_cast<std::uint64_t>(msg.binary));
-    mix(static_cast<std::uint64_t>(std::llround(msg.resolution * 1000000.0)));
+    std::uint64_t resolution_bits;
+    static_assert(sizeof(resolution_bits) == sizeof(msg.resolution));
+    std::memcpy(&resolution_bits, &msg.resolution, sizeof(resolution_bits));
+    mix(resolution_bits);
     mix(static_cast<std::uint64_t>(msg.data.size()));
     for (char c : msg.id)
     {
       mix(static_cast<unsigned char>(c));
     }
 
-    if (!msg.data.empty())
+    // Every byte participates: sampled signatures missed local map changes
+    // between sampled offsets and left the displayed mesh stale indefinitely.
+    for (const auto value : msg.data)
     {
-      const std::size_t stride = std::max<std::size_t>(1, msg.data.size() / 4096);
-      for (std::size_t i = 0; i < msg.data.size(); i += stride)
-      {
-        mix(static_cast<unsigned char>(msg.data[i]));
-      }
-      mix(static_cast<unsigned char>(msg.data.back()));
+      mix(static_cast<unsigned char>(value));
     }
+    for (char c : msg.header.frame_id) {mix(static_cast<unsigned char>(c));}
 
     return hash;
   }
@@ -420,7 +438,11 @@ private:
 
     if (occupied_count == 0)
     {
-      RCLCPP_WARN(get_logger(), "Octomap contained no occupied leaf nodes");
+      pending_markers_.clear();
+      queue_marker(make_base_marker(msg, "uav_sim_octomap", 0, MarkerMsg::DELETEALL));
+      last_published_chunks_ = 0;
+      sent_initial_clear_ = true;
+      RCLCPP_INFO(get_logger(), "Cleared the displayed map: source Octomap has no occupied cells");
       return;
     }
 
@@ -530,40 +552,35 @@ private:
     auto collect_face = [&](
         int axis,
         int side,
-        bool neighbor_occupied,
-        double cx,
-        double cy,
-        double cz,
-        double size) {
-        if (neighbor_occupied)
-        {
-          return;
-        }
-
+        const std::array<double, 3> & center,
+        double size,
+        double logical_plane,
+        const std::array<double, 3> & leaf_center,
+        std::uint32_t rgb) {
         const double visual_half = size * voxel_scale_ * 0.5;
         const std::int64_t cell_size = std::max<std::int64_t>(
           1,
           quantize_coordinate(size, resolution));
-        double center[3] = {cx, cy, cz};
         const int u_axis = axis == 0 ? 1 : 0;
         const int v_axis = axis == 2 ? 1 : 2;
-        const double logical_plane = center[axis] + static_cast<double>(side) * size * 0.5;
-        const double visual_plane = center[axis] + static_cast<double>(side) * visual_half;
+        const double visual_plane = leaf_center[axis] + (logical_plane - leaf_center[axis]) * voxel_scale_;
         PlaneKey plane_key{
           axis,
           side,
           quantize_coordinate(logical_plane, resolution),
-          cell_size};
+          cell_size, rgb};
         CellKey cell_key{
           quantize_coordinate(center[u_axis] - size * 0.5, size),
           quantize_coordinate(center[v_axis] - size * 0.5, size)};
 
         FaceCell cell;
         cell.plane = visual_plane;
-        cell.u_min = center[u_axis] - visual_half;
-        cell.u_max = center[u_axis] + visual_half;
-        cell.v_min = center[v_axis] - visual_half;
-        cell.v_max = center[v_axis] + visual_half;
+        const double visual_u = leaf_center[u_axis] + (center[u_axis] - leaf_center[u_axis]) * voxel_scale_;
+        const double visual_v = leaf_center[v_axis] + (center[v_axis] - leaf_center[v_axis]) * voxel_scale_;
+        cell.u_min = visual_u - visual_half;
+        cell.u_max = visual_u + visual_half;
+        cell.v_min = visual_v - visual_half;
+        cell.v_max = visual_v + visual_half;
         planes[plane_key][cell_key] = cell;
         ++exposed_cell_faces;
       };
@@ -580,13 +597,21 @@ private:
       const double cy = it.getY();
       const double cz = it.getZ();
       const double size = it.getSize();
+      const std::uint32_t rgb = color_mode_ != "axis" && !msg.binary ? source_rgb(*it) : 0x1000000;
 
-      collect_face(0, 1, is_occupied_at(tree, cx + size, cy, cz), cx, cy, cz, size);
-      collect_face(0, -1, is_occupied_at(tree, cx - size, cy, cz), cx, cy, cz, size);
-      collect_face(1, 1, is_occupied_at(tree, cx, cy + size, cz), cx, cy, cz, size);
-      collect_face(1, -1, is_occupied_at(tree, cx, cy - size, cz), cx, cy, cz, size);
-      collect_face(2, 1, is_occupied_at(tree, cx, cy, cz + size), cx, cy, cz, size);
-      collect_face(2, -1, is_occupied_at(tree, cx, cy, cz - size), cx, cy, cz, size);
+      const std::array<double, 3> center{cx, cy, cz};
+      for (int axis = 0; axis < 3; ++axis)
+      {
+        for (int side : {-1, 1})
+        {
+          auto face_center = center;
+          face_center[axis] += side * size * 0.5;
+          horus::exposed_face_patches(tree, face_center, size, it.getDepth(), axis, side,
+            [&](const std::array<double, 3> & patch, double patch_size) {
+              collect_face(axis, side, patch, patch_size, face_center[axis], center, rgb);
+            });
+        }
+      }
     }
 
     const std::size_t max_chunk_triangles = std::max<std::size_t>(2, max_triangles_);
@@ -612,25 +637,24 @@ private:
         chunk_triangles = 0;
       };
 
-    auto add_surface_rect = [&](const PlaneKey & plane_key, double plane, double u0, double u1,
+    struct SurfaceRect
+    {
+      PlaneKey key;
+      double plane, u0, u1, v0, v1;
+      std::array<double, 3> center;
+      std::uint32_t morton = 0;
+    };
+    std::vector<SurfaceRect> rectangles;
+    auto add_surface_rect = [&](const PlaneKey & key, double plane, double u0, double u1,
                                 double v0, double v1) {
-        if (chunk_triangles + 2 > max_chunk_triangles)
-        {
-          publish_chunk();
-        }
-        add_merged_face(
-          marker,
-          plane_key.axis,
-          plane_key.side,
-          plane,
-          u0,
-          u1,
-          v0,
-          v1,
-          static_cast<float>(alpha_));
-        chunk_triangles += 2;
-        emitted_triangles += 2;
-        ++merged_quads;
+        // Reorder complete, unchanged faces into spatially local draw pages.
+        // Sorting by plane/color alone spreads each page across the whole map,
+        // preventing the headset from rejecting off-screen pages.
+        std::array<double, 3> center;
+        if (key.axis == 0) center = {plane, (u0 + u1) * .5, (v0 + v1) * .5};
+        else if (key.axis == 1) center = {(u0 + u1) * .5, plane, (v0 + v1) * .5};
+        else center = {(u0 + u1) * .5, (v0 + v1) * .5, plane};
+        rectangles.push_back({key, plane, u0, u1, v0, v1, center});
       };
 
     std::vector<PlaneKey> plane_keys;
@@ -673,7 +697,7 @@ private:
         }
 
         std::int64_t width = 1;
-        while (true)
+        while (voxel_scale_ == 1.0)
         {
           CellKey candidate{start.u + width, start.v};
           if (visited.find(candidate) != visited.end() || cells.find(candidate) == cells.end())
@@ -684,7 +708,7 @@ private:
         }
 
         std::int64_t height = 1;
-        while (true)
+        while (voxel_scale_ == 1.0)
         {
           bool row_ok = true;
           for (std::int64_t du = 0; du < width; ++du)
@@ -736,6 +760,37 @@ private:
       }
     }
 
+    if (!rectangles.empty())
+    {
+      auto minimum = rectangles.front().center, maximum = minimum;
+      for (const auto & rect : rectangles)
+        for (int axis = 0; axis < 3; ++axis)
+        {
+          minimum[axis] = std::min(minimum[axis], rect.center[axis]);
+          maximum[axis] = std::max(maximum[axis], rect.center[axis]);
+        }
+      for (auto & rect : rectangles)
+        for (int axis = 0; axis < 3; ++axis)
+        {
+          const double span = maximum[axis] - minimum[axis];
+          const auto cell = span > 0 ? static_cast<std::uint32_t>(std::clamp(
+            1023.0 * (rect.center[axis] - minimum[axis]) / span, 0.0, 1023.0)) : 0u;
+          for (unsigned bit = 0; bit < 10; ++bit)
+            rect.morton |= ((cell >> bit) & 1u) << (3 * bit + axis);
+        }
+      std::stable_sort(rectangles.begin(), rectangles.end(),
+        [](const SurfaceRect & a, const SurfaceRect & b) { return a.morton < b.morton; });
+      for (const auto & rect : rectangles)
+      {
+        if (chunk_triangles + 2 > max_chunk_triangles) publish_chunk();
+        add_merged_face(marker, rect.key.axis, rect.key.side, rect.plane,
+          rect.u0, rect.u1, rect.v0, rect.v1,
+          face_color(rect.key.rgb, rect.key.axis, rect.key.side, static_cast<float>(alpha_)));
+        chunk_triangles += 2;
+        emitted_triangles += 2;
+        ++merged_quads;
+      }
+    }
     publish_chunk();
     for (std::size_t stale_id = published_chunks + 1; stale_id <= last_published_chunks_; ++stale_id)
     {
@@ -759,14 +814,14 @@ private:
       msg.header.frame_id.empty() ? "map" : msg.header.frame_id.c_str());
   }
 
-  static void add_cube(MarkerMsg & marker, const PointMsg (&p)[8], float alpha)
+  static void add_cube(MarkerMsg & marker, const PointMsg (&p)[8], float alpha, std::uint32_t rgb)
   {
-    add_face(marker, p[4], p[6], p[7], p[5], normal_axis_color(0, 1, alpha));
-    add_face(marker, p[0], p[1], p[3], p[2], normal_axis_color(0, -1, alpha));
-    add_face(marker, p[2], p[3], p[7], p[6], normal_axis_color(1, 1, alpha));
-    add_face(marker, p[0], p[4], p[5], p[1], normal_axis_color(1, -1, alpha));
-    add_face(marker, p[1], p[5], p[7], p[3], normal_axis_color(2, 1, alpha));
-    add_face(marker, p[0], p[2], p[6], p[4], normal_axis_color(2, -1, alpha));
+    add_face(marker, p[4], p[6], p[7], p[5], face_color(rgb, 0, 1, alpha));
+    add_face(marker, p[0], p[1], p[3], p[2], face_color(rgb, 0, -1, alpha));
+    add_face(marker, p[2], p[3], p[7], p[6], face_color(rgb, 1, 1, alpha));
+    add_face(marker, p[0], p[4], p[5], p[1], face_color(rgb, 1, -1, alpha));
+    add_face(marker, p[1], p[5], p[7], p[3], face_color(rgb, 2, 1, alpha));
+    add_face(marker, p[0], p[2], p[6], p[4], face_color(rgb, 2, -1, alpha));
   }
 
   template <typename TreeT>
@@ -835,7 +890,8 @@ private:
         point(x1, y1, z1),
       };
 
-      add_cube(marker, p, static_cast<float>(alpha_));
+      add_cube(marker, p, static_cast<float>(alpha_),
+        color_mode_ != "axis" && !msg.binary ? source_rgb(*it) : 0x1000000);
       ++chunk_voxels;
       ++emitted_voxels;
       emitted_triangles += 12;
@@ -867,6 +923,7 @@ private:
   double alpha_;
   double voxel_scale_;
   MarkerStyle marker_style_;
+  std::string color_mode_;
   std::chrono::duration<double> min_update_interval_;
   std::chrono::milliseconds chunk_publish_period_;
   std::size_t chunks_per_tick_;
@@ -891,13 +948,14 @@ int main(int argc, char ** argv)
 
   std::string input_topic = "/uav_sim/octomap_binary";
   std::string output_topic = "/map_3d_octomap_mesh";
-  std::size_t max_triangles = 3000;
+  std::size_t max_triangles = 12000;
   double alpha = 0.95;
-  double voxel_scale = 2.0;
+  double voxel_scale = 1.0;
   double min_update_interval_sec = 1.0;
   int chunk_publish_period_ms = 50;
   std::size_t chunks_per_tick = 1;
   std::string marker_style = "surface_mesh";
+  std::string color_mode = "auto";
 
   for (int i = 1; i < argc; ++i)
   {
@@ -934,6 +992,14 @@ int main(int argc, char ** argv)
     {
       marker_style = next();
     }
+    else if (arg == "--color-mode")
+    {
+      color_mode = next();
+      if (color_mode != "auto" && color_mode != "axis")
+      {
+        throw std::runtime_error("--color-mode must be auto or axis (binary OctoMap has no source RGB)");
+      }
+    }
     else if (arg == "--min-update-interval-sec")
     {
       min_update_interval_sec = std::stod(next());
@@ -957,7 +1023,8 @@ int main(int argc, char ** argv)
     marker_style,
     min_update_interval_sec,
     chunk_publish_period_ms,
-    chunks_per_tick);
+    chunks_per_tick,
+    color_mode);
   rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;

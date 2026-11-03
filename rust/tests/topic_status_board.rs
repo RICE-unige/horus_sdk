@@ -1,5 +1,5 @@
-use horus::core::types::RobotType;
-use horus::robot::Robot;
+#[cfg(not(feature = "ros2"))]
+use horus::{core::types::RobotType, robot::Robot};
 use horus::utils::{get_topic_status_board, TopicStatusBoard};
 use uuid::Uuid;
 
@@ -40,6 +40,7 @@ fn robot_register_without_native_transport_does_not_mark_topic_subscribed() {
 }
 
 #[test]
+#[cfg(not(feature = "ros2"))]
 fn failed_native_robot_register_does_not_mark_robot_registered() {
     let unique = Uuid::new_v4().simple().to_string();
     let robot_name = format!("drone_{unique}");

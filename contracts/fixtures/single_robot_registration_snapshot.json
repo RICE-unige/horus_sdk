@@ -37,6 +37,7 @@
     },
     "tasks": {
       "go_to_point": {
+        "allow_unbounded_placement": false,
         "enabled": true,
         "goal_topic": "/test_bot/goal_pose",
         "cancel_topic": "/test_bot/goal_cancel",

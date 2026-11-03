@@ -1,252 +1,137 @@
 #!/usr/bin/env bash
-# =============================================================================
-# HORUS Installer - Main Entry Point
-#
-# Installs the HORUS Mixed Reality Robot Management Platform:
-#   - horus_sdk (Python SDK)
-#   - horus_ros2 (ROS 2 bridge)
-#   - Helper scripts and shell integration
-# =============================================================================
-
+# Full SDK + ROS bridge installation. No daemon is started by the installer.
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/common.sh"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/ui.sh"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/args.sh"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/system.sh"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/repos.sh"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/runtime.sh"
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/lib/helpers.sh"
-
-# ---------------------------------------------------------------------------
-# Bootstrap log (temporary until install root is ready)
-# ---------------------------------------------------------------------------
-
-bootstrap_log() {
-  local early_log="/tmp/horus-installer-$(date +%Y%m%d-%H%M%S).log"
-  if [ -z "$LOG_FILE" ]; then
-    LOG_FILE="$early_log"
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# Interactive configuration prompts
-# ---------------------------------------------------------------------------
+for library in common ui args system repos runtime helpers; do
+  # shellcheck disable=SC1090
+  source "$SCRIPT_DIR/lib/$library.sh"
+done
 
 ask_interactive_defaults() {
-  if [ "$ASSUME_YES" -eq 1 ]; then
-    return 0
-  fi
-
-  log_info "Interactive setup: confirm installation options"
-
+  [ "$ASSUME_YES" -eq 0 ] || return 0
   prompt_with_default_into INSTALL_ROOT "Install root" "$INSTALL_ROOT"
   INSTALL_ROOT="$(normalize_path "$INSTALL_ROOT")"
-
   prompt_with_default_into CHANNEL "Channel (stable/main)" "$CHANNEL"
-  CHANNEL="${CHANNEL,,}"
-
-  prompt_with_default_into ROS_DISTRO "ROS distro (auto/jazzy/humble)" "$ROS_DISTRO"
-  ROS_DISTRO="${ROS_DISTRO,,}"
-
   prompt_with_default_into WEBRTC "Build WebRTC bridge (on/off)" "$WEBRTC"
-  WEBRTC="${WEBRTC,,}"
-
   prompt_with_default_into SHELL_CONFIG "Shell integration (auto/manual)" "$SHELL_CONFIG"
-  SHELL_CONFIG="${SHELL_CONFIG,,}"
-
-  case "$CHANNEL" in
-    stable|main) ;;
-    *) die "Invalid channel: $CHANNEL" ;;
-  esac
-  case "$ROS_DISTRO" in
-    auto|jazzy|humble) ;;
-    *) die "Invalid ROS distro: $ROS_DISTRO" ;;
-  esac
-  case "$WEBRTC" in
-    on|off) ;;
-    *) die "Invalid WebRTC value: $WEBRTC" ;;
-  esac
-  case "$SHELL_CONFIG" in
-    auto|manual) ;;
-    *) die "Invalid shell config: $SHELL_CONFIG" ;;
-  esac
+  # Apply the same validation to interactive input and command-line input.
+  parse_args --install-root "$INSTALL_ROOT" --channel "$CHANNEL" \
+    --webrtc "$WEBRTC" --shell-config "$SHELL_CONFIG"
 }
 
-# ---------------------------------------------------------------------------
-# Logging setup (writes to log file only - no tee to stdout)
-# ---------------------------------------------------------------------------
-
-setup_logging() {
-  mkdir -p "$(dirname "$LOG_FILE")"
-  : > "$LOG_FILE"
-  _log_to_file "=========================================="
-  _log_to_file "HORUS Installer v$HORUS_INSTALLER_VERSION"
-  _log_to_file "Date: $(date -u)"
-  _log_to_file "Platform: $OS_ID $OS_VERSION ($OS_CODENAME)"
-  _log_to_file "Config: install_root=$INSTALL_ROOT channel=$CHANNEL ros_distro=$ROS_DISTRO webrtc=$WEBRTC"
-  _log_to_file "=========================================="
+installer_cleanup() {
+  local result="$?"
+  _ui_cleanup
+  if [ -n "${INSTALL_STARTED:-}" ] && [ "$result" -ne 0 ]; then
+    printf 'failed\n' >"$INSTALL_ROOT/state/install.status"
+    printf '\nInstallation incomplete. No services were started. Log: %s\n' "$LOG_FILE" >&2
+  fi
+  if [ -n "${INSTALLER_SNAPSHOT:-}" ]; then rm -rf -- "$INSTALLER_SNAPSHOT"; fi
 }
-
-# ---------------------------------------------------------------------------
-# Main installation flow
-# ---------------------------------------------------------------------------
 
 main() {
   parse_args "$@"
-  bootstrap_log
-
+  if [ "$CHECK_ONLY" -eq 1 ]; then LOG_FILE=""; fi
   detect_platform
   ROS_DISTRO="$(resolve_ros_distro "$ROS_DISTRO")"
   ask_interactive_defaults
-  ROS_DISTRO="$(resolve_ros_distro "$ROS_DISTRO")"
-
-  prepare_install_root "$INSTALL_ROOT" "$ASSUME_YES"
-
-  if [ -z "$LOG_FILE" ] || [[ "$LOG_FILE" == /tmp/horus-installer-* ]]; then
-    LOG_FILE="$INSTALL_ROOT/logs/install-$(date +%Y%m%d-%H%M%S).log"
+  for command in git realpath flock /usr/bin/python3; do
+    command_exists "$command" || die "Missing prerequisite: $command"
+  done
+  parse_manifest_channel "$SCRIPT_DIR/manifest/releases.json" "$CHANNEL"
+  check_install_root "$INSTALL_ROOT"
+  check_legacy_python_shim "$INSTALL_ROOT"
+  /usr/bin/python3 "$SCRIPT_DIR/lib/manage.py" shell-check "$INSTALL_ROOT" "$SHELL_CONFIG"
+  if [ -f "$INSTALL_ROOT/state/horus-start.pid" ]; then
+    local legacy_pid
+    legacy_pid="$(cat "$INSTALL_ROOT/state/horus-start.pid")"
+    if [[ "$legacy_pid" =~ ^[0-9]+$ ]] && [ -d "/proc/$legacy_pid" ]; then
+      die "A legacy launcher PID is still present ($legacy_pid); stop that launch before updating."
+    fi
   fi
-  setup_logging
+  # Read-only preflight checks both repositories before creating files or using sudo.
+  local check="$CHECK_ONLY"
+  CHECK_ONLY=1
+  preflight_repo "$MANIFEST_SDK_URL" "$MANIFEST_SDK_REF" "$INSTALL_ROOT/sdk" horus_sdk
+  preflight_repo "$MANIFEST_ROS2_URL" "$MANIFEST_ROS2_REF" "$INSTALL_ROOT/ros2" horus_ros2
+  CHECK_ONLY="$check"
+  print_config_summary "$INSTALL_ROOT" "$CHANNEL" "$ROS_DISTRO" "$WEBRTC" "$SHELL_CONFIG" "Ubuntu $OS_VERSION ($OS_CODENAME)"
+  log_info "SDK revision: $MANIFEST_SDK_REF"
+  log_info "ROS bridge revision: $MANIFEST_ROS2_REF"
+  if [ -n "$MANIFEST_NOTES" ]; then log_info "$MANIFEST_NOTES"; fi
+  if [ "$CHECK_ONLY" -eq 1 ]; then
+    log_success "Configuration checks passed. No installation performed; remote refs/build/runtime have not been tested."
+    return 0
+  fi
+  [ "$EUID" -ne 0 ] || die "Run as your normal user, not sudo/root; individual apt steps use sudo."
+  export GIT_TERMINAL_PROMPT=0 GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=60
+  prepare_install_root "$INSTALL_ROOT"
+  exec {RUNTIME_LOCK_FD}>"$INSTALL_ROOT/state/runtime.lock"
+  flock -n "$RUNTIME_LOCK_FD" || die "Stop horus-start before updating this installation"
+  if [ -z "$LOG_FILE" ]; then
+    LOG_FILE="$(mktemp "$INSTALL_ROOT/logs/install-$(date -u +%Y%m%dT%H%M%S).XXXXXXXX.log")"
+  fi
+  mkdir -p "$(dirname "$LOG_FILE")"
+  touch "$LOG_FILE"  # Append to an explicit user log; never truncate it.
   setup_ui_traps
-
-  # --- Banner ---
+  trap installer_cleanup EXIT
+  INSTALL_STARTED=1
+  printf 'installing\n' >"$INSTALL_ROOT/state/install.status"
+  # Keep this version's templates/tools intact if its own SDK checkout is updated.
+  INSTALLER_SNAPSHOT="$(mktemp -d -t horus-installer.XXXXXXXX)"
+  cp -a "$SCRIPT_DIR/." "$INSTALLER_SNAPSHOT/"
+  SCRIPT_DIR="$INSTALLER_SNAPSHOT"
+  _log_to_file "Installer $HORUS_INSTALLER_VERSION on $OS_ID $OS_VERSION; root=$INSTALL_ROOT; channel=$CHANNEL"
   print_banner
-  printf '    %bInstaller v%s%b\n' "${C_DIM}" "$HORUS_INSTALLER_VERSION" "${C_RESET}"
-
-  # --- Configuration summary ---
-  local os_info="Ubuntu $OS_VERSION ($OS_CODENAME)"
-  if [ "$IS_WSL" -eq 1 ]; then
-    os_info="$os_info / WSL2"
-  fi
-  print_config_summary \
-    "$INSTALL_ROOT" "$CHANNEL" "$ROS_DISTRO" "$WEBRTC" "$SHELL_CONFIG" "$os_info"
-
-  # --- Compute step total ---
-  # Steps:
-  #  1. Sudo access
-  #  2. ROS apt repository
-  #  3. Base system packages
-  #  4. ROS 2 packages
-  #  5. WebRTC dependencies      (conditional)
-  #  6. rosdep init
-  #  7. Sync horus_sdk
-  #  8. Sync horus_ros2
-  #  9. Python SDK runtime
-  # 10. ROS 2 workspace build
-  # 11. Runtime validation
-  # 12. Helper scripts & shell integration
   local total=11
-  if [ "$WEBRTC" = "on" ]; then
-    total=12
-  fi
+  if [ "$WEBRTC" = on ]; then total=12; fi
   step_init "$total"
 
-  # --- Step 1: Sudo ---
+  # Fetch both targets before checkout so local ahead/divergent work cannot be lost.
+  preflight_repo "$MANIFEST_SDK_URL" "$MANIFEST_SDK_REF" "$INSTALL_ROOT/sdk" horus_sdk
+  preflight_repo "$MANIFEST_ROS2_URL" "$MANIFEST_ROS2_REF" "$INSTALL_ROOT/ros2" horus_ros2
+  step_start "Syncing SDK"
+  sync_repo_to_ref "$MANIFEST_SDK_URL" "$MANIFEST_SDK_REF" "$INSTALL_ROOT/sdk" horus_sdk
+  step_done
+  step_start "Syncing ROS bridge"
+  sync_repo_to_ref "$MANIFEST_ROS2_URL" "$MANIFEST_ROS2_REF" "$INSTALL_ROOT/ros2" horus_ros2
+  step_done
   step_start "Validating sudo access"
   ensure_sudo
   step_done
-
-  # --- Step 2: ROS apt repo ---
-  step_start "Configuring ROS 2 apt repository"
+  step_start "Configuring ROS apt repository"
   setup_ros_apt_repository "$OS_CODENAME"
   step_done
-
-  # --- Step 3: Base packages ---
-  step_start "Installing base system packages"
+  step_start "Installing development tools"
   install_base_dependencies
   step_done
-
-  # --- Step 4: ROS packages ---
-  step_start "Installing ROS 2 packages ($ROS_DISTRO)"
+  step_start "Installing ROS $ROS_DISTRO"
   install_ros_dependencies "$ROS_DISTRO"
   step_done
-
-  # --- Step 5: WebRTC (conditional) ---
-  if [ "$WEBRTC" = "on" ]; then
-    step_start "Installing WebRTC/media dependencies"
+  if [ "$WEBRTC" = on ]; then
+    step_start "Installing media dependencies"
     install_webrtc_dependencies
     step_done
   fi
-
-  # --- Step 6: rosdep ---
-  step_start "Initializing rosdep"
+  step_start "Preparing rosdep"
   init_rosdep "$ROS_DISTRO"
   step_done
-
-  # --- Parse manifest (silent, no step needed) ---
-  local manifest_path="$REPO_ROOT/install/manifest/releases.json"
-  parse_manifest_channel "$manifest_path" "$CHANNEL"
-
-  if [ -n "$MANIFEST_NOTES" ]; then
-    _log_to_file "Channel notes: $MANIFEST_NOTES"
-  fi
-
-  # --- Step 7: Sync SDK ---
-  local sdk_dir="$INSTALL_ROOT/sdk"
-  step_start "Syncing horus_sdk repository"
-  sync_repo_to_ref "$MANIFEST_SDK_URL" "$MANIFEST_SDK_REF" "$sdk_dir" "horus_sdk"
+  step_start "Installing SDK Python runtime"
+  setup_python_sdk_runtime "$INSTALL_ROOT/sdk"
   step_done
-
-  # --- Step 8: Sync ROS2 ---
-  local ros2_dir="$INSTALL_ROOT/ros2"
-  step_start "Syncing horus_ros2 repository"
-  sync_repo_to_ref "$MANIFEST_ROS2_URL" "$MANIFEST_ROS2_REF" "$ros2_dir" "horus_ros2"
+  step_start "Building ROS bridge"
+  build_ros2_backend_workspace "$INSTALL_ROOT/ros2" "$ROS_DISTRO" "$WEBRTC"
   step_done
-
-  # --- Step 9: Python SDK ---
-  step_start "Setting up Python SDK runtime"
-  setup_python_sdk_runtime "$sdk_dir"
+  step_start "Validating SDK and bridge"
+  validate_runtime_install "$INSTALL_ROOT" "$ROS_DISTRO"
   step_done
-
-  # --- Step 10: Build ROS2 workspace ---
-  step_start "Building ROS 2 workspace (this may take several minutes)"
-  build_ros2_backend_workspace "$ros2_dir" "$ROS_DISTRO" "$WEBRTC"
-  step_done
-
-  # --- Step 11: Validate ---
-  step_start "Validating runtime installation"
-  validate_runtime_install "$INSTALL_ROOT" "$ROS_DISTRO" "$HORUS_INSTALL_RUNTIME_MODE"
-  step_done
-
-  # --- Step 12: Helpers and shell ---
-  step_start "Writing helper scripts and shell integration"
+  step_start "Installing helper commands"
   write_helper_scripts "$INSTALL_ROOT" "$ROS_DISTRO"
   configure_shell_integration "$INSTALL_ROOT" "$SHELL_CONFIG"
-  write_install_state \
-    "$INSTALL_ROOT" \
-    "$CHANNEL" \
-    "$ROS_DISTRO" \
-    "$WEBRTC" \
-    "$SHELL_CONFIG" \
-    "$MANIFEST_SDK_REF" \
-    "$MANIFEST_ROS2_REF"
-  write_install_summary \
-    "$INSTALL_ROOT" \
-    "$LOG_FILE" \
-    "$CHANNEL" \
-    "$ROS_DISTRO" \
-    "$WEBRTC" \
-    "$MANIFEST_SDK_REF" \
-    "$MANIFEST_ROS2_REF" \
-    "$HORUS_INSTALL_RUNTIME_MODE" \
-    "$HORUS_INSTALL_RUNTIME_REASON"
+  write_install_state "$INSTALL_ROOT" "$CHANNEL" "$ROS_DISTRO" "$WEBRTC" "$SHELL_CONFIG" "$MANIFEST_SDK_REF" "$MANIFEST_ROS2_REF"
+  printf 'complete\n' >"$INSTALL_ROOT/state/install.status"
   step_done
-
-  # --- WSL guidance ---
   print_wsl_guidance
-
-  # --- Completion ---
-  print_completion_summary "$INSTALL_ROOT" "$HORUS_INSTALL_RUNTIME_MODE" "$HORUS_INSTALL_RUNTIME_REASON"
+  print_completion_summary "$INSTALL_ROOT"
 }
-
 main "$@"

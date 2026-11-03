@@ -4,6 +4,8 @@
 #include "horus/core/types.hpp"
 #include "horus/robot/dataviz.hpp"
 #include "horus/robot/sensors.hpp"
+#include "horus/teaching/config.hpp"
+#include "horus/controller_hints.hpp"
 #include <any>
 #include <map>
 #include <memory>
@@ -68,6 +70,19 @@ struct NavigationTaskOptions {
     std::optional<double> yaw_tolerance_deg;
     std::optional<double> min_altitude_m;
     std::optional<double> max_altitude_m;
+    std::optional<bool> allow_unbounded_placement;
+};
+
+struct GoToPointTaskOptions {
+    bool enabled{true};
+    std::optional<std::string> goal_topic, cancel_topic, status_topic, frame_id;
+    std::optional<double> position_tolerance_m, yaw_tolerance_deg, min_altitude_m, max_altitude_m;
+    std::optional<bool> allow_unbounded_placement;
+};
+struct WaypointTaskOptions {
+    bool enabled{true};
+    std::optional<std::string> path_topic, status_topic, frame_id;
+    std::optional<double> position_tolerance_m, yaw_tolerance_deg;
 };
 
 struct RobotDescriptionOptions {
@@ -82,6 +97,10 @@ struct RobotDescriptionOptions {
     int visual_mesh_triangle_budget{90000};
     std::string body_mesh_mode{"preview_mesh"};
     bool enabled{true};
+    std::string mesh_root;
+    std::string robot_description_topic{"/robot_description"};
+    std::string urdf_package;
+    std::string visual_link_pose_source{"static"};
 };
 
 // Capability-driven, default-deny safety contract. Consumers gate command
@@ -105,6 +124,8 @@ struct FieldTeammateOptions {
     std::optional<std::string> base_frame;
     std::optional<std::string> camera_frame;
     std::optional<std::string> first_person_video_topic;
+    std::optional<std::string> first_person_video_camera_pose_topic;
+    std::optional<std::string> first_person_video_camera_info_topic;
     std::optional<std::string> localization_confidence_topic;
     std::optional<std::string> guidance_request_topic;
     std::optional<std::string> guidance_response_topic;
@@ -118,6 +139,9 @@ struct FieldTeammateOptions {
     bool can_clarify{true};
     bool can_reject{true};
     bool can_complete{true};
+    double profile_height_m{1.75};
+    std::string profile_sex{"unspecified"};
+    std::string body_model{"meta_avatar"};
 };
 
 class Robot {
@@ -143,11 +167,21 @@ public:
     void configure_robot_manager(const RobotManagerOptions& options);
     void configure_teleop(const TeleopOptions& options = {});
     void configure_navigation_tasks(const NavigationTaskOptions& options = {});
+    void configure_go_to_point_task(const GoToPointTaskOptions& options = {});
+    void configure_waypoint_task(const WaypointTaskOptions& options = {});
     void configure_robot_description(const RobotDescriptionOptions& options);
+    void configure_teaching(const horus::teaching::TeachConfig& config);
+    void configure_controller_hints(const horus::ControllerHints& hints) { metadata_["controller_hints"] = hints.to_dict(); }
+    void clear_controller_hints() { metadata_.erase("controller_hints"); }
     void configure_local_body_model(const std::string& robot_model_id, bool enabled = true);
     void configure_workspace_compass(bool enabled, int gateway_port = 8088, const std::string& voice_mode = "auto");
     void configure_workspace_tutorial(const std::string& preset_id, bool enabled = true);
+    void configure_workspace_experiment(bool enabled = true, const std::string& contract_version = "experiment.v1");
+    void configure_capabilities(const EntityCapabilities& capabilities = {});
+    EntityCapabilities get_capabilities() const;
+    std::optional<std::map<std::string, std::any>> get_field_teammate_config() const;
     void configure_field_teammate(const FieldTeammateOptions& options = {});
+    void configure_workspace_visualization();
     std::string get_entity_kind() const;
 
     void add_sensor(const std::shared_ptr<Sensor>& sensor);
@@ -203,6 +237,7 @@ std::pair<bool, std::map<std::string, std::any>> register_robots(
 // Construct a human field teammate: a RobotType::HUMAN entity with the
 // capability default-deny contract and safe teleop/task defaults applied.
 Robot make_field_teammate(const std::string& name, const FieldTeammateOptions& options = {});
+Robot make_workspace_visualization(const std::string& name);
 
 } // namespace robot
 } // namespace horus

@@ -138,7 +138,12 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=DEFAULT_ETH3D_REMOTE_ROOT)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--source-voxel-size", type=float, default=0.0125)
-    parser.add_argument("--no-prepare-lod", action="store_true")
+    parser.add_argument(
+        "--prepare-lod",
+        action="store_true",
+        help="Optionally prepare a host-side point-cloud LOD cache.",
+    )
+    parser.add_argument("--no-prepare-lod", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 0.001 <= args.source_voxel_size <= 0.25:
         parser.error("--source-voxel-size must be between 0.001 and 0.25 metres")
@@ -151,7 +156,7 @@ def main() -> int:
         _fetch_scene(scene_id, root, args.force, python)
         for scene_id in scene_ids
     ]
-    if not args.no_prepare_lod:
+    if args.prepare_lod and not args.no_prepare_lod:
         for record in records:
             scene = prepare_eth3d_remote_scene(
                 record["scene_id"],

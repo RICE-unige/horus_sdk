@@ -66,7 +66,8 @@ def test_robot_tf_topic_status_non_tty(monkeypatch):
     ok2, _ = robot.unregister_from_horus()
     assert ok2
 
-    assert ("sub", "/drone_alpha/tf") in spy_board.events
+    # Registration ACK does not prove a bridge subscription or sensor traffic.
+    assert ("sub", "/drone_alpha/tf") not in spy_board.events
     assert ("unsub", "/drone_alpha/tf") in spy_board.events
     assert "/drone_alpha/tf" in spy_monitor.watched
     assert "/drone_alpha/tf" in spy_monitor.unwatched

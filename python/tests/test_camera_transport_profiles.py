@@ -29,6 +29,37 @@ def test_camera_transport_profile_defaults():
     assert camera.startup_mode == "minimap"
 
 
+def test_media_quality_profiles_reach_registration_without_changing_pixel_resolution():
+    robot = Robot(name="quality_bot", robot_type=RobotType.WHEELED)
+    camera = Camera("front", "quality_bot/camera", "/quality_bot/image", resolution=(1280, 720))
+    camera.configure_webrtc_transport(minimap_bitrate_kbps=1500, minimap_framerate=15,
+                                      teleop_bitrate_kbps=6000, teleop_framerate=60,
+                                      minimap_priority=2, teleop_priority=8)
+    robot.add_sensor(camera)
+    config = _build_config(robot)["sensors"][0]["camera_config"]
+    assert config["webrtc_minimap_bitrate_kbps"] == 1500
+    assert config["webrtc_minimap_framerate"] == 15
+    assert config["webrtc_teleop_bitrate_kbps"] == 6000
+    assert config["webrtc_teleop_framerate"] == 60
+    assert config["webrtc_minimap_priority"] == 2
+    assert config["webrtc_teleop_priority"] == 8
+    assert config["resolution"] == {"width": 1280, "height": 720}
+
+
+@pytest.mark.parametrize("value", [0, -1, 61, True, 29.5, "30"])
+def test_media_profile_rejects_invalid_framerate(value):
+    camera = Camera("front", "robot/camera", "/robot/image")
+    with pytest.raises(ValueError, match="teleop_framerate"):
+        camera.configure_webrtc_transport(teleop_framerate=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, 17, True, 2.5, "4"])
+def test_media_profile_rejects_invalid_priority(value):
+    camera = Camera("front", "robot/camera", "/robot/image")
+    with pytest.raises(ValueError, match="teleop_priority"):
+        camera.configure_webrtc_transport(teleop_priority=value)
+
+
 def test_camera_transport_profile_validation():
     with pytest.raises(ValueError):
         Camera(

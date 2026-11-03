@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Shared colours and version are consumed by the installer UI.
+# shellcheck disable=SC2034
 # =============================================================================
 # HORUS Installer - Common Utilities
 #
@@ -13,7 +15,7 @@ HORUS_INSTALLER_VERSION="0.1.0"
 # ---------------------------------------------------------------------------
 # Color codes (disabled when not a TTY)
 # ---------------------------------------------------------------------------
-if [ -t 1 ]; then
+if [ -t 1 ] && [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ]; then
   C_RESET='\033[0m'
   C_BOLD='\033[1m'
   C_CYAN='\033[1;96m'
@@ -80,29 +82,19 @@ command_exists() {
 # Prompt helpers
 # ---------------------------------------------------------------------------
 
-NO_TTY_PROMPT_WARNED=0
-
 read_prompt_value() {
   local prompt="$1"
   local result_var="$2"
-  local response=""
-
-  # Always initialize caller-side variable to avoid nounset issues.
-  printf -v "$result_var" '%s' ""
-
-  if tty -s; then
-    if ! read -r -p "$prompt" response < /dev/tty; then
-      response=""
-    fi
-  else
-    if [ "$NO_TTY_PROMPT_WARNED" -eq 0 ]; then
-      log_warn "No interactive TTY detected; installer will use default prompt values."
-      NO_TTY_PROMPT_WARNED=1
-    fi
-    response=""
+  local _prompt_answer="" _prompt_fd
+  # stdin can be a bootstrap pipe even when a controlling terminal exists.
+  { exec {_prompt_fd}<>/dev/tty; } 2>/dev/null || die "No terminal available. Re-run with --yes for unattended installation."
+  printf '%s' "$prompt" >&"$_prompt_fd"
+  if ! IFS= read -r _prompt_answer <&"$_prompt_fd"; then
+    exec {_prompt_fd}>&-
+    die "Input ended; installation cancelled."
   fi
-
-  printf -v "$result_var" '%s' "$response"
+  exec {_prompt_fd}>&-
+  printf -v "$result_var" '%s' "$_prompt_answer"
 }
 
 prompt_with_default() {
@@ -167,11 +159,15 @@ prompt_yes_no() {
 
 normalize_path() {
   local raw="$1"
-  if [[ "$raw" == ~* ]]; then
-    printf "%s" "${raw/#\~/$HOME}"
-  else
-    printf "%s" "$raw"
-  fi
+  [ -n "$raw" ] || die "Path must not be empty"
+  # Match a literal tilde supplied through a quoted command-line argument.
+  # shellcheck disable=SC2088
+  case "$raw" in
+    '~') raw="$HOME" ;;
+    '~/'*) raw="$HOME/${raw:2}" ;;
+  esac
+  [[ "$raw" != *$'\n'* && "$raw" != *$'\r'* && "$raw" != *:* ]] || die "Paths must not contain newlines or colons"
+  realpath -m -- "$raw"
 }
 
 timestamp_utc() {

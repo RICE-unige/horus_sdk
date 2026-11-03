@@ -61,6 +61,8 @@ This workflow covers:
 
 ## Observability expectations
 
+The [registration dashboard](../python-sdk/topic-monitoring.md) distinguishes a fresh app heartbeat, registration ACKs and ROS graph endpoints. A Ready graph row does not prove sensor traffic or headset rendering. Camera transport shows a badge, with a configured qualifier when no fresh runtime report is available; neither presentation certifies video delivery. Reconnects wait for fresh acknowledgements rather than reusing an earlier Registered state.
+
 For both live workflows, validate:
 
 - registration ACK appears

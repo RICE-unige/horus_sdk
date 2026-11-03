@@ -8,12 +8,101 @@ on:
       - main
       - feature/sdk-rust-parity
       - feature/sdk-cpp-parity
+      - dev-plus
 
 env:
   ROS_DISTRO: humble
   PYTHON_VERSION: "3.10"
 
 jobs:
+  native-ros-tests:
+    uses: ./.github/workflows/native-ros.yml
+    with:
+      revision: ${{ github.sha }}
+
+  installer-tests:
+    name: Installer Regression Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test-only tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-packaging
+      - name: Check shell scripts
+        run: shellcheck -S warning install.sh install/install.sh install/lib/*.sh install/templates/*
+      - name: Exercise isolated installer and helper flows
+        run: /usr/bin/python3 -m unittest discover -s install/tests -v
+
+  python-tests:
+    name: Python SDK Tests (${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install SDK test dependencies
+        run: python -m pip install -e '.[test,teaching-motion]' pillow
+      - name: Run functional tests
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: python -m pytest python/tests -q -o addopts= --junitxml=test-results/python.xml
+      - name: Verify documented examples
+        run: python .github/scripts/check_docs_examples.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-tests-${{ matrix.python }}
+          path: test-results/
+
+  distribution-tests:
+    name: Installed SDK Artifact Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and validate distributions
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+          python .github/scripts/check_distribution.py dist/*.whl dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-sdk-tests
+          path: test-results/distributions/
+
+  native-tests:
+    name: Native SDK Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C++ dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev libzstd-dev libeigen3-dev libassimp-dev libtinyxml2-dev zlib1g-dev libpng-dev libjpeg-dev libwebp-dev libtiff-dev nlohmann-json3-dev
+      - name: Configure and build C++ SDK without ROS
+        run: |
+          cmake -S cpp -B build/cpp -DHORUS_ENABLE_ROS2=OFF
+          cmake --build build/cpp --parallel 2
+      - name: Test C++ SDK
+        run: ctest --test-dir build/cpp --output-on-failure
+      - name: Check installed C++ consumer
+        run: |
+          cmake --install build/cpp --prefix "$PWD/build/install"
+          cmake -S .github/fixtures/native_consumer -B build/consumer -DCMAKE_PREFIX_PATH="$PWD/build/install"
+          cmake --build build/consumer --parallel 2
+          ./build/consumer/consumer
+      - name: Test Rust SDK, examples, and benchmarks
+        working-directory: rust
+        run: cargo test --all-targets --locked
+      - name: Verify Rust package
+        working-directory: rust
+        run: cargo package --locked
+
   # Code Quality Checks
   quality:
     name: Code Quality

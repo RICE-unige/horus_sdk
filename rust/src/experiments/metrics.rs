@@ -65,7 +65,11 @@ impl NdjsonEventWriter {
         })
     }
 
-    pub fn write(&mut self, event: Map<String, Value>, timestamp_ns: Option<u128>) -> std::io::Result<()> {
+    pub fn write(
+        &mut self,
+        event: Map<String, Value>,
+        timestamp_ns: Option<u128>,
+    ) -> std::io::Result<()> {
         let mut payload = event;
         payload
             .entry("timestamp_ns")
@@ -124,7 +128,15 @@ impl CsvMetricWriter {
             }
         }
         let mut writer = BufWriter::new(File::create(&path)?);
-        writeln!(writer, "{}", fields.join(","))?;
+        writeln!(
+            writer,
+            "{}",
+            fields
+                .iter()
+                .map(|s| csv_cell(&Value::String(s.clone())))
+                .collect::<Vec<_>>()
+                .join(",")
+        )?;
         Ok(Self {
             writer,
             fields,
@@ -134,27 +146,33 @@ impl CsvMetricWriter {
         })
     }
 
-    pub fn write(&mut self, row: &Map<String, Value>, timestamp_ns: Option<u128>) -> std::io::Result<()> {
-        let cells: Vec<String> = self
-            .fields
-            .iter()
-            .map(|field| match field.as_str() {
-                "timestamp_ns" => row
-                    .get("timestamp_ns")
-                    .map(csv_cell)
-                    .unwrap_or_else(|| (timestamp_ns.unwrap_or_else(now_ns) as u64).to_string()),
-                "run_id" => row.get("run_id").map(csv_cell).unwrap_or_else(|| self.run_id.clone()),
-                "experiment" => row
-                    .get("experiment")
-                    .map(csv_cell)
-                    .unwrap_or_else(|| self.experiment.clone()),
-                "condition" => row
-                    .get("condition")
-                    .map(csv_cell)
-                    .unwrap_or_else(|| self.condition.clone()),
-                other => row.get(other).map(csv_cell).unwrap_or_default(),
-            })
-            .collect();
+    pub fn write(
+        &mut self,
+        row: &Map<String, Value>,
+        timestamp_ns: Option<u128>,
+    ) -> std::io::Result<()> {
+        let cells: Vec<String> =
+            self.fields
+                .iter()
+                .map(|field| match field.as_str() {
+                    "timestamp_ns" => row.get("timestamp_ns").map(csv_cell).unwrap_or_else(|| {
+                        (timestamp_ns.unwrap_or_else(now_ns) as u64).to_string()
+                    }),
+                    "run_id" => row
+                        .get("run_id")
+                        .map(csv_cell)
+                        .unwrap_or_else(|| csv_cell(&Value::String(self.run_id.clone()))),
+                    "experiment" => row
+                        .get("experiment")
+                        .map(csv_cell)
+                        .unwrap_or_else(|| csv_cell(&Value::String(self.experiment.clone()))),
+                    "condition" => row
+                        .get("condition")
+                        .map(csv_cell)
+                        .unwrap_or_else(|| csv_cell(&Value::String(self.condition.clone()))),
+                    other => row.get(other).map(csv_cell).unwrap_or_default(),
+                })
+                .collect();
         writeln!(self.writer, "{}", cells.join(","))
     }
 
@@ -168,7 +186,7 @@ fn csv_cell(value: &Value) -> String {
         Value::String(s) => s.clone(),
         other => other.to_string(),
     };
-    if raw.contains(',') || raw.contains('"') || raw.contains('\n') {
+    if raw.contains(',') || raw.contains('"') || raw.contains('\n') || raw.contains('\r') {
         format!("\"{}\"", raw.replace('"', "\"\""))
     } else {
         raw

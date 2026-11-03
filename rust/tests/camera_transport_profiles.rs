@@ -2,6 +2,7 @@ use horus::bridge::RobotRegistryClient;
 use horus::core::types::RobotType;
 use horus::robot::Robot;
 use horus::sensors::Camera;
+use horus::sensors::WebRtcTransportConfig;
 use serde_json::Value;
 use std::fs;
 use std::sync::Arc;
@@ -30,6 +31,28 @@ fn camera_transport_profile_defaults() {
         expected["teleop_streaming_type"]
     );
     assert_eq!(camera.startup_mode, expected["startup_mode"]);
+}
+
+#[test]
+fn separate_media_budgets_survive_registration() {
+    let mut robot = Robot::new("budget_bot", RobotType::Wheeled);
+    let mut camera = Camera::new("front", "budget_bot/camera", "/budget_bot/rgb");
+    camera.configure_webrtc_transport(WebRtcTransportConfig {
+        minimap_bitrate_kbps: Some(1500), minimap_framerate: Some(15),
+        teleop_bitrate_kbps: Some(3000), teleop_framerate: Some(30),
+        minimap_priority: Some(2), teleop_priority: Some(8),
+        ..Default::default()
+    });
+    robot.add_sensor(Arc::new(camera)).expect("sensor");
+    let client = RobotRegistryClient::new();
+    let payload = client.build_robot_config_dict(&robot, &robot.create_dataviz(None), None, None);
+    let profile = payload.sensors[0].camera_config.as_ref().expect("camera profile");
+    assert_eq!(profile.webrtc_minimap_bitrate_kbps, 1500);
+    assert_eq!(profile.webrtc_minimap_framerate, 15);
+    assert_eq!(profile.webrtc_teleop_bitrate_kbps, 3000);
+    assert_eq!(profile.webrtc_teleop_framerate, 30);
+    assert_eq!(profile.webrtc_minimap_priority, 2);
+    assert_eq!(profile.webrtc_teleop_priority, 8);
 }
 
 #[test]

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -16,6 +17,12 @@ std::string to_lower(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+std::string trimmed(std::string value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
 }
 
 std::string ensure_hash(std::string hex) {
@@ -343,6 +350,29 @@ void DataViz::add_occupancy_grid(
     add_or_update_visualization(visualization);
 }
 
+void DataViz::add_costmap(const std::string& topic, const std::string& frame_id, CostmapOptions options) {
+    auto trimmed = [](const std::string& value) {
+        const auto first = value.find_first_not_of(" \t\r\n");
+        return first == std::string::npos ? std::string{} : value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+    };
+    const auto source = trimmed(topic), frame = trimmed(frame_id), tf = trimmed(options.tf_topic);
+    if (source.empty() || frame.empty() || tf.empty())
+        throw std::invalid_argument("Costmap topic, frame and TF topic must be nonempty");
+    if (!std::isfinite(options.alpha) || options.alpha < 0 || options.alpha > 1 ||
+        !std::isfinite(options.height_offset) || options.height_offset < 0 || options.height_offset > 1 ||
+        !std::isfinite(options.stale_timeout) || options.stale_timeout < 0)
+        throw std::invalid_argument("Invalid costmap alpha, height offset or stale timeout");
+    VisualizationConfig visualization;
+    visualization.viz_type = core::VisualizationType::COSTMAP;
+    visualization.display_name = "costmap:" + source;
+    visualization.layer_priority = -9;
+    visualization.data_source = {visualization.display_name, core::DataSourceType::COSTMAP, source, frame, std::nullopt, {}};
+    visualization.render_options = {{"alpha", options.alpha}, {"show_unknown_space", options.show_unknown_space},
+        {"height_offset", options.height_offset}, {"stale_timeout", options.stale_timeout},
+        {"tf_topic", tf}, {"transport_lane", std::string("bulk_replaceable")}};
+    add_or_update_visualization(visualization);
+}
+
 void DataViz::add_3d_map(const std::string& topic, const std::string& frame_id, RenderOptions render_options) {
     VisualizationConfig visualization;
     visualization.viz_type = core::VisualizationType::POINT_CLOUD;
@@ -379,6 +409,27 @@ void DataViz::add_3d_mesh(const std::string& topic, const std::string& frame_id,
     add_or_update_visualization(visualization);
 }
 
+void DataViz::add_live_mesh(const std::string& topic, const std::string& frame_id, RenderOptions render_options) {
+    render_options.try_emplace("max_triangles", 2000000);
+    render_options.try_emplace("use_vertex_colors", true);
+    render_options.try_emplace("double_sided", false);
+    render_options.try_emplace("source_coordinate_space", std::string("enu"));
+    render_options.try_emplace("use_indexed_binary", true);
+    render_options.try_emplace("indexed_live", true);
+    render_options.try_emplace("static_mesh", false);
+    render_options.try_emplace("max_chunk_renderers", 1024);
+    render_options.try_emplace("max_chunk_uploads_per_frame", 2);
+    render_options.try_emplace("max_triangle_uploads_per_frame", 20000);
+    render_options.try_emplace("max_upload_milliseconds_per_frame", 2.5);
+    render_options.try_emplace("enable_perf_diagnostics", true);
+    render_options.try_emplace("transport_lane", std::string("bulk_strict"));
+    add_3d_mesh(topic, frame_id, std::move(render_options));
+}
+
+void DataViz::add_nvblox_mesh(const std::string& topic, const std::string& frame_id, RenderOptions render_options) {
+    add_live_mesh(topic, frame_id, std::move(render_options));
+}
+
 void DataViz::add_3d_octomap(const std::string& topic, const std::string& frame_id, RenderOptions render_options) {
     VisualizationConfig visualization;
     visualization.viz_type = core::VisualizationType::OCTOMAP;
@@ -395,6 +446,64 @@ void DataViz::add_3d_octomap(const std::string& topic, const std::string& frame_
         {}
     };
     add_or_update_visualization(visualization);
+}
+
+void DataViz::add_remote_rendered_map(const std::string& stream_topic,
+                                     const std::string& frame_id, RenderOptions options) {
+    auto text = [&](const char* key, const char* fallback) {
+        const auto found = options.find(key);
+        const auto value = found == options.end() ? std::string(fallback)
+            : any_to_string(found->second).value_or(fallback);
+        return trimmed(value.empty() ? fallback : value);
+    };
+    const auto protocol = text("protocol_version", "horus.remote_render.v3");
+    if (protocol != "horus.remote_render.v3" && protocol != "remote_stereo_rgbd_v2")
+        throw std::invalid_argument("Unsupported remote render protocol_version");
+    const bool v3 = protocol == "horus.remote_render.v3";
+    const auto transport = to_lower(text("transport", v3 ? "webrtc" : "ros_compressed"));
+    if (transport != "webrtc" && transport != "ros_compressed")
+        throw std::invalid_argument("Unsupported remote render transport");
+    const bool webrtc = transport == "webrtc";
+    options["render_target"] = std::string("remote");
+    options["protocol_version"] = protocol;
+    options["transport"] = transport;
+    if (v3) {
+        const auto image = to_lower(text("image_type", webrtc ? "h264" : "raw"));
+        if (image != "h264" && image != "raw") throw std::invalid_argument("Unsupported remote image_type");
+        options["image_type"] = image;
+        options["format_version"] = std::string(webrtc ? "horus.remote_render.v3.webrtc" : "horus.remote_render.v3.ros");
+        options.try_emplace("viewer_pose_topic", std::string("/horus/remote_render/v3/view_state"));
+        options.try_emplace("ros_compressed_topic", std::string("/horus/remote_render/v3/stereo"));
+        options.try_emplace("status_topic", std::string("/horus/remote_render/v3/status"));
+        options.try_emplace("session_id", std::string());
+        options.try_emplace("reference_space_id", std::string("workspace-local"));
+        options.try_emplace("workspace_revision", 0);
+        options.try_emplace("viewport_width", 1024);
+        options.try_emplace("viewport_height", 1024);
+        options.try_emplace("display_refresh_rate_hz", 72.0);
+        options.try_emplace("maximum_frame_age_ms", 250);
+        options.try_emplace("viewer_pose_rate_hz", 72.0);
+        if (webrtc) options["frame_data_topic"] = std::string();
+    } else {
+        options["format_version"] = std::string(webrtc ? "remote_stereo_rgbd_webrtc_v2" : "remote_stereo_rgbd_ros_v2");
+        options.try_emplace("viewer_pose_topic", std::string("/horus/remote_render/viewer_pose"));
+        options.try_emplace("ros_compressed_topic", std::string("/horus/remote_render/rgbd"));
+        options.try_emplace("status_topic", std::string("/horus/remote_render/agent_status"));
+        options.try_emplace("viewer_pose_rate_hz", 60.0);
+    }
+    options.try_emplace("frame_data_topic", std::string("/horus/remote_render/frame_data"));
+    options.try_emplace("client_signal_topic", std::string("/horus/webrtc/client_signal"));
+    options.try_emplace("server_signal_topic", std::string("/horus/webrtc/server_signal"));
+    options.try_emplace("encoder", std::string("nvenc"));
+    options.try_emplace("bitrate_kbps", 12000);
+    options.try_emplace("framerate", 60);
+    options.try_emplace("flip_y", false);
+    VisualizationConfig config;
+    config.viz_type = core::VisualizationType::REMOTE_RENDER;
+    config.data_source = DataSource{"remote_rendered_map", core::DataSourceType::REMOTE_RENDER, stream_topic, frame_id};
+    config.render_options = std::move(options);
+    config.layer_priority = -4;
+    add_or_update_visualization(config);
 }
 
 void DataViz::add_gaussian_splat_map(

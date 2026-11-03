@@ -12,7 +12,7 @@ set -o pipefail
 # TTY detection (set once at source-time)
 # ---------------------------------------------------------------------------
 IS_TTY=0
-if [ -t 1 ]; then
+if [ -t 1 ] && [ -z "${NO_COLOR+x}" ] && [ "${TERM:-dumb}" != dumb ]; then
   IS_TTY=1
 fi
 
@@ -315,76 +315,20 @@ _show_log_tail() {
 # ===========================================================================
 
 print_config_summary() {
-  local install_root="$1"
-  local channel="$2"
-  local ros_distro="$3"
-  local webrtc="$4"
-  local shell_config="$5"
-  local os_info="$6"
-
-  printf '\n'
-  printf '  %b+----------------------------------------------------------+%b\n' "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-56s  %b|%b\n' "${C_DIM}" "${C_RESET}" "" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %b%-56s%b  %b|%b\n' "${C_DIM}" "${C_RESET}" "${C_BOLD}" "Installation Configuration" "${C_RESET}" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-56s  %b|%b\n' "${C_DIM}" "${C_RESET}" "" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-22s%-34s  %b|%b\n' "${C_DIM}" "${C_RESET}" "Install root:" "$install_root" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-22s%-34s  %b|%b\n' "${C_DIM}" "${C_RESET}" "Channel:" "$channel" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-22s%-34s  %b|%b\n' "${C_DIM}" "${C_RESET}" "ROS distro:" "$ros_distro" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-22s%-34s  %b|%b\n' "${C_DIM}" "${C_RESET}" "WebRTC:" "$webrtc" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-22s%-34s  %b|%b\n' "${C_DIM}" "${C_RESET}" "Shell config:" "$shell_config" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-22s%-34s  %b|%b\n' "${C_DIM}" "${C_RESET}" "Platform:" "$os_info" "${C_DIM}" "${C_RESET}"
-  printf '  %b|%b  %-56s  %b|%b\n' "${C_DIM}" "${C_RESET}" "" "${C_DIM}" "${C_RESET}"
-  printf '  %b+----------------------------------------------------------+%b\n' "${C_DIM}" "${C_RESET}"
+  printf '\nInstallation configuration\n'
+  printf '  %-18s %s\n' 'Install root:' "$1" 'Channel:' "$2" 'ROS distro:' "$3" \
+    'WebRTC:' "$4" 'Shell integration:' "$5" 'Platform:' "$6"
   printf '\n'
 }
 
-# ===========================================================================
-# Completion summary
-# ===========================================================================
-
 print_completion_summary() {
-  local install_root="$1"
-  local runtime_mode="${2:-full}"
-  local runtime_reason="${3:-}"
-  local elapsed_total
-  elapsed_total=$(( $(date +%s) - _INSTALL_START_TIME ))
-  local mins=$(( elapsed_total / 60 ))
-  local secs=$(( elapsed_total % 60 ))
-
-  local title_color="$C_GREEN"
-  local title_text="   HORUS installation completed successfully               "
-  if [ "$runtime_mode" != "full" ]; then
-    title_color="$C_YELLOW"
-    title_text="   HORUS installation completed with warnings              "
-  fi
-
-  printf '\n'
-  printf '  %b===========================================================%b\n' "${title_color}" "${C_RESET}"
-  printf '  %b%s%b\n' "${title_color}" "${title_text}" "${C_RESET}"
-  printf '  %b===========================================================%b\n' "${title_color}" "${C_RESET}"
-  printf '\n'
-
-  if [ "$runtime_mode" != "full" ]; then
-    if [ -n "$runtime_reason" ]; then
-      printf '  %bRuntime note:%b %s\n' "${C_YELLOW}" "${C_RESET}" "$runtime_reason"
-    fi
-    printf '  %bUnity bridge was not built; this install is backend-only.%b\n' "${C_YELLOW}" "${C_RESET}"
-    printf '  %bUse ROS 2 Jazzy for full backend + Unity bridge support.%b\n' "${C_YELLOW}" "${C_RESET}"
-    printf '\n'
-  fi
-
-  printf '  Completed in %dm %ds\n' "$mins" "$secs"
-  printf '  Installed to: %s\n' "$install_root"
-  printf '  Full log:     %s\n' "$LOG_FILE"
-  printf '\n'
-  printf '  %bNext steps:%b\n' "${C_BLUE}" "${C_RESET}"
-  printf '\n'
-  printf '    1. Open a new shell (or run: %bsource ~/.bashrc%b)\n' "${C_BOLD}" "${C_RESET}"
-  printf '    2. Check status:   %bhorus-status%b\n' "${C_BOLD}" "${C_RESET}"
-  printf '    3. Start backend:  %bhorus-start%b\n' "${C_BOLD}" "${C_RESET}"
-  printf '    4. Run demo:\n'
-  printf '       %bhorus-python%b %s/sdk/python/examples/sdk_typical_ops_demo.py \\\n' "${C_BOLD}" "${C_RESET}" "$install_root"
-  printf '         --robot-count 10 --workspace-scale 0.1\n'
-  printf '    5. Uninstall:      %bhorus-uninstall%b\n' "${C_BOLD}" "${C_RESET}"
-  printf '\n'
+  local root="$1"
+  printf '\nHORUS installation validated.\nInstall root: %s\nLog: %s\n\n' "$root" "$LOG_FILE"
+  printf 'Check the installation:\n  %q\n\n' "$root/bin/horus-status"
+  printf 'Run a curated registration example:\n  %q %q\n\n' "$root/bin/horus-python" "$root/sdk/python/examples/ops_registration.py"
+  printf '%s\n' 'Registration normally starts the bridge automatically.' \
+    'The example also needs its documented robot/simulation publishers.' \
+    'horus-start is for explicitly running the backend, not a required extra step.' \
+    'For helper commands on PATH, open a new shell after automatic shell integration.' \
+    'No service was started and no network/domain configuration was changed.'
 }

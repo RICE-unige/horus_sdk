@@ -304,6 +304,9 @@ def build_robot_config_dict(
                 metadata.get("webrtc_framerate"),
                 max(30, min(90, _coerce_int(getattr(sensor, "fps", None), 30))),
             ),
+            **{"webrtc_" + key: _coerce_int(metadata.get("webrtc_" + key), 0)
+               for key in ("minimap_priority", "teleop_priority", "minimap_bitrate_kbps", "minimap_framerate",
+                           "teleop_bitrate_kbps", "teleop_framerate")},
             "webrtc_stun_server_url": str(
                 metadata.get("webrtc_stun_server_url", "stun:stun.l.google.com:19302")
             ),
@@ -472,6 +475,8 @@ def build_robot_config_dict(
 
         allowed_profiles = {"wheeled", "legged", "aerial", "drone", "custom"}
         default_profile = str(getattr(robot, "get_type_str", lambda: "wheeled")()).strip().lower()
+        if default_profile == "humanoid":
+            default_profile = "custom"
         if default_profile not in allowed_profiles:
             default_profile = "wheeled"
 
@@ -554,7 +559,7 @@ def build_robot_config_dict(
         angular_z_step_rps = max(0.0, min(6.0, angular_z_step_rps))
 
         return {
-            "enabled": _coerce_bool(teleop_metadata.get("enabled"), True),
+            "enabled": _coerce_bool(teleop_metadata.get("enabled"), robot.get_type_str() != "humanoid"),
             "command_topic": command_topic,
             "raw_input_topic": raw_input_topic,
             "head_pose_topic": head_pose_topic,
@@ -646,7 +651,7 @@ def build_robot_config_dict(
 
         return {
             "go_to_point": {
-                "enabled": _coerce_bool(go_to_point_metadata.get("enabled"), True),
+                "enabled": _coerce_bool(go_to_point_metadata.get("enabled"), robot.get_type_str() != "humanoid"),
                 "goal_topic": goal_topic,
                 "cancel_topic": cancel_topic,
                 "status_topic": status_topic,
@@ -655,9 +660,11 @@ def build_robot_config_dict(
                 "yaw_tolerance_deg": yaw_tolerance_deg,
                 "min_altitude_m": min_altitude_m,
                 "max_altitude_m": max_altitude_m,
+                # Authoring-only opt-out; the robot planner remains authoritative.
+                "allow_unbounded_placement": _coerce_bool(go_to_point_metadata.get("allow_unbounded_placement"), False),
             },
             "waypoint": {
-                "enabled": _coerce_bool(waypoint_metadata.get("enabled"), True),
+                "enabled": _coerce_bool(waypoint_metadata.get("enabled"), robot.get_type_str() != "humanoid"),
                 "path_topic": waypoint_path_topic,
                 "status_topic": waypoint_status_topic,
                 "frame_id": waypoint_frame_id,
@@ -727,6 +734,11 @@ def build_robot_config_dict(
         "robot_manager_config": _build_robot_manager_config(),
         "timestamp": time.time()
     }
+
+    controller_hints = robot.get_metadata("controller_hints")
+    if controller_hints is not None:
+        from ..controller_hints import ControllerHints
+        config["controller_hints"] = ControllerHints.from_dict(controller_hints).to_dict()
 
     local_body_config = robot.get_metadata("local_body_model_config", {})
     if isinstance(local_body_config, dict):
@@ -881,6 +893,18 @@ def build_robot_config_dict(
     field_teammate_meta = robot.get_metadata("field_teammate_config")
     if isinstance(field_teammate_meta, dict) and field_teammate_meta:
         config["field_teammate_config"] = field_teammate_meta
+
+    teaching = robot.get_metadata("teaching_config")
+    if teaching is not None:
+        from horus.teaching import TeachConfig
+
+        if robot.get_type_str() != "humanoid" or entity_kind != "robot":
+            raise ValueError("Teach requires a humanoid robot, not a field teammate or visualization")
+        validated = TeachConfig.from_dict(teaching)
+        sensor_names = {s.name for s in robot.sensors if s.sensor_type.value == "camera"}
+        if any(c.sensor_id not in sensor_names for c in validated.cameras):
+            raise ValueError("Every Teach camera must reference a registered camera sensor")
+        config["teaching"] = validated.registration(robot.name)
 
     _validate_entity_safety(config)
 

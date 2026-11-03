@@ -39,16 +39,21 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--point-radius", type=int, default=2)
-    parser.add_argument("--source-voxel-size", type=float, default=0.0125)
-    parser.add_argument("--full-source", action="store_true")
+    parser.add_argument("--source-voxel-size", type=float, default=0.0)
     args = parser.parse_args()
+    if not 0.0 <= args.source_voxel_size <= 0.25 or (
+        0.0 < args.source_voxel_size < 0.001
+    ):
+        parser.error(
+            "--source-voxel-size must be zero or between 0.001 and 0.25 metres"
+        )
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     projection = projection_from_vertical_fov(96.0, args.width / args.height)
 
     for scene_id in ETH3D_REMOTE_SCENE_IDS:
         scene = prepare_eth3d_remote_scene(scene_id)
-        if args.full_source:
+        if args.source_voxel_size == 0.0:
             point_count = scene.point_count
             chunks = iter_eth3d_remote_scene_chunks(scene)
         else:

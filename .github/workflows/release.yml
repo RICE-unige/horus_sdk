@@ -2,291 +2,214 @@ name: Release Pipeline
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g., v0.1.0)'
+        description: 'Existing release tag (must match pyproject and branding versions)'
         required: true
         type: string
 
-env:
-  ROS_DISTRO: humble
-  PYTHON_VERSION: "3.10"
+permissions:
+  contents: read
 
 jobs:
-  # Validate Release
   validate:
-    name: Validate Release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      tag: ${{ steps.version.outputs.tag }}
-
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
-
-      - name: Determine version
-        id: version
+          fetch-depth: 0
+      - name: Install validation tools
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-packaging
+      - name: Resolve existing tag
+        id: release
+        env:
+          REQUESTED: ${{ github.event.inputs.version || github.ref_name }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${{ github.ref_name }}"
-          fi
-          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
-          echo "tag=$VERSION" >> $GITHUB_OUTPUT
-          echo "Release version: $VERSION"
-
-      - name: Validate version format
+          [[ "$REQUESTED" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-\.][a-zA-Z0-9.]+)?$ ]]
+          SHA="$(git rev-parse --verify "refs/tags/$REQUESTED^{commit}")"
+          git checkout --detach "$SHA"
+          /usr/bin/python3 install/prepare_release.py "$REQUESTED" --check
+          echo "tag=$REQUESTED" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          /usr/bin/python3 -c 'import os; from packaging.version import Version; print("prerelease=" + str(Version(os.environ["REQUESTED"][1:]).is_prerelease).lower())' >> "$GITHUB_OUTPUT"
+      - name: Installer checks
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
-            echo "Invalid version format: $VERSION"
-            exit 1
-          fi
+          shellcheck -S warning install.sh install/install.sh install/lib/*.sh install/templates/*
+          /usr/bin/python3 -m unittest discover -s install/tests -v
 
-  # Build Release Artifacts
+  sdk-tests:
+    needs: validate
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install functional test dependencies
+        run: python -m pip install -e '.[test,teaching-motion]' pillow
+      - name: Test the exact release revision
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+        run: |
+          python -m pytest python/tests -q -o addopts= --junitxml=test-results/python.xml
+          python .github/scripts/check_docs_examples.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-sdk-tests-${{ matrix.python }}
+          path: test-results/
+
+  native-tests:
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - name: Install C++ test dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libssl-dev libzstd-dev libeigen3-dev libassimp-dev libtinyxml2-dev zlib1g-dev libpng-dev libjpeg-dev libwebp-dev libtiff-dev nlohmann-json3-dev
+      - name: Build and test C++ payload API
+        run: |
+          cmake -S cpp -B build/cpp -DHORUS_ENABLE_ROS2=OFF
+          cmake --build build/cpp --parallel 2
+          ctest --test-dir build/cpp --output-on-failure
+      - name: Test Rust payload API, examples and benchmarks
+        working-directory: rust
+        run: cargo test --all-targets --locked
+
+  native-ros-tests:
+    needs: validate
+    uses: ./.github/workflows/native-ros.yml
+    with:
+      revision: ${{ needs.validate.outputs.sha }}
+
   build:
-    name: Build Release Artifacts
-    needs: validate
-    runs-on: ubuntu-22.04
-
+    needs: [validate, sdk-tests, native-tests, native-ros-tests]
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: false
-
-      - name: Set up ROS2 environment
-        uses: ros-tooling/setup-ros@v0.7
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
         with:
-          required-ros-distributions: ${{ env.ROS_DISTRO }}
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install build dependencies
+          python-version: '3.12'
+      - name: Build and check Python distribution
         run: |
-          python -m pip install --upgrade pip
-          pip install build twine wheel
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake
-
-      - name: Update version in Python package
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          sed -i "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" python/horus/utils/branding.py
-
-
-
-      - name: Build Python package
-        run: |
-          cd python/
+          python -m pip install build twine packaging
           python -m build
-
-      - name: Create release tarball
-        run: |
-          tar -czf horus-sdk-${{ needs.validate.outputs.version }}.tar.gz \
-            --exclude='.git*' \
-
-            --exclude='python/dist' \
-            --exclude='python/horus.egg-info' \
-            --exclude='__pycache__' \
-            .
-
-      - name: Upload Python package artifacts
-        uses: actions/upload-artifact@v4
+          python -m twine check --strict dist/*
+      - name: Test wheel and source distribution outside the checkout
+        run: python .github/scripts/check_distribution.py dist/*.whl dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: python-package
-          path: python/dist/
-
-      - name: Upload release tarball
-        uses: actions/upload-artifact@v4
+          name: release-distribution-tests
+          path: test-results/distributions/
+      - name: Package pinned bootstrap and clean source archive
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+        run: python install/prepare_release.py "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v4
         with:
-          name: release-tarball
-          path: horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
-
-      - name: Package installer artifacts
-        run: |
-          chmod +x install.sh install/install.sh
-          cp install.sh installer-install.sh
-          sha256sum installer-install.sh > installer-install.sh.sha256
-
-      - name: Upload installer artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer
+          name: release-files
+          if-no-files-found: error
           path: |
-            installer-install.sh
-            installer-install.sh.sha256
+            dist/*
+            release-artifacts/*
 
-  # Build Docker Images
-  docker:
-    name: Build Docker Images
-    needs: validate
-    runs-on: ubuntu-22.04
-
+  install-check:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        webrtc: ['on', 'off']
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          submodules: false
+          name: release-files
+          path: artifacts
+      - name: Install from the packaged release bootstrap
+        env:
+          MODE: ${{ matrix.webrtc }}
+          ROS_LOCALHOST_ONLY: '1'
+        run: |
+          cd artifacts/release-artifacts
+          sha256sum -c installer-install.sh.sha256
+          bash installer-install.sh --yes --install-root "$RUNNER_TEMP/horus" --shell-config manual --webrtc "$MODE"
+          "$RUNNER_TEMP/horus/bin/horus-status"
+          "$RUNNER_TEMP/horus/bin/horus-start" --show-args
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installer-logs-${{ matrix.webrtc }}
+          path: ${{ runner.temp }}/horus/logs/
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
+  docker:
+    needs: [validate, install-check]
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create Dockerfile
+      - name: Image tags
+        id: tags
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
-          cat > Dockerfile << 'EOF'
-          FROM ros:humble-ros-base-jammy
-
-          # Install system dependencies
-          RUN apt-get update && apt-get install -y \
-              python3-pip \
-              python3-colcon-common-extensions \
-              git \
-              && rm -rf /var/lib/apt/lists/*
-
-          # Set up workspace
-          WORKDIR /opt/horus_sdk
-          COPY . .
-
-          # Install Python dependencies
-          RUN pip3 install -e python/
-
-
-
-          # Set up entrypoint
-          COPY docker-entrypoint.sh /
-          RUN chmod +x /docker-entrypoint.sh
-
-          ENTRYPOINT ["/docker-entrypoint.sh"]
-          CMD ["bash"]
-          EOF
-
-      - name: Create Docker entrypoint
-        run: |
-          cat > docker-entrypoint.sh << 'EOF'
-          #!/bin/bash
-          set -e
-
-          # Source ROS2 environment
-          source /opt/ros/humble/setup.bash
-
-          # Execute the command
-          exec "$@"
-          EOF
-
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+          IMAGE="ghcr.io/${REPO,,}"
+          echo "tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$IMAGE:$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$PRERELEASE" = false ]; then echo "$IMAGE:latest" >> "$GITHUB_OUTPUT"; fi
+          echo "EOF" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
         with:
           context: .
+          file: install/Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}
-            ghcr.io/${{ github.repository }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.tags.outputs.tags }}
 
-
-  # Create GitHub Release
   release:
-    name: Create GitHub Release
-    needs: [validate, build, docker]
-    runs-on: ubuntu-22.04
-
+    needs: [validate, build, install-check, docker]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-
-      - name: Generate changelog
-        id: changelog
-        run: |
-          # Get commits since last tag
-          LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -z "$LAST_TAG" ]; then
-            COMMITS=$(git log --oneline --pretty=format:"- %s" HEAD)
-          else
-            COMMITS=$(git log --oneline --pretty=format:"- %s" $LAST_TAG..HEAD)
-          fi
-
-          # Create changelog
-          cat > CHANGELOG.md << EOF
-          # Release ${{ needs.validate.outputs.tag }}
-
-          ## Changes
-          $COMMITS
-
-          ## Features
-          - Complete Python SDK with modular architecture
-          - ROS2 backend with robot registration system
-          - Comprehensive examples and integration demos
-          - Real-time Mixed Reality app monitoring
-          - Docker containerization support
-
-          ## Installation
-          \`\`\`bash
-          # One-command installer
-          curl -fsSL https://raw.githubusercontent.com/RICE-unige/horus_sdk/main/install.sh | bash
-
-          # Or verify release installer checksum first
-          wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/installer-install.sh
-          wget https://github.com/${{ github.repository }}/releases/download/${{ needs.validate.outputs.tag }}/installer-install.sh.sha256
-          sha256sum -c installer-install.sh.sha256
-          bash installer-install.sh
-          \`\`\`
-          EOF
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: artifacts
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.validate.outputs.tag }}
-          name: HORUS SDK ${{ needs.validate.outputs.tag }}
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          target_commitish: ${{ needs.validate.outputs.sha }}
+          generate_release_notes: true
+          prerelease: ${{ needs.validate.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true
           files: |
-            release-tarball/horus-sdk-${{ needs.validate.outputs.version }}.tar.gz
-            python-package/horus-*.whl
-            python-package/horus-*.tar.gz
-            installer/installer-install.sh
-            installer/installer-install.sh.sha256
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  # Publish to PyPI (when ready)
-  # pypi:
-  #   name: Publish to PyPI
-  #   needs: [validate, build]
-  #   runs-on: ubuntu-22.04
-  #   if: startsWith(github.ref, 'refs/tags/v') && !contains(needs.validate.outputs.version, '-')
-  #
-  #   steps:
-  #     - name: Download Python package
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: python-package
-  #         path: dist/
-  #
-  #     - name: Publish to PyPI
-  #       uses: pypa/gh-action-pypi-publish@v1.8.10
-  #       with:
-  #         user: __token__
-  #         password: ${{ secrets.PYPI_API_TOKEN }}
-  #         packages_dir: dist/
+            artifacts/dist/*.whl
+            artifacts/dist/*.tar.gz
+            artifacts/release-artifacts/*

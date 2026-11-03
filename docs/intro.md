@@ -7,7 +7,7 @@ sidebar_position: 1
 
 `horus_sdk` is the registration and contract layer for HORUS. It lets you describe robots, sensors, teleop topics, task topics, robot-description assets, and DataViz layers, then publish that configuration into the HORUS ROS 2 runtime and mixed-reality application.
 
-The SDK ships in three language tracks that share one payload contract: a **Python** reference (the full-featured, live-registration path), and high-performance **C++** and **Rust** SDKs that build the same registration payloads natively. See the [Native SDK reference](native-sdk/cpp.md) and [Native Performance](native-sdk/performance.md).
+The SDK ships in three language tracks: the **Python** reference and **C++** and **Rust** SDKs with native registration and mapping kernels. Full cross-language API parity is in progress; see [Implementation Status](reference/implementation-status.md), the [Native SDK reference](native-sdk/cpp.md) and [Native Performance](native-sdk/performance.md).
 
 ## Who this documentation is for
 
@@ -46,4 +46,3 @@ The SDK ships in three language tracks that share one payload contract: a **Pyth
 ## Project stance
 
 The root `python/examples/` scripts are the primary copyable onboarding material. The tutorial track is the primary teaching path. The `python/examples/legacy/` folder is still useful for paired fake runtimes, stress tests, and deep validation, but it is no longer the main documentation path.
-

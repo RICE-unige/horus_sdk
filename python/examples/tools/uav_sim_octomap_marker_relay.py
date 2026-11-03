@@ -29,8 +29,7 @@ BINARY = BUILD_DIR / "uav_sim_octomap_marker_relay"
 def _write_cmake() -> Path:
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     cmake_path = SOURCE_DIR / "CMakeLists.txt"
-    cmake_path.write_text(
-        f"""
+    content = f"""
 cmake_minimum_required(VERSION 3.16)
 project(horus_uav_octomap_marker_relay)
 
@@ -54,10 +53,9 @@ ament_target_dependencies(
 )
 target_include_directories(uav_sim_octomap_marker_relay PRIVATE ${{OCTOMAP_INCLUDE_DIRS}})
 target_link_libraries(uav_sim_octomap_marker_relay ${{OCTOMAP_LIBRARIES}})
-""".strip()
-        + "\n",
-        encoding="utf-8",
-    )
+""".strip() + "\n"
+    if not cmake_path.exists() or cmake_path.read_text(encoding="utf-8") != content:
+        cmake_path.write_text(content, encoding="utf-8")
     return cmake_path
 
 
@@ -65,7 +63,8 @@ def _needs_rebuild(cmake_path: Path) -> bool:
     if not BINARY.exists():
         return True
     binary_mtime = BINARY.stat().st_mtime
-    return SOURCE.stat().st_mtime > binary_mtime or cmake_path.stat().st_mtime > binary_mtime
+    dependencies = (SOURCE, SOURCE.with_name("octomap_surface_coverage.hpp"), cmake_path)
+    return any(path.stat().st_mtime > binary_mtime for path in dependencies)
 
 
 def ensure_built() -> None:

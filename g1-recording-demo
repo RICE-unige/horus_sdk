@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Replay the recorded G1 and nvblox map locally; never connect to robot controls.
+set -eo pipefail
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/jazzy/setup.bash
+if [[ -f "$HOME/horus_ws/install/local_setup.bash" ]]; then
+    source "$HOME/horus_ws/install/local_setup.bash"
+fi
+export ROS_DOMAIN_ID="${HORUS_G1_DEMO_DOMAIN:-17}"
+export ROS_LOCALHOST_ONLY=1
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export HORUS_SDK_BRIDGE_AUTOSTART_MODE=ros2
+unset CYCLONEDDS_URI FASTRTPS_DEFAULT_PROFILES_FILE FASTDDS_DEFAULT_PROFILES_FILE
+export PYTHONPATH="$ROOT/python:$ROOT/python/examples${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONDONTWRITEBYTECODE=1
+exec /usr/bin/python3 -m tools.g1_recording_demo "$@"

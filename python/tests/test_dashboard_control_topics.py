@@ -45,7 +45,7 @@ def test_build_topic_roles_marks_control_topics_as_backend_publishers():
     assert roles["/horus/teleop/alpha/joy"] == "backend_pub"
 
 
-def test_has_backend_publisher_falls_back_to_non_local_publishers():
+def test_has_backend_publisher_rejects_unrelated_non_local_publishers():
     client = _build_client()
 
     class _Info:
@@ -60,4 +60,4 @@ def test_has_backend_publisher_falls_back_to_non_local_publishers():
             return [_Info("/unity_runtime_node"), _Info("/robot_registry_client")]
 
     client.node = _Node()
-    assert client._has_backend_publisher("/alpha/cmd_vel") is True
+    assert client._has_backend_publisher("/alpha/cmd_vel") is False

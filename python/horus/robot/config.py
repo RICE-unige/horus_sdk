@@ -209,6 +209,7 @@ class GoToPointTaskConfig:
     yaw_tolerance_deg: Optional[Any] = None
     min_altitude_m: Optional[Any] = None
     max_altitude_m: Optional[Any] = None
+    allow_unbounded_placement: Optional[bool] = None
 
     @classmethod
     def from_values(cls, **kwargs: Any) -> "GoToPointTaskConfig":
@@ -225,6 +226,7 @@ class GoToPointTaskConfig:
             "yaw_tolerance_deg",
             "min_altitude_m",
             "max_altitude_m",
+            "allow_unbounded_placement",
         ):
             _put_if_set(payload, key, getattr(self, key))
         return payload
@@ -276,6 +278,7 @@ class NavigationTasksConfig:
         yaw_tolerance_deg: Optional[Any] = None,
         min_altitude_m: Optional[Any] = None,
         max_altitude_m: Optional[Any] = None,
+        allow_unbounded_placement: Optional[bool] = None,
     ) -> "NavigationTasksConfig":
         return cls(
             go_to_point=GoToPointTaskConfig.from_values(
@@ -288,6 +291,7 @@ class NavigationTasksConfig:
                 yaw_tolerance_deg=yaw_tolerance_deg,
                 min_altitude_m=min_altitude_m,
                 max_altitude_m=max_altitude_m,
+                allow_unbounded_placement=allow_unbounded_placement,
             ),
             waypoint=WaypointTaskConfig.from_values(
                 enabled=waypoint_enabled,

@@ -52,6 +52,7 @@ fn workspace_scale_omitted_when_invalid() {
 }
 
 #[test]
+#[cfg(not(feature = "ros2"))]
 fn robot_register_reports_transport_unavailable_without_losing_payload() {
     let (mut robot, dataviz) = build_robot_and_dataviz();
     let (success, result) = robot.register_with_horus(Some(dataviz), false, false, Some(0.33));

@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace horus {
 namespace experiments {
@@ -23,8 +24,8 @@ long long now_ns();
 // cross-language diffs).
 std::string serialize_ndjson_object(const JsonObject& object);
 
-// Parse one NDJSON line produced by serialize_ndjson_object. Throws
-// std::runtime_error on malformed input.
+// Parse one flat NDJSON object. Malformed/non-scalar input throws a standard
+// exception. Null retains the historical empty-string representation.
 JsonObject parse_ndjson_object(const std::string& line);
 
 // Write event records as newline-delimited JSON with stable common fields.
@@ -46,6 +47,18 @@ private:
     std::string experiment_;
     std::string condition_;
     std::string source_;
+};
+
+class CsvMetricWriter {
+public:
+    CsvMetricWriter(const std::string& path, std::string run_id, std::string experiment,
+                    std::string condition, const std::vector<std::string>& fieldnames);
+    void write(JsonObject row, std::optional<long long> timestamp_ns = std::nullopt);
+    void flush();
+private:
+    std::ofstream out_;
+    std::vector<std::string> fields_;
+    std::string run_id_, experiment_, condition_;
 };
 
 // Helpers for reading flat event fields with defaults.

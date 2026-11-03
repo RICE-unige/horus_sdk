@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "mode": "immersive",
+      "profile_id": "default",
+      "bindings": [
+        {
+          "control": "right_primary",
+          "action_id": "tool",
+          "label": "Caf\u00e9 \ud83d\ude80"
+        }
+      ]
+    }
+  ],
+  "state_timeout_seconds": 2.0,
+  "config_hash": "ec42fe77b5ace41330697f4194ad32f6ff0cdda5b825f2daabcab0596ea07bbb"
+}

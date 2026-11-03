@@ -1,31 +1,86 @@
 # Remote 3D Map Rendering
 
 HORUS remote rendering keeps dense geometry on the PC and sends a
-pose-synchronized RGB-D view to the Quest. The PC rasterizes textured
-triangles, anisotropic Gaussian splats, or scan points with the NVIDIA GPU.
-The Quest receives color plus metric depth and reconstructs a bounded spatial
-surface in the workspace; it never receives the source scene geometry.
+pose-synchronized stereo view to the Quest. The PC rasterizes textured
+triangles, anisotropic Gaussian splats, or scan points at full source density
+with the NVIDIA GPU. The Quest hardware-decodes a fixed-size video carrier and
+composites one stereo surface; it never receives or draws source geometry.
 
 This is a first-class workspace visualization. It is not a robot camera, does
 not appear in Robot Manager, and does not require the Unity Editor at runtime.
 
 ## Architecture
 
-The runtime has one rendering design and two carriers:
+The current experimental runtime has one primary path and two rollback/diagnostic paths:
 
-- `ros` is the validated default. It packs matching JPEG color and lossless
-  metric depth into one replace-latest ROS message at up to 15 FPS.
-- `webrtc` is experimental. H.264 carries color at up to 60 FPS and a paired
-  data channel carries metric depth, source pose, and projection.
+- V3 `webrtc` is the default. It sends per-eye H.264 with a 60 FPS target;
+  frame identity and quantized metric depth travel with the same encoded
+  frame.
+- V3 `ros` is a low-rate PNG diagnostic carrier for isolating transport faults.
+- V2 RGB-D remains available explicitly with `--protocol v2` for rollback.
 
-Both transports use the same renderer, frame protocol, Quest reprojection
-shader, scene coordinates, and SDK registration. They are not different
-rendering modes.
+V3 follows a CloudXR-style split: predicted OpenXR eye views go to the PC,
+rendering and H.264 encoding stay on the PC, and the Quest performs only
+hardware decode plus a bounded GPU composition pass. No Unity depth mesh is
+rebuilt per frame.
 
-The WebRTC implementation is retained for the next remote-rendering
-improvement branch, but it is not the release default. Its depth frames are
-fragmented into bounded data-channel messages by the HORUS ROS 2 bridge and
-reassembled on Quest.
+The V3 depth atlas stores 16-bit linear metric depth as four 4-bit
+luma symbols. This reduces the range-conversion errors of a single 8-bit
+depth value, but H.264 is lossy: this is not lossless depth transport. Quest
+reconstructs each point from the source eye projection and pose, then places it
+under the workspace map root. Workspace scale is applied exactly once, so the
+map is composed in the workspace frame rather than attached to the current eye.
+Occlusion changes can still expose surfaces absent from an older source view;
+the architecture does not guarantee complete coverage under arbitrary motion.
+
+Encoded H.264 access units are delivered in FIFO order. Only unencoded renders
+may be replaced by newer work. On a bridge queue overflow or an encoder-index
+gap, the bridge waits for the next IDR instead of forwarding a broken prediction
+chain. Periodic IDRs are configured once per target second. Receiver PLI/FIR
+requests and track startup also request a fresh IDR through
+`/horus/remote_render/map_portal/request_keyframe`. The bridge coalesces requests
+to at most two per second, and the encoder emits SPS/PPS with the next IDR.
+
+The Quest pairs metadata with a marker decoded from an immutable video snapshot,
+not the arrival order of pre-decode metadata. Three snapshot slots bound memory;
+GPU readback transfers only the eight-byte identity. Workspace changes invalidate
+pending snapshots. Depth samples address texel centers within their own eye.
+The marker uses 32-pixel-wide, macroblock-aligned complementary symbols on the
+standard profiles (8 pixels on small diagnostic carriers). The decoder requires
+high contrast, so scene pixels at the opposite image edge cannot qualify on the
+magic byte alone. Rebuild the APK together with the SDK for this carrier update.
+
+Network bytes, decoded frames, and accepted map frames are separate progress
+signals. Polling an unchanged texture does not reset stream health. After the
+initial six-second negotiation grace, a decoder stall of 2.5 seconds or an
+accepted-frame stall of five seconds can trigger a rate-limited session recovery.
+This is fault recovery, not a substitute for meeting the frame-time budget.
+`HORUS_REMOTE_RENDER_V3` diagnostics include the decoded-frame count, image
+marker, latest metadata frame/view, presentation age, and decoder statistics.
+
+The implementation is not the NVIDIA CloudXR runtime. PC rendering and
+independent decoder tests do not establish Quest motion-to-photon performance;
+a worn-headset sustained-motion test remains required after client changes.
+
+### Current limits
+
+V3 currently renders a loaded, static source asset for one active viewer per
+agent. It is not yet a live nvblox mesh consumer or an independent multi-operator
+render farm. Retaining full source geometry does not make the transmitted image
+or depth lossless: depth has lower spatial resolution than color, the identity
+strip occupies carrier rows, and H.264 can alter depth symbols. Thin surfaces,
+depth discontinuities, transparency, and newly exposed regions during motion
+therefore remain device-acceptance cases, not guaranteed full-fidelity results.
+
+The Quest compositor draws a procedural reprojection grid. It avoids rebuilding
+a CPU mesh every frame, but still has a GPU triangle/fragment cost. Local HORUS
+text and controls retain their own rendering resolution.
+
+For static textured meshes, the CUDA renderer now reuses one texture atlas,
+its mip chain, and its antialias topology cache across eyes and frames.
+Loading/render stream dependencies are explicit. The GPU regression test
+compares cached and uncached stereo color/depth output; it does not establish
+wireless or headset performance.
 
 ## Requirements
 
@@ -35,28 +90,143 @@ reassembled on Quest.
 - a HORUS APK built from matching MR, SDK, and ROS 2 revisions
 - `nvdiffrast` for textured meshes and `gsplat` for Gaussian scenes
 
-Install the PC rendering dependencies once:
+Inspect the PC rendering dependency plan without installing packages or starting CUDA:
 
 ```bash
 cd ~/horus_sdk
-python3 python/examples/tools/install_remote_render_dependencies.py
+python3 python/examples/tools/install_remote_render_dependencies.py --plan
 ```
 
-The installer verifies CUDA-enabled PyTorch before returning.
+On the shared workstation, dependencies are provisioned centrally. The helper
+defaults to a read-only plan, pins Torch 2.11.0 from the CUDA 13.0 wheel index,
+and refuses installation into the shared Isaac/Lab environment or base Python.
+An explicitly selected, separate HORUS-only virtual environment can use
+`--install` (and optionally `--force`); neither option is for the shared runtime.
+
+The selected NVENC overlay must contain the isolated, MIT-licensed
+PyNvVideoCodec 2.2.2 adapter rebuilt from its SHA-256-pinned NVIDIA source.
+It exposes the upstream output-delay argument, H.264 Baseline profile and explicit
+colour-VUI signalling for the RGB/depth atlas;
+stock PyNvVideoCodec is not a substitute. CUDA's `nvcc` and a C++ toolchain
+are required. Do not copy an old compiled overlay into a new Torch/CUDA runtime.
+
+For a separately approved build, the coordinator selects the new overlay first:
+
+```bash
+export HORUS_NVENC_ROOT="/path/to/the/new/runtime-cache/nvenc-color-vui-v1"
+# Run only after the coordinator provisions the matching compiler/build dependencies.
+python3 python/examples/tools/install_remote_nvenc.py
+```
+
+Its source, wheel, and provenance receipt live under
+`$HORUS_NVENC_ROOT` (or the legacy default
+`~/.cache/horus/remote_render/nvenc-low-latency-v2/` outside the shared profile),
+not in the repository.
+
+### Shared Isaac 6.2 consumer profile
+
+The machine-local `python/examples/.local_assets/mapping-runtime.sh` opts into
+the tracked `python/examples/tools/mapping_runtime_shared.sh`, which selects
+`~/isaac/env_isaacsim/bin/python` for `./mapping-demo remote-*`.
+Native map playback still uses the normal Jazzy/system-Python path. This
+profile does not launch Sim/Lab, activate or edit its shared source, install
+packages, or accept a license on the user's behalf.
+
+Fresh artifacts default to
+`~/.cache/horus/remote_render/isaacsim-6.2-py312-torch2.11-cu130/`:
+
+| Item | Central provisioning requirement |
+|---|---|
+| Python / Torch | Canonical Python 3.12, Torch 2.11.0+cu130; do not upgrade Lab's Torch using the HORUS helper |
+| `site-packages/` | gsplat 1.5.3, plyfile 1.1.3, ninja 1.13.0, trimesh 4.9.0 and their compatible non-Torch dependencies |
+| nvdiffrast | Rebuild pinned commit `253ac4fcea7de5f396371124af597e6cc957bfae` against the canonical Torch/CUDA |
+| `torch-extensions/` | Fresh gsplat/nvdiffrast JIT output; no copied CUDA 12.8 extensions |
+| `native/` | Rebuild HORUS point/mesh `.cu` kernels using the approved CUDA 13 compiler |
+| `nvenc-color-vui-v1/` | Patched 2.2.2 with output-delay, Baseline and explicit colour VUI; preserve prior NVENC caches and retain source/wheel/provenance receipts |
+
+The shared profile selects the qualified colour-VUI adapter. Its H.264 stream
+declares limited-range BT.601; auxiliary depth and identity symbols retain their
+existing receiver contract. An older adapter that silently omits the VUI option
+is rejected. Explicit `HORUS_NVENC_ROOT` overrides must select a compatible build.
+
+ROS imports (`rclpy`, `sensor_msgs`, `std_msgs`, `visualization_msgs`) must resolve
+from the existing Jazzy/HORUS overlay. Media also requires NumPy, Rich, OpenCV,
+Pillow and gsplat's jaxtyping dependency. For central overlay provisioning use
+`--no-deps` and supply compatible prerequisites separately, so pip does not
+install another Torch into the overlay. The pinned NVENC source declares
+setuptools, wheel, scikit-build, CMake, Ninja and NumPy as build dependencies.
+
+The profile removes the superseded October 8 HORUS Python overlay and CUDA 12.8
+selectors while preserving unrelated ROS paths. When the approved toolkit path
+is known, `HORUS_REMOTE_CUDA_HOME` selects it explicitly. A missing explicitly
+selected compiler, Python or NVENC overlay fails rather than falling back to
+the old environment. The normal CUDA compiler search still needs verification
+if no explicit toolkit was selected.
+
+`HORUS_REMOTE_PYTHON`, `HORUS_REMOTE_CACHE_ROOT` and `HORUS_NVENC_ROOT` remain
+explicit overrides for other installations; users are responsible for matching
+their chosen ABI. Existing caches, recordings and data manifests are preserved.
+The full Sim 6.2 asset pack is not a dependency of recorded HORUS map rendering.
+
+Provisioning and exclusive GPU acceptance are separate gates. CPU path tests
+do not qualify CUDA 13 support, rendering correctness, NVENC, FPS or headset
+performance. G1 Demonstrations and its policy environments are not migrated or
+resumed by this profile.
+
+For direct Python launches after provisioning, use the profile's
+`$HORUS_REMOTE_PYTHON` rather than assuming system `python3` has the GPU overlay.
 
 ## Profiles
 
-Color dimensions are for the single predicted center-eye render. Quest
-reprojects that render independently for each display eye.
+### Compare a saved HMSH map with headset rendering
 
-| Profile | Color | Metric depth | Experimental WebRTC target | Bitrate | ROS default |
-|---|---:|---:|---:|---:|---:|
-| `fast` | 896x896 | 448x448 | 60 FPS | 20 Mbps | up to 15 FPS |
-| `balanced` | 1152x1152 | 384x384 | 60 FPS | 35 Mbps | up to 15 FPS |
-| `quality` | 1344x1344 | 448x448 | 60 FPS | 50 Mbps | up to 15 FPS |
+The saved-map launcher can render the same verified fixture on the PC. Stop
+the local replay first, then run:
+
+```bash
+cd ~/horus_sdk
+./replay-map /path/to/saved-map/measured --render-target remote --profile quality
+```
+
+The launcher selects the existing GPU runtime, starts the renderer and bridge,
+and registers a remote workspace map. Connect the Quest to the PC on port
+10000 and create a workspace. No new scan is required. To return to local
+rendering, stop the remote replay and omit `--render-target remote`.
+
+Every source page is checksum-verified. All vertices, triangles, winding and RGB
+colours are retained; the same source-floor transform is applied. RGBA sources
+must be opaque: non-opaque alpha is rejected, not silently discarded. Derived
+RGB arrays are verified before cache reuse and originals are never overwritten.
+Use `--remote-cache /path/on/a/larger/disk` to choose their location.
+
+This compares full source geometry, not identical output pixels. The remote
+path still uses the stereo video/depth encoding described above. Compare
+moving-head stability, image detail and latency as well as Quest FPS. This
+is a static snapshot, not live remote nvblox updates.
+
+Color dimensions are per eye. Source map density is independent of this table.
+
+| Profile | Per-eye color | WebRTC target | Bitrate | ROS diagnostic |
+|---|---:|---:|---:|---:|
+| `fast` | 896x896 | 60 FPS | 20 Mbps | up to 15 FPS |
+| `balanced` | 1152x1152 | 60 FPS | 35 Mbps | up to 15 FPS |
+| `quality` | 1344x1344 | 60 FPS | 50 Mbps | up to 15 FPS |
 
 Start with `balanced`. Actual frame rate depends on scene complexity, CUDA
 render time, video encoding, Wi-Fi, and headset load.
+
+The profile changes only the fixed stereo image sent to the Quest. It does not
+remove triangles, points, splats, textures, or spherical-harmonic coefficients
+from the PC scene. Point-cloud voxel reduction is disabled by default
+(`--source-voxel-size 0.0`) and can only be enabled explicitly. Output pixels
+and H.264 bitrate still bound the detail visible through the headset, so use
+`quality` when the PC, encoder, and wireless link sustain it.
+
+Textured meshes and Gaussian scenes hand CUDA tensors directly to NVENC.
+Gaussian rendering retains its original anisotropic splats, antialiasing, and
+spherical-harmonic colors; it no longer downloads stereo color/depth images to
+CPU memory and uploads them again for WebRTC. ROS diagnostics still use CPU PNG
+encoding, and the point-cloud fallback still incurs CPU image transfers.
 
 ## Common setup
 
@@ -76,7 +246,7 @@ The launcher starts the PC render agent, waits for renderer initialization,
 registers the workspace visualization, and starts the HORUS bridge through the
 normal SDK lifecycle.
 
-The default transport is the validated ROS-compressed path:
+The default command uses V3 WebRTC, NVENC, and full source geometry:
 
 ```bash
 python3 python/examples/remote_map_portal_registration.py \
@@ -85,12 +255,104 @@ python3 python/examples/remote_map_portal_registration.py \
   --workspace-scale 0.1
 ```
 
-The legacy `ros_debug` spelling remains accepted as an alias. To explicitly
-try the experimental WebRTC carrier, add:
+Use the ROS diagnostic carrier when isolating WebRTC behavior:
 
-```text
---transport webrtc
+```bash
+python3 python/examples/remote_map_portal_registration.py \
+  --transport ros \
+  --scene synthetic \
+  --profile balanced \
+  --workspace-scale 0.1
 ```
+
+## Remote rendering v3 acceptance path
+
+`horus.remote_render.v3` sends the OpenXR predicted display time, independent
+left/right eye poses, and each eye's asymmetric field of view to the PC. WebRTC
+returns an identity-tagged side-by-side stereo H.264 frame. ROS returns the same
+views as a PNG diagnostic and should not be used for performance measurements.
+
+Run the geometric conformance scene:
+
+```bash
+python3 python/examples/remote_map_portal_registration.py \
+  --protocol v3 \
+  --transport ros \
+  --scene synthetic \
+  --profile balanced \
+  --workspace-scale 0.1
+```
+
+Run the textured Sponza acceptance scene:
+
+```bash
+python3 python/examples/remote_textured_mesh_map_registration.py \
+  --protocol v3 \
+  --transport ros \
+  --scene sponza_mesh \
+  --profile balanced \
+  --workspace-scale 0.1
+```
+
+During both runs, verify slow and fast head rotation, lateral translation,
+fore/aft translation, asymmetric eye projection, workspace redraw, and
+workspace scale changes. The map must remain world-locked, the eyes must not
+be swapped or duplicated, and frames from an earlier workspace revision must
+not reappear.
+
+The automated renderer gates are:
+
+```bash
+python3 -m pytest -q \
+  python/tests/test_remote_rendering_v3_protocol.py \
+  python/tests/test_remote_rendering_v3_agent.py \
+  -o addopts=
+
+python/tests/integration/run_remote_rendering_v3_ros_probe.sh
+HORUS_V3_INTEGRATION_SCENE=sponza_mesh \
+  python/tests/integration/run_remote_rendering_v3_ros_probe.sh
+```
+
+The opt-in PC throughput/continuity test uses the real GPU, NVENC, ROS publisher,
+and ROS subscriber, without connecting to a robot or headset. It checks that the
+last view is delivered after pose input stops and that encoded access units have
+no missing indices. The separate round-trip test checks depth symbols through
+NVENC and FFmpeg decode:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+export PYTHONPATH="$PWD/python:$PYTHONPATH"
+ROS_DOMAIN_ID=217 CYCLONEDDS_URI= HORUS_TEST_GPU_VIDEO=1 python3 -m pytest -q -s \
+  python/tests/test_remote_rendering_live_pipeline.py \
+  python/tests/test_remote_rendering_video_roundtrip.py -o addopts=
+```
+
+This does **not** measure Quest FPS, wireless delivery, hardware decoder latency,
+or motion-to-photon latency. For device acceptance, record Quest frame time and
+`HORUS_REMOTE_RENDER_V3` counters alongside `HORUS_REMOTE_RENDER_DIAG` on the PC.
+Check rotation, translation, a stationary head, reconnect, and workspace redraw.
+Do not infer headset performance from the PC throughput number.
+
+### Local pipeline measurements
+
+The RTX 4090 check on 2026-09-17 used the automated moving-eye trajectory above,
+1152x1152 color per eye, 60 Hz pose input, and the complete loaded source scene.
+Each run drove poses for 12 seconds, excluded the first two seconds from the
+throughput calculation, and then stopped input for three seconds to test drain.
+
+| Scene | Loaded geometry | PC output FPS | Missing encoded indices | Final pose delivered |
+|---|---:|---:|---:|---|
+| Sponza | 262,267 triangles | 59.83 | 0 | Yes |
+| Gaussian Train | 1,074,761 splats | 45.70 | 0 | Yes |
+
+These are short, scene/view-specific regression checks, not operating-envelope
+benchmarks. They stop at the local ROS subscriber, before the WebRTC bridge,
+wireless network, or Quest decoder/compositor. Neither demonstrates 60 FPS for
+all viewpoints or sustained thermal behavior. The separate NVENC/decode test
+passed the depth-symbol checks; headset motion stability remains a device gate.
+
+To repeat the Gaussian run, add `HORUS_RENDER_SCENE=gaussian_train` to the test
+environment above. The assets must already be downloaded.
 
 ## Scene coordinates
 
@@ -283,10 +545,9 @@ python3 python/examples/remote_map_portal_registration.py \
   --workspace-scale 0.1
 ```
 
-The full scans remain unchanged under
-`~/.cache/horus/eth3d_remote_maps`. The default 12.5 mm PC render cache is a
-deterministic source LOD; use `--source-voxel-size` only when deliberately
-trading PC GPU memory against source density.
+The full scans remain unchanged under `~/.cache/horus/eth3d_remote_maps` and
+are rendered in full by default. `--source-voxel-size` is an explicit opt-in
+host-side point-cloud LOD and is never applied automatically.
 
 ETH3D is licensed under CC BY-NC-SA 4.0. Cite:
 
@@ -304,16 +565,15 @@ dataviz.add_remote_rendered_map(
     stream_topic="/horus/remote_render/map_portal",
     frame_id="map",
     render_options={
-        "transport": "ros_compressed",
-        "ros_compressed_topic": "/horus/remote_render/rgbd",
-        "viewer_pose_topic": "/horus/remote_render/viewer_pose",
+        "protocol_version": "horus.remote_render.v3",
+        "transport": "webrtc",
+        "viewer_pose_topic": "/horus/remote_render/v3/view_state",
     },
 )
 ```
 
-The SDK derives the protocol version from `transport`; callers do not select
-an incompatible format manually. Omitting `transport` also selects
-`ros_compressed`.
+V3 WebRTC is the launcher default. V2 and the V3 ROS diagnostic remain
+available explicitly and never replace V3 silently.
 
 `add_3d_map(..., render_target="quest")` remains available for bounded geometry
 that fits the headset memory and triangle budgets. For remote maps, use either
@@ -323,41 +583,72 @@ update modes do not apply to remote rendering.
 
 ## Runtime topics and channels
 
+The default V3 WebRTC route uses these channels:
+
 | Topic or channel | Direction | Purpose |
 |---|---|---|
-| `/horus/remote_render/viewer_pose` | Quest to PC | current and predicted eye poses and projections |
-| `/horus/remote_render/map_portal` | PC to bridge | raw RGB source for H.264 encoding |
-| `/horus/remote_render/frame_data` | PC to bridge | matching metric depth and frame metadata |
-| H.264 video track | bridge to Quest | WebRTC color |
-| `horus.remote-render.v1` | bridge to Quest | fragmented WebRTC depth and metadata |
-| `/horus/remote_render/rgbd` | PC to Quest | paired ROS color, depth, pose, and projection |
-| `/horus/remote_render/agent_status` | PC | renderer health and timing |
+| `/horus/remote_render/v3/view_state` | Quest to PC | predicted display time and exact per-eye views |
+| `/horus/remote_render/map_portal` | PC renderer to bridge | fixed-size stereo RGB and metric-depth atlas for NVENC |
+| H.264 video track | bridge to Quest | hardware-decoded stereo atlas with integrated frame identity |
+| `/horus/remote_render/v3/status` | PC | renderer health, source count, timing, and rejection counters |
 
-The render agent uses replace-latest ROS QoS for high-rate source frames.
-Quest retains the previous complete frame until a newer exact color/depth pair
-is ready. The experimental WebRTC carrier additionally bounds its bridge
-data-channel queue.
+The V3 ROS diagnostic route replaces the H.264 track with
+`/horus/remote_render/v3/stereo`. The legacy V2 topics
+`/horus/remote_render/viewer_pose`, `/horus/remote_render/frame_data`,
+`/horus/remote_render/rgbd`, and the `horus.remote-render.v1` data channel are
+used only when `--protocol v2` is selected explicitly.
+
+The render agent and Quest both use newest-frame semantics. Stale work is
+discarded rather than queued, and the previous complete stereo frame remains
+visible until a newer identity-matched frame is ready.
+
+The Quest receiver permits metadata and decoded video to arrive in either order.
+It retains at most three owned video snapshots, matches their embedded frame
+identities exactly, and expires unmatched snapshots at the configured maximum
+frame age. It never associates delayed metadata with the decoder's latest
+unrelated texture. Color filtering is clamped within each eye's content region
+to avoid blending with the other eye, marker, or depth strip.
+
+Timing-log compatibility names need care: `source_to_media_ms` ends at metadata
+arrival, not necessarily decoded video arrival. `media_to_capture_ms` is signed
+and can be negative when metadata arrives after capture. `readback_ms` spans
+capture to pair acceptance, including metadata wait; it is not a GPU execution
+timer. Use total view-sample-to-acceptance age and actual presentation counters
+alongside these stages, rather than adding unrelated clock domains or claiming
+motion-to-photon timing.
+
+This remains the V3 contract: depth is spatially reduced and carried inside a
+lossy video stream. These receiver fixes do not provide protected full-resolution
+depth, live resident scene-page updates, or independent concurrent viewers from
+one agent. Treat those capabilities as unfinished, not as consequences of
+successful V3 transport tests.
+
+V3 is a matched transport contract. An APK containing the four-symbol depth
+decoder must be used with an SDK renderer that advertises
+`linear_u16_nibbles_in_video`; older depth encodings are rejected rather than
+displayed with incorrect geometry.
 
 ## Diagnostics
 
 Check the PC renderer:
 
 ```bash
-ros2 topic hz /horus/remote_render/viewer_pose
-ros2 topic echo --once /horus/remote_render/agent_status
+ros2 topic hz /horus/remote_render/v3/view_state
+ros2 topic echo --once /horus/remote_render/v3/status
 ```
 
-For the default ROS carrier:
-
-```bash
-ros2 topic hz /horus/remote_render/rgbd
-```
-
-For an experimental WebRTC run:
+For the default WebRTC carrier, confirm that the raw stereo source reaches the
+local bridge. This topic is intentionally local to the PC and is not decoded by
+the Quest as ROS data:
 
 ```bash
 ros2 topic hz /horus/remote_render/map_portal
-ros2 topic hz /horus/remote_render/frame_data
+```
+
+For a V3 ROS diagnostic run:
+
+```bash
+ros2 topic hz /horus/remote_render/v3/stereo
 ```
 
 The render agent writes:
@@ -370,17 +661,17 @@ The render agent writes:
 The preview confirms that the PC renderer loaded the scene. It is not streamed
 to Quest and does not influence map placement.
 
-Before treating an experimental WebRTC run as valid, bridge session telemetry
+Before treating a WebRTC run as valid, bridge session telemetry
 must show:
 
 - a connected peer and open video track;
 - increasing encoded video units;
-- an open `horus.remote-render.v1` data channel;
-- increasing auxiliary sent frames without sustained queue growth.
+- increasing incoming and pushed frame counts without sustained queue growth;
+- NVENC selected when `--encoder nvenc` is requested.
 
-The Quest keeps the last complete spatial frame visible while a newer frame is
-rendered, encoded, transported, and paired. It never displays the server's
-startup preview or a color frame without its matching metric depth.
+The Quest keeps the last accepted stereo frame visible while a newer frame is
+rendered, encoded, transported, decoded, and identity-checked. V3 never builds
+a map mesh or point cloud on the Quest.
 
 If a fixed CycloneDDS interface from an old network no longer exists, clear it
 before launching:
@@ -390,17 +681,3 @@ unset CYCLONEDDS_URI
 ros2 daemon stop
 ros2 daemon start
 ```
-
-## Design references
-
-The remote-rendering work was informed by public documentation and examples
-from Azure Remote Rendering, the 3D Streaming Toolkit, and ALVR. These projects
-were consulted as conceptual references for remote camera synchronization,
-video delivery, and local composition. The HORUS implementation was developed
-independently and does not include source code from these projects.
-
-- Azure Remote Rendering:
-  <https://github.com/Azure/azure-remote-rendering>
-- 3D Streaming Toolkit:
-  <https://github.com/3DStreamingToolkit/3DStreamingToolkit>
-- ALVR: <https://github.com/alvr-org/ALVR>

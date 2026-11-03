@@ -1,0 +1,684 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Nvblox 3D Reconstruction1
+        - /Nvblox ESDF & Costmaps1
+        - /Cameras1
+      Splitter Ratio: 0.6
+    Tree Height: 900
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Expanded:
+      - /2D Goal Pose1
+      - /Publish Point1
+    Name: Tool Properties
+    Splitter Ratio: 0.58
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 50
+      Reference Frame: <Fixed Frame>
+      Value: true
+
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+      Marker Scale: 0.5
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        {}
+      Update Interval: 0
+      Value: false
+
+    - Class: rviz_default_plugins/Axes
+      Enabled: true
+      Length: 0.5
+      Name: Base Link Frame
+      Radius: 0.04
+      Reference Frame: base_link
+      Value: true
+
+    - Class: rviz_default_plugins/Pose
+      Alpha: 1
+      Color: 0; 255; 0
+      Enabled: true
+      Head Diameter: 0.15
+      Head Length: 0.15
+      Length: 0.4
+      Name: Robot Pose
+      Radius: 0.05
+      Shaft Diameter: 0.05
+      Shaft Length: 0.25
+      Shape: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pose
+      Value: true
+
+    - Class: rviz_common/Group
+      Name: Nvblox 3D Reconstruction
+      Enabled: true
+      Displays:
+        - Ceiling Height: 1.5
+          Class: nvblox_rviz_plugin/NvbloxMesh
+          Cut Ceiling: false
+          Enabled: true
+          Mesh Color: Color
+          Name: Nvblox Mesh
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/mesh
+          Value: true
+
+        - Ceiling Height: 1.5
+          Class: nvblox_rviz_plugin/NvbloxVoxelBlockLayer
+          Cut Ceiling: false
+          Enabled: false
+          Name: Nvblox Color Voxels
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/color_layer
+          Value: false
+
+        - Ceiling Height: 1.5
+          Class: nvblox_rviz_plugin/NvbloxVoxelBlockLayer
+          Cut Ceiling: false
+          Enabled: false
+          Name: Nvblox TSDF Voxels
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/tsdf_layer
+          Value: false
+
+        - Class: rviz_default_plugins/Marker
+          Enabled: false
+          Name: Color Layer Marker
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/color_layer_marker
+          Value: false
+
+        - Class: rviz_default_plugins/Marker
+          Enabled: false
+          Name: TSDF Layer Marker
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/tsdf_layer_marker
+          Value: false
+
+        - Class: rviz_default_plugins/Marker
+          Enabled: false
+          Name: Workspace Bounds
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/workspace_bounds
+          Value: false
+
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: false
+          Name: Shapes to Clear
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/shapes_to_clear
+          Value: false
+
+    - Class: rviz_common/Group
+      Name: Nvblox ESDF & Costmaps
+      Enabled: true
+      Displays:
+        - Alpha: 1
+          Autocompute Intensity Bounds: false
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: true
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 1
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Static ESDF Slice Pointcloud
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.025
+          Style: Flat Squares
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/static_esdf_pointcloud
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: true
+
+        - Alpha: 1
+          Autocompute Intensity Bounds: false
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: Intensity
+          Decay Time: 0
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 1
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Pessimistic Static ESDF Pointcloud
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.025
+          Style: Flat Squares
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/pessimistic_static_esdf_pointcloud
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+
+        - Class: rviz_default_plugins/Marker
+          Enabled: false
+          Name: ESDF Slice Bounds
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/esdf_slice_bounds
+          Value: false
+
+        - Alpha: 0.7
+          Class: rviz_default_plugins/Map
+          Color Scheme: map
+          Draw Behind: false
+          Enabled: true
+          Name: Combined Occupancy Grid
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/combined_occupancy_grid
+          Update Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: ""
+          Use Timestamp: false
+          Value: true
+
+        - Alpha: 0.7
+          Class: rviz_default_plugins/Map
+          Color Scheme: map
+          Draw Behind: false
+          Enabled: false
+          Name: Static Occupancy Grid
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/static_occupancy_grid
+          Update Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: ""
+          Use Timestamp: false
+          Value: false
+
+        - Alpha: 0.7
+          Class: rviz_default_plugins/Map
+          Color Scheme: costmap
+          Draw Behind: false
+          Enabled: false
+          Name: Dynamic Occupancy Grid
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/dynamic_occupancy_grid
+          Update Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: ""
+          Use Timestamp: false
+          Value: false
+
+        - Alpha: 0.7
+          Class: rviz_default_plugins/Map
+          Color Scheme: map
+          Draw Behind: false
+          Enabled: false
+          Name: Global Map
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map
+          Update Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /map_updates
+          Use Timestamp: false
+          Value: false
+
+    - Class: rviz_common/Group
+      Name: Ground & Depth Sensors
+      Enabled: true
+      Displays:
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: rgb
+          Class: rviz_default_plugins/PointCloud2
+          Color: 255; 255; 255
+          Color Transformer: RGB8
+          Decay Time: 0
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 1
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Back Projected Depth Pointcloud
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.02
+          Style: Flat Squares
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/back_projected_depth/front_stereo_camera_left_rgb
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+
+        - Alpha: 1
+          Autocompute Intensity Bounds: true
+          Autocompute Value Bounds:
+            Max Value: 10
+            Min Value: -10
+            Value: true
+          Axis: Z
+          Channel Name: intensity
+          Class: rviz_default_plugins/PointCloud2
+          Color: 0; 255; 100
+          Color Transformer: FlatColor
+          Decay Time: 0
+          Enabled: false
+          Invert Rainbow: false
+          Max Color: 255; 255; 255
+          Max Intensity: 1
+          Min Color: 0; 0; 0
+          Min Intensity: 0
+          Name: Ground Pointcloud
+          Position Transformer: XYZ
+          Selectable: true
+          Size (Pixels): 3
+          Size (m): 0.03
+          Style: Flat Squares
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/groundplane_estimator_ground_pointcloud
+          Use Fixed Frame: true
+          Use rainbow: true
+          Value: false
+
+        - Class: rviz_default_plugins/Marker
+          Enabled: false
+          Name: Ground Estimated Plane
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /nvblox_node/groundplane_estimator_estimated_plane
+          Value: false
+
+    - Class: rviz_common/Group
+      Name: Horus Bridge Mesh
+      Enabled: true
+      Displays:
+        - Class: rviz_default_plugins/Marker
+          Enabled: false
+          Name: Horus NVBlox Mesh Marker
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /horus/nvblox/mesh
+          Value: false
+
+        - Class: rviz_default_plugins/MarkerArray
+          Enabled: false
+          Name: Horus NVBlox Mesh Array
+          Namespaces:
+            {}
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            Filter size: 10
+            History Policy: Keep Last
+            Reliability Policy: Reliable
+            Value: /horus/nvblox/mesh_array
+          Value: false
+
+    - Class: rviz_common/Group
+      Name: Cameras
+      Enabled: true
+      Displays:
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Front Camera Color
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /front_stereo_camera/left/image_raw
+          Value: true
+
+        - Class: rviz_default_plugins/Image
+          Enabled: true
+          Max Value: 5
+          Median window: 5
+          Min Value: 0
+          Name: Front Camera Depth
+          Normalize Range: false
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /front_stereo_camera/depth/ground_truth
+          Value: true
+
+        - Class: rviz_default_plugins/Camera
+          Enabled: false
+          Image Rendering: background and overlay
+          Name: Front Camera 3D Overlay
+          Overlay Alpha: 0.5
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /front_stereo_camera/left/image_raw
+          Value: false
+          Visibility:
+            Grid: true
+            Nvblox Mesh: true
+            Static ESDF Slice Pointcloud: true
+            Value: true
+          Zoom: 1
+
+        - Class: rviz_default_plugins/Image
+          Enabled: false
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Left Camera Color
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /left_stereo_camera/left/image_raw
+          Value: false
+
+        - Class: rviz_default_plugins/Image
+          Enabled: false
+          Max Value: 5
+          Median window: 5
+          Min Value: 0
+          Name: Left Camera Depth
+          Normalize Range: false
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /left_stereo_camera/depth/ground_truth
+          Value: false
+
+        - Class: rviz_default_plugins/Image
+          Enabled: false
+          Max Value: 1
+          Median window: 5
+          Min Value: 0
+          Name: Right Camera Color
+          Normalize Range: true
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /right_stereo_camera/left/image_raw
+          Value: false
+
+        - Class: rviz_default_plugins/Image
+          Enabled: false
+          Max Value: 5
+          Median window: 5
+          Min Value: 0
+          Name: Right Camera Depth
+          Normalize Range: false
+          Topic:
+            Depth: 5
+            Durability Policy: Volatile
+            History Policy: Keep Last
+            Reliability Policy: Best Effort
+            Value: /right_stereo_camera/depth/ground_truth
+          Value: false
+
+  Enabled: true
+  Global Options:
+    Background Color: 45; 48; 54
+    Fixed Frame: odom
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/SetInitialPose
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.0685
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 12.0
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 1.0
+        Y: -1.0
+        Z: 0.0
+      Focal Shape Fixed Size: false
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.75
+      Target Frame: odom
+      Value: Orbit (rviz)
+      Yaw: 3.14
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1000
+  Hide Left Dock: false
+  Hide Right Dock: true
+  Selection:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: true
+  Width: 1600
+  X: 50
+  Y: 50

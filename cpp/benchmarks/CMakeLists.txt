@@ -8,3 +8,5 @@ find_package(Threads REQUIRED)
 add_executable(throughput_benchmark throughput_benchmark.cpp)
 target_link_libraries(throughput_benchmark PRIVATE horus_cpp_sdk Threads::Threads)
 
+add_executable(mapping_kernels mapping_kernels.cpp)
+target_link_libraries(mapping_kernels PRIVATE horus_cpp_sdk)

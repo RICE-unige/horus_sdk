@@ -7,7 +7,7 @@ sidebar_position: 1
 
 The C++ SDK builds the same MR registration contract as the Python SDK without depending on the Python runtime. Use it when your robot process is already C++, when registration payload generation is part of a ROS 2 node, or when startup and serialization overhead need to stay low.
 
-Live HORUS bridge registration, ACK handling, keep-alive, and dashboard monitoring are still Python SDK responsibilities. The C++ `register_robot`, `register_robots`, and `unregister_robot` helpers intentionally return an explicit unsupported-transport result instead of reporting fake local success. Use `RobotRegistryClient::build_robot_config_dict(...)` for native payload parity until a real C++ transport is implemented.
+ROS-enabled builds provide live registration, accepted/queued ACK handling, replay, keep-alive and unregister through a private native ROS context. No-ROS builds support payload construction, CPU kernels, model compilation and explicit CUDA bindings, but not ROS publication or live registration. Consult [Implementation Status](../reference/implementation-status.md) for native functional coverage and deliberate tooling differences.
 
 ## What it sends
 
@@ -51,11 +51,12 @@ Beyond registration payloads, the C++ SDK ports the HORUS experiments tooling
 (`horus/experiments/` — NDJSON/CSV metric writers, a monotonic-anchored clock,
 and the field-teammate study reducer with dyad-level confidence intervals) and
 the colour manager (`horus/color/` — per-scheme palettes with an MD5-deterministic
-fallback that matches Python/Rust byte-for-byte). It also bakes STL visual meshes
-(binary and ASCII) referenced by a URDF's `<visual>` elements into the description
-manifest (`horus/description/mesh_baker.hpp` — `bake_visual_meshes`, populating
-`mesh_assets` and `supports_visual_meshes`). See **Implementation Status** for the
-full native parity boundary.
+fallback that matches Python/Rust byte-for-byte). Native costmap reconstruction
+and HMSH v2 encoding use bounded buffers without a Python runtime dependency.
+The native model compiler now provides joint/collision poses, articulated visual
+bindings, material colors and paced asset delivery. Teach adds lease-aware
+sessions, Cartesian adapters, MCAP capture and recovery. See
+[Robot Models and Teach](models-and-teach.md) for dependencies and examples.
 
 ## Build and test
 
@@ -127,4 +128,17 @@ cd ~/horus_sdk/cpp
 ```
 
 `cpp/examples/sdk_registration_demo.cpp` remains the short native equivalent of the Python ops scenario at the payload layer; the larger scenario coverage is split into focused examples so payload construction stays concise.
-The focused examples configure camera view profiles, teleop/task payloads, Robot Manager metadata, navigation safety visualizations, global 3D map payloads, semantic boxes, workspace compass/tutorial metadata, and local body model fields. They validate payload generation only; they do not contact a live HORUS bridge.
+No-ROS registration examples validate payloads only; ROS builds register with the app and keep accepted registrations alive until Ctrl+C. Native model delivery is available, but supply the robot's TF from its own publisher.
+
+## Lifecycle and deployment
+
+`RegistryOptions` controls bridge auto-start and an optional executable/argument
+vector. Source the HORUS ROS overlay to discover its installed bridge. Existing
+bridge processes are never adopted or stopped; only the client's own child is
+cleaned up. `stop()` cancels a waiting registration or keep-alive call without
+shutting down the caller's ROS context. Construct a new explicit client after
+stopping one.
+
+An installed CMake consumer uses `find_package(horus_cpp_sdk CONFIG REQUIRED)`
+and links `horus::horus_cpp_sdk`. Both ordinary CMake and ament discovery export
+the same target. ROS shared-library dependencies remain necessary at runtime.
